@@ -7,12 +7,13 @@ import {
   listCustomers,
   NotPairedError,
 } from "../lib/api";
+import { adminListProducts } from "../lib/adminApi";
 import { verifyPinOffline } from "../lib/auth";
 import { isPaired } from "../lib/device";
 import { money } from "../lib/format";
 import { cacheGet, cacheSet } from "../lib/localCache";
 import { useOnline } from "../lib/offline";
-import { can } from "../lib/permissions";
+import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
 import { buildQuoteText, buildReceiptText } from "../lib/receipt";
 import { refreshSettings } from "../lib/settings";
@@ -27,6 +28,7 @@ import type {
   Sale,
 } from "../lib/types";
 
+import Admin from "../components/Admin";
 import Cart from "../components/Cart";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
@@ -71,6 +73,10 @@ export default function POS() {
   const [showPayment, setShowPayment] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
+  // The back office asks for the PIN once and keeps it in memory only: every
+  // admin RPC re-verifies it server-side, so it has to travel with each call.
+  const [adminPin, setAdminPin] = useState<string | null>(null);
+  const [askAdminPin, setAskAdminPin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -238,6 +244,14 @@ export default function POS() {
               {failed} failed
             </button>
           )}
+          {canAny(user, ["manage_catalogue", "manage_inventory"]) && (
+            <button
+              onClick={() => setAskAdminPin(true)}
+              className="px-3 py-1 rounded-lg bg-stone-100 text-stone-700"
+            >
+              Manage
+            </button>
+          )}
           <span className="text-stone-600">{user?.name}</span>
           <button onClick={logout} className="text-stone-500 px-2">
             Sign out
@@ -397,6 +411,28 @@ export default function POS() {
             setNeedsApproval(false);
           }}
         />
+      )}
+
+      {askAdminPin && (
+        <ManagerPinModal
+          title="Manage"
+          subtitle="Enter your PIN to open the back office"
+          onApprove={async (entered) => {
+            // Proved against the server by the first admin call, which fails
+            // loudly if the PIN is wrong or lacks the permission.
+            await adminListProducts(entered);
+            setAdminPin(entered);
+            setAskAdminPin(false);
+          }}
+          onCancel={() => setAskAdminPin(false)}
+        />
+      )}
+
+      {adminPin && (
+        <Admin user={user} pin={adminPin} onClose={() => {
+          setAdminPin(null);
+          void refresh();
+        }} />
       )}
 
       {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}

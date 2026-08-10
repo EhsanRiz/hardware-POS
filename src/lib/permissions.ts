@@ -1,16 +1,23 @@
-// The permission catalogue. Keys must match the server-side checks.
+// The permission catalogue. Keys must match `public.permissions` in the
+// database, which is where they are actually enforced — this list only drives
+// what the UI offers and hides.
 export const PERMISSIONS = [
-  { key: "take_payments", label: "Take payments & issue receipts", group: "Sales" },
+  { key: "take_payments", label: "Take payments & issue invoices", group: "Sales" },
   { key: "apply_discount", label: "Apply discounts", group: "Sales" },
   { key: "approve_discount", label: "Approve discounts", group: "Sales" },
   { key: "void_refund", label: "Void & refund sales", group: "Sales" },
-  { key: "manage_menu", label: "Manage menu & prices", group: "Management" },
-  { key: "manage_inventory", label: "Manage inventory / stock", group: "Management" },
-  { key: "manage_accounts", label: "Manage customer accounts", group: "Management" },
-  { key: "view_reports", label: "View reports & receipts", group: "Management" },
+  { key: "manage_catalogue", label: "Manage products & prices", group: "Management" },
+  { key: "manage_inventory", label: "Adjust stock & receive goods", group: "Management" },
+  { key: "manage_purchasing", label: "Manage suppliers & purchase orders", group: "Management" },
+  { key: "manage_customers", label: "Manage customer accounts", group: "Management" },
+  { key: "manage_quotes", label: "Create & convert quotes", group: "Management" },
+  { key: "view_reports", label: "View reports", group: "Management" },
+  // Deliberately separate from manage_catalogue: a counter supervisor can fix a
+  // price or a barcode without being shown the shop's margins.
+  { key: "view_cost_prices", label: "See cost prices & margins", group: "Management" },
   { key: "cash_management", label: "Cash-up & reconciliation", group: "Management" },
   { key: "manage_staff", label: "Manage staff", group: "Admin" },
-  { key: "manage_settings", label: "Manage settings", group: "Admin" },
+  { key: "manage_settings", label: "Manage settings & tills", group: "Admin" },
 ] as const;
 
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
@@ -18,6 +25,8 @@ export type RoleKey = "admin" | "manager" | "employee";
 
 export const ALL_PERMS: PermKey[] = PERMISSIONS.map((p) => p.key);
 
+// Mirrors role_default_permissions() in migration 0001. The server is the
+// authority; this exists so the UI can show the right boxes before a save.
 export const ROLE_DEFAULTS: Record<RoleKey, PermKey[]> = {
   admin: ALL_PERMS,
   manager: [
@@ -25,10 +34,13 @@ export const ROLE_DEFAULTS: Record<RoleKey, PermKey[]> = {
     "apply_discount",
     "approve_discount",
     "void_refund",
-    "manage_menu",
+    "manage_catalogue",
     "manage_inventory",
-    "manage_accounts",
+    "manage_purchasing",
+    "manage_customers",
+    "manage_quotes",
     "view_reports",
+    "view_cost_prices",
     "cash_management",
   ],
   employee: ["take_payments", "apply_discount"],
@@ -39,9 +51,10 @@ export const ADMIN_LEVEL_PERMS: PermKey[] = ["manage_staff", "manage_settings"];
 
 // Having any of these opens the "Manage" area.
 export const MANAGEMENT_PERMS: PermKey[] = [
-  "manage_menu",
+  "manage_catalogue",
   "manage_inventory",
-  "manage_accounts",
+  "manage_purchasing",
+  "manage_customers",
   "view_reports",
   "cash_management",
   "manage_staff",

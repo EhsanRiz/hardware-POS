@@ -180,3 +180,38 @@ export interface ReceiptItem {
   unit_price: number;
   line_total: number;
 }
+
+/**
+ * A product as the back office sees it: includes inactive lines and the cost
+ * price. `cost` comes back null for a user without `view_cost_prices`, which is
+ * a separate permission from `manage_catalogue` — a supervisor can fix a
+ * barcode without seeing the shop's margins.
+ */
+export interface AdminProduct {
+  id: string;
+  sku: string;
+  barcode: string | null;
+  name: string;
+  description: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  unit_code: string;
+  price_retail: number;
+  price_trade: number | null;
+  cost: number | null;
+  tax_code: string;
+  stock_qty: number | null;
+  reorder_level: number | null;
+  image_url: string | null;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface StockMovement {
+  at: string;
+  qty_delta: number;
+  qty_after: number | null;
+  reason: "sale" | "void" | "receipt" | "adjustment" | "stocktake" | "opening";
+  by_name: string | null;
+  note: string | null;
+}

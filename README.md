@@ -58,7 +58,6 @@ returns stock with a logged reason.
 Removed from the cafe build because they targeted the old data model, and to be
 rebuilt against this schema:
 
-- **Catalogue admin** — products, SKUs, barcodes, prices, units, categories
 - **Staff admin** — users, roles, permissions, PINs
 - **Goods receiving** — suppliers exist in the schema; purchase orders and GRVs do not
 - **Reports** — sales, margin (the data is there: `cost_at_sale`), reorder
@@ -67,8 +66,9 @@ rebuilt against this schema:
   convertible to an invoice
 - **Login rate limiting** — see *Known security tradeoffs*
 
-Until catalogue admin exists, products are managed by editing
-`0005_seed.sql` or by SQL against the database.
+Catalogue admin is now in place: **Manage** on the till (PIN-gated) edits
+products, prices, units, barcodes and departments, adjusts stock through a
+recorded movement, and takes a pasted CSV price list.
 
 ## Architecture
 
