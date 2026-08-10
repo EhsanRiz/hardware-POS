@@ -1,0 +1,297 @@
+import type { Page, Route } from "@playwright/test";
+
+/**
+ * A stand-in for the Supabase backend, wired in with request interception.
+ *
+ * Why fake it rather than test against a real project:
+ *
+ *  - The behaviour worth testing end to end is what happens when the *network
+ *    fails* — a sale taken offline, queued, and replayed. That is difficult to
+ *    provoke reliably against a live database and trivial here.
+ *  - It keeps the suite runnable with no credentials and no connectivity, so it
+ *    can gate a pull request.
+ *  - It lets a test assert things a live database cannot easily show, such as
+ *    "the client sent this sale twice and only one exists".
+ *
+ * The trade-off is real and worth naming: this verifies the client against a
+ * MODEL of the server, so it cannot catch the client and the real RPCs drifting
+ * apart. The database side is covered separately, directly in SQL against a live
+ * project (see the checks recorded in the README). Anything asserted here about
+ * a server response is only as true as this file.
+ */
+
+export interface FakeProduct {
+  id: string;
+  sku: string;
+  barcode: string | null;
+  name: string;
+  category_id: string | null;
+  category_name: string | null;
+  unit_code: string;
+  unit_name: string;
+  allows_fraction: boolean;
+  price_retail: number;
+  price_trade: number | null;
+  tax_code: string;
+  stock_qty: number | null;
+  reorder_level: number | null;
+  image_url: string | null;
+  sort_order: number;
+}
+
+export const PRODUCTS: FakeProduct[] = [
+  mk("p1", "CEM-425-50", "6001234000015", "Cement 42.5N 50kg", "bag", "Bag", false, 115, 108, 240, 40),
+  mk("p2", "CHN-06", null, "Chain 6mm Galvanised", "m", "Metre", true, 35, 31.5, 120, 30),
+  mk("p3", "NAL-100", null, "Wire Nails 100mm loose", "kg", "Kilogram", true, 42, 38, 85, 20),
+  mk("p4", "NCN-2550", null, "Nail Concrete 2.5 x 50mm", "kg", "Kilogram", true, 68, 61, 40, 10),
+  mk("p5", "PDL-50", "6001234000060", "Padlock 50mm Brass", "ea", "Each", false, 89, 80, 45, 10),
+  mk("p6", "CBL-25-100", null, "Twin & Earth 2.5mm 100m", "roll", "Roll", false, 1450, 1330, 2, 3),
+];
+
+function mk(
+  id: string, sku: string, barcode: string | null, name: string,
+  unit_code: string, unit_name: string, allows_fraction: boolean,
+  price_retail: number, price_trade: number | null,
+  stock_qty: number | null, reorder_level: number | null
+): FakeProduct {
+  return {
+    id, sku, barcode, name,
+    category_id: "c1", category_name: "Building",
+    unit_code, unit_name, allows_fraction,
+    price_retail, price_trade, tax_code: "standard",
+    stock_qty, reorder_level, image_url: null, sort_order: 0,
+  };
+}
+
+export const USERS = {
+  manager: { pin: "1234", row: { id: "u1", name: "Manager", role: "admin", phone: null, email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports"] } },
+  employee: { pin: "5678", row: { id: "u2", name: "Sam", role: "employee", phone: null, email: null, permissions: ["take_payments","apply_discount"] } },
+};
+
+export interface RecordedSale {
+  client_ref: string | null;
+  cashier_id: string;
+  items: { product_id: string; qty: number }[];
+  payment_method: string;
+  discount_amount: number;
+  approved_by: string | null;
+  created_at: string | null;
+  total: number;
+}
+
+/** Everything the fake server saw, so tests can assert on it. */
+export class Backend {
+  sales: RecordedSale[] = [];
+  calls: string[] = [];
+  /** When set, every request fails as though the connection dropped. */
+  offline = false;
+  private seq = 0;
+
+  reset() {
+    this.sales = [];
+    this.calls = [];
+    this.offline = false;
+    this.seq = 0;
+  }
+
+  /** Sales actually stored, i.e. after idempotent replays collapse. */
+  get storedSales() {
+    return this.sales;
+  }
+
+  private price(p: FakeProduct, trade: boolean) {
+    return trade && p.price_trade != null ? p.price_trade : p.price_retail;
+  }
+
+  createSale(body: Record<string, unknown>) {
+    const ref = (body.p_client_ref as string) ?? null;
+    if (ref) {
+      const existing = this.sales.find((s) => s.client_ref === ref);
+      // The whole point of the idempotency key: a replay returns the original.
+      if (existing) return this.saleRow(existing, false);
+    }
+
+    const items = (body.p_items as { product_id: string; qty: number }[]) ?? [];
+    let subtotal = 0;
+    for (const it of items) {
+      const p = PRODUCTS.find((x) => x.id === it.product_id);
+      if (!p) throw new Error("Product not available");
+      if (!p.allows_fraction && it.qty !== Math.trunc(it.qty)) {
+        throw new Error(`${p.name} is sold per ${p.unit_name} and cannot be split`);
+      }
+      if (p.stock_qty != null && p.stock_qty < it.qty) {
+        throw new Error(`Not enough stock for ${p.name} (${p.stock_qty} ${p.unit_code} on hand)`);
+      }
+      subtotal += Math.round(this.price(p, false) * it.qty * 100) / 100;
+    }
+    const discount = (body.p_discount_amount as number) ?? 0;
+    const total = Math.round((subtotal - discount) * 100) / 100;
+
+    const sale: RecordedSale = {
+      client_ref: ref,
+      cashier_id: body.p_cashier_id as string,
+      items,
+      payment_method: (body.p_payment_method as string) ?? "cash",
+      discount_amount: discount,
+      approved_by: (body.p_approved_by as string) ?? null,
+      created_at: (body.p_created_at as string) ?? null,
+      total,
+    };
+    this.sales.push(sale);
+    return this.saleRow(sale, true);
+  }
+
+  private saleRow(sale: RecordedSale, fresh: boolean) {
+    if (fresh) this.seq += 1;
+    const pending = sale.discount_amount > 0 && !sale.approved_by;
+    return {
+      id: "s" + this.seq,
+      doc_number: pending ? null : "INV-" + String(this.seq).padStart(6, "0"),
+      cashier_id: sale.cashier_id,
+      cashier_name: "Sam",
+      customer_id: null,
+      customer_name: null,
+      trade_pricing: false,
+      subtotal: sale.total + sale.discount_amount,
+      discount_amount: sale.discount_amount,
+      discount_reason: null,
+      tax_amount: Math.round((sale.total - sale.total / 1.15) * 100) / 100,
+      total: sale.total,
+      status: pending ? "pending_approval" : "completed",
+      approved_by: sale.approved_by,
+      approved_by_name: sale.approved_by ? "Manager" : null,
+      payment_method: sale.payment_method,
+      amount_tendered: null,
+      change_due: null,
+      paid_cash: null,
+      paid_card: null,
+      created_at: sale.created_at ?? new Date().toISOString(),
+    };
+  }
+}
+
+/** Mirrors normalize_search_text() so search results match the real server. */
+function normalize(t: string): string {
+  return (t ?? "").toLowerCase()
+    .replace(/(\d),(\d)/g, "$1.$2")
+    .replace(/(\d)\s*[x*×]\s*(\d)/g, "$1 x $2")
+    .replace(/(\d)(mm|cm|m|kg|g|l|ml)\b/g, "$1 $2")
+    .replace(/[^a-z0-9. ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchProducts(q: string) {
+  const n = normalize(q);
+  if (!n) return [];
+  const toks = n.split(" ").filter((t) => t && t !== "x");
+  return PRODUCTS.filter((p) => {
+    const text = normalize(p.name + " " + p.sku + " " + (p.barcode ?? ""));
+    return toks.every((t) => text.includes(t));
+  }).map((p) => ({ ...p, score: 1 }));
+}
+
+/**
+ * Install the fake backend on a page. Returns the Backend so a test can flip it
+ * offline and inspect what it received.
+ */
+export async function installBackend(page: Page): Promise<Backend> {
+  const be = new Backend();
+
+  // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
+  // (it sticks after sleep/wake on tablets) and instead asks whether the server
+  // answers. The fake has to model that, or the till never notices the line
+  // coming back and nothing ever syncs.
+  await page.route("**/auth/v1/health*", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+
+  await page.route("**/rest/v1/**", async (route: Route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace(/^\/rest\/v1\//, "");
+    be.calls.push(path);
+
+    if (be.offline) {
+      // What a dropped connection actually looks like to the client.
+      await route.abort("internetdisconnected");
+      return;
+    }
+
+    const json = (data: unknown, status = 200) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    const fail = (message: string) =>
+      route.fulfill({
+        status: 400, contentType: "application/json",
+        body: JSON.stringify({ message, code: "P0001", details: null, hint: null }),
+      });
+
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(route.request().postData() || "{}");
+    } catch { /* GETs have no body */ }
+
+    switch (path) {
+      case "rpc/pos_pair_register": {
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json([{ register_id: "reg1", token: "test-register-token" }]);
+      }
+      case "rpc/pos_login": {
+        const hit = Object.values(USERS).find((u) => u.pin === body.p_pin);
+        return json(hit ? [hit.row] : []);
+      }
+      case "rpc/pos_list_customers":
+        return json([]);
+      case "rpc/pos_search_products":
+        return json(searchProducts(String(body.p_query ?? "")));
+      case "rpc/pos_create_sale": {
+        try {
+          return json(be.createSale(body));
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "Rejected");
+        }
+      }
+      case "rpc/pos_admin_list_products": {
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })));
+      }
+      case "settings":
+        return json([
+          { key: "shop_name", value: "Ladybrand Hardware" },
+          { key: "address_line1", value: "12 Church St" },
+          { key: "address_line2", value: "Ladybrand, Free State" },
+          { key: "phone", value: "051 924 0000" },
+          { key: "vat_number", value: "4001234567" },
+          { key: "currency", value: "R" },
+          { key: "registration_number", value: "" },
+        ]);
+      case "categories":
+        return json([{ id: "c1", name: "Building", sort_order: 10 }]);
+      case "catalogue":
+        return json(PRODUCTS);
+      case "units_of_measure":
+        return json([
+          { code: "ea", name: "Each", allows_fraction: false, sort_order: 10 },
+          { code: "m", name: "Metre", allows_fraction: true, sort_order: 20 },
+          { code: "kg", name: "Kilogram", allows_fraction: true, sort_order: 50 },
+          { code: "bag", name: "Bag", allows_fraction: false, sort_order: 80 },
+        ]);
+      default:
+        return json([]);
+    }
+  });
+
+  return be;
+}
+
+/** Pair the till and sign in, which every till test needs first. */
+export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
+  await page.goto("/");
+  await page.locator('input[type=password]').fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await page.waitForSelector('button:text-is("1")');
+  for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
+  const ok = page.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}

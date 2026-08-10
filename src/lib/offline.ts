@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { errorMessage, errorName } from "./errors";
 
 // Network status. navigator.onLine is a coarse and often UNRELIABLE signal on
 // tablets — it can get stuck at "offline" after sleep/wake or a brief Wi-Fi
@@ -95,20 +96,32 @@ export function useOnline(): boolean {
 // True when an error looks like a connectivity failure (fetch abort/timeout or
 // the browser being offline) rather than a real server-side rejection. Used to
 // decide whether to queue an action for later instead of surfacing an error.
+//
+// Note this must handle errors that are NOT Error instances. supabase-js
+// returns `{ data, error }` and api.ts throws the plain `error` object, so an
+// `instanceof Error` check misses every one of them. When that happened here,
+// a sale taken at the instant the line dropped — before the probe had noticed —
+// was treated as a server rejection and thrown away instead of queued. That is
+// the exact case the offline queue exists for, so the check is deliberately
+// generous: a wrongly-queued sale is recoverable, a lost one is not.
 export function isNetworkError(err: unknown): boolean {
   if (!isOnline()) return true;
-  if (err instanceof Error) {
-    const m = err.message.toLowerCase();
-    return (
-      err.name === "AbortError" ||
-      err.name === "TypeError" || // fetch network failure
-      m.includes("failed to fetch") ||
-      m.includes("network") ||
-      m.includes("load failed") ||
-      m.includes("timeout")
-    );
-  }
-  return false;
+  const name = errorName(err);
+  if (name === "AbortError" || name === "TypeError") return true;
+  const m = errorMessage(err, "").toLowerCase();
+  if (!m) return false;
+  return (
+    m.includes("failed to fetch") ||
+    m.includes("networkerror") ||
+    m.includes("network request failed") ||
+    m.includes("network error") ||
+    m.includes("load failed") ||          // Safari's wording
+    m.includes("connection") ||
+    m.includes("timeout") ||
+    m.includes("aborted") ||
+    m.includes("err_internet_disconnected") ||
+    m.includes("typeerror: failed to fetch")
+  );
 }
 
 // True when the server doesn't (yet) have the RPC we called — e.g. the frontend

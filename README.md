@@ -47,6 +47,12 @@ that matter, each one a thing the cafe build got wrong for this trade:
 | `client_ref` idempotency key | A replayed offline sale cannot double-charge |
 | Normalised `search_text` + trigram index | "concrete nail 2.5x5" reaches "Nail Concrete 2.5 x 50mm" |
 
+`npm run test:e2e` drives the built app in a browser with the Supabase calls
+intercepted (`e2e/`), so it needs no credentials or connectivity and can gate a
+pull request. It covers the journeys that would cost a shop money if they broke:
+scanning, decimal quantities, whole-unit refusal, a cash sale, a server refusal
+reaching the cashier, and a sale taken offline syncing exactly once.
+
 Verified end to end on the live project: a mixed basket (2.5 m chain + 0.75 kg
 nails + 3 bags cement) prices to R464.00 with R60.52 VAT; fractional "each" is
 rejected; overselling is rejected; an employee discount parks for approval

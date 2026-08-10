@@ -9,6 +9,7 @@ import {
 } from "../lib/api";
 import { adminListProducts } from "../lib/adminApi";
 import { verifyPinOffline } from "../lib/auth";
+import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
 import { money } from "../lib/format";
 import { cacheGet, cacheSet } from "../lib/localCache";
@@ -211,9 +212,10 @@ export default function POS() {
       );
       if (!queued) void refresh();
     } catch (e) {
-      setBanner(
-        e instanceof Error ? e.message : "The sale was refused. Nothing charged."
-      );
+      // The server's reason is the useful part — "Not enough stock for X",
+      // "Over credit limit: R500 available" — and it arrives as a plain object,
+      // so it needs extracting rather than an instanceof check.
+      setBanner(errorMessage(e, "The sale was refused. Nothing charged."));
     } finally {
       setBusy(false);
     }

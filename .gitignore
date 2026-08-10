@@ -5,6 +5,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# Fake values for the e2e build — not credentials, and needed by CI.
+!.env.e2e
 .DS_Store
 *.log
 .vscode/*
@@ -14,3 +16,7 @@ dist-ssr
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Playwright
+test-results/
+playwright-report/

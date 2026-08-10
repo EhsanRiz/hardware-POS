@@ -7,6 +7,7 @@
 // server-side but its response was lost on the way back.
 import { useEffect, useState } from "react";
 import { createSale } from "./api";
+import { errorMessage } from "./errors";
 import { verifyPinOffline } from "./auth";
 import { isNetworkError, isOnline, onNetworkChange } from "./offline";
 import { can } from "./permissions";
@@ -168,23 +169,6 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
   return { sale, queued: true };
 }
 
-// Supabase/PostgREST errors are plain objects (not Error instances), so pull a
-// human-readable message from whichever field carries it.
-function syncErrorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (e && typeof e === "object") {
-    const o = e as Record<string, unknown>;
-    const msg =
-      (o.message as string) ||
-      (o.details as string) ||
-      (o.hint as string) ||
-      (o.error_description as string) ||
-      (o.code ? `Error ${o.code}` : "");
-    if (msg) return String(msg);
-  }
-  return typeof e === "string" && e ? e : "Sync rejected";
-}
-
 let syncing = false;
 
 /** Replay queued sales to the server (idempotent). Safe to call anytime. */
@@ -220,7 +204,7 @@ export async function syncNow(): Promise<void> {
         }
         // Permanent rejection (e.g. the product was deleted, or stock has since
         // gone negative): park it so it stops blocking the rest of the queue.
-        moveToFailed(item, syncErrorMessage(e));
+        moveToFailed(item, errorMessage(e, "Sync rejected"));
       }
     }
   } finally {
