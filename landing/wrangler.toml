@@ -6,12 +6,14 @@
 #
 #   npx wrangler deploy          # from this directory
 #
-# Then in the dashboard: Workers & Pages > innovaearth-pos-landing > Settings >
-# Domains & Routes > Add custom domain > pos.innovaearth.com. The zone is
-# already in this account, so the DNS record is created automatically.
+# The route below attaches pos.innovaearth.com on deploy — the zone is already
+# in this account, so wrangler creates the DNS record itself. No dashboard step.
 name = "innovaearth-pos-landing"
 compatibility_date = "2024-09-23"
 account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
+routes = [
+  { pattern = "pos.innovaearth.com", custom_domain = true }
+]
 
 [assets]
 directory = "./"
