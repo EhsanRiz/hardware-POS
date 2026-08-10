@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-demo
 dist-ssr
 *.local
 .env
@@ -7,6 +8,8 @@ dist-ssr
 !.env.example
 # Fake values for the e2e build — not credentials, and needed by CI.
 !.env.e2e
+# Placeholder values for the demo build — not credentials.
+!.env.demo
 .DS_Store
 *.log
 .vscode/*

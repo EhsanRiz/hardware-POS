@@ -10,7 +10,8 @@
     "test": "node test/hardware-rules.test.mjs && node test/money.test.mjs",
     "build:e2e": "tsc -b && vite build --mode e2e",
     "test:e2e": "playwright test",
-    "test:all": "npm test && npm run test:e2e"
+    "test:all": "npm test && npm run test:e2e",
+    "build:demo": "tsc -b && SINGLEFILE=1 vite build --mode demo --outDir dist-demo"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
