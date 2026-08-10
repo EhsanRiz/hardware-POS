@@ -1,9 +1,22 @@
-# InnovaEarth POS landing — Cloudflare Workers static assets.
-# Deployed separately from the POS app itself: this is a public marketing page
-# with no backend, and it should not share a build or a cache with the till.
+# InnovaEarth POS landing — Cloudflare Worker serving static assets.
+#
+# Deployed as its own Worker, separate from both the innovaearth.com site and
+# the till app: this is a public marketing page with no backend, and it should
+# not share a build, a cache or a deploy cadence with either.
+#
+#   npx wrangler deploy          # from this directory
+#
+# Then in the dashboard: Workers & Pages > innovaearth-pos-landing > Settings >
+# Domains & Routes > Add custom domain > pos.innovaearth.com. The zone is
+# already in this account, so the DNS record is created automatically.
 name = "innovaearth-pos-landing"
 compatibility_date = "2024-09-23"
+account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
 
 [assets]
 directory = "./"
-not_found_handling = "single-page-application"
+# NOT single-page-application. This site is one real page, so an SPA fallback
+# would answer every mistyped or stale URL with the homepage and HTTP 200 — a
+# soft 404, which search engines treat as a duplicate-content problem. "none"
+# lets a genuinely missing path return a real 404.
+not_found_handling = "none"

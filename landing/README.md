@@ -6,14 +6,42 @@ two read as one company.
 
 ## Deploying
 
-Cloudflare, same account as the `innovaearth.com` zone:
+This is its own Cloudflare Worker — `innovaearth-pos-landing` — separate from
+the `innovaearth` Worker that serves the main site, and separate from the till
+app. Same account, so the `innovaearth.com` zone is already there.
 
 ```bash
-npx wrangler deploy      # from this directory
+cd landing
+npx wrangler login       # once
+npx wrangler deploy
 ```
 
-Then add **pos.innovaearth.com** as a custom domain. Because the zone is already
-in the account, DNS resolves without being configured by hand.
+Then attach the hostname: **Workers & Pages → innovaearth-pos-landing →
+Settings → Domains & Routes → Add custom domain → `pos.innovaearth.com`**.
+Because the zone is in the same account, Cloudflare creates the DNS record and
+issues the certificate itself; nothing to configure by hand.
+
+### Why a separate Worker
+
+Adding a route to the existing `innovaearth` Worker would work, but it would
+tie this page's deploys to the main site's, and both would share one asset
+directory. Separate Workers keep marketing-site changes from touching the
+product page and vice versa.
+
+### One decision still open
+
+The till app also needs a home. Two options, and this config assumes neither:
+
+- `pos.innovaearth.com` serves this page, and the app lives at
+  `app.innovaearth.com`. Cleanest split, two Workers, no path routing.
+- `pos.innovaearth.com` serves both, with the app under `/app`. One hostname
+  for customers to remember, but the Worker then needs a route rule so `/app/*`
+  reaches the till build instead of this one.
+
+Note `not_found_handling = "none"` rather than `single-page-application`. With
+one real page, an SPA fallback answers every mistyped URL with the homepage and
+HTTP 200 — a soft 404. If the app is later served from the same Worker under a
+path, that setting needs revisiting for the app's client-side routes.
 
 It lives inside the `hardware-pos` repo for now purely so it has a home; it
 shares no code with the till and can be lifted into its own repo unchanged.
