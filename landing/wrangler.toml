@@ -1,0 +1,9 @@
+# InnovaEarth POS landing — Cloudflare Workers static assets.
+# Deployed separately from the POS app itself: this is a public marketing page
+# with no backend, and it should not share a build or a cache with the till.
+name = "innovaearth-pos-landing"
+compatibility_date = "2024-09-23"
+
+[assets]
+directory = "./"
+not_found_handling = "single-page-application"

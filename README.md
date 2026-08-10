@@ -149,6 +149,13 @@ Node is pinned to 20 via `.nvmrc`.
 Seeded by `0005_seed.sql`: Manager `1234`, Employee `5678`.
 **Rotate both before this goes anywhere near a shop floor.**
 
+## Landing page
+
+`landing/` holds the public marketing site for **pos.innovaearth.com** — plain
+static HTML/CSS/JS, no build step, deployed separately from the till. Its search
+demo runs the same rules as `src/lib/search.ts`, so a visitor can verify the
+claim by typing into it. See [`landing/README.md`](landing/README.md).
+
 ## Deploying (Cloudflare Pages)
 
 Connect the repo to Cloudflare Pages with build command `npm run build` and
