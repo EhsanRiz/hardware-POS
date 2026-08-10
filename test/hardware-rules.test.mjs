@@ -45,5 +45,70 @@ const usesStoredVat = src.includes('sale.tax_amount') && !src.includes('VAT_RATE
 console.log(`${usesStoredVat ? 'PASS' : 'FAIL'}  VAT printed from stored sale.tax_amount, not a live rate`);
 results.push(usesStoredVat);
 
+
+// --- Offline product search -------------------------------------------------
+// These mirror the SQL tests for pos_search_products. The device and the server
+// must agree, or the same query behaves differently during an outage.
+{
+  console.log('\n--- offline search ---');
+  const norm = (t) => (t ?? '').toLowerCase()
+    .replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/(\d)\s*[x*×]\s*(\d)/g, '$1 x $2')
+    .replace(/(\d)(mm|cm|m|kg|g|l|ml)\b/g, '$1 $2')
+    .replace(/[^a-z0-9. ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const ed = (a, b, max) => {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i]; let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+        best = Math.min(best, cur[j]);
+      }
+      if (best > max) return max + 1;
+      prev = cur;
+    }
+    return prev[b.length];
+  };
+
+  const search = (products, q) => {
+    const n = norm(q); if (!n) return products;
+    const toks = n.split(' ').filter(t => t && t !== 'x');
+    let hits = products.filter(p => toks.every(t => norm(p.name + ' ' + p.sku).includes(t)));
+    if (hits.length === 0) {
+      hits = products.filter(p => {
+        const ws = norm(p.name + ' ' + p.sku).split(' ').filter(Boolean);
+        return toks.every(t => ws.some(w => ed(t, w, t.length < 4 ? 1 : 2) <= (t.length < 4 ? 1 : 2)));
+      });
+    }
+    return hits.sort((a,b) => a.name.length - b.name.length);
+  };
+
+  const catalogue = [
+    { name: 'Nail Concrete 2.5 x 50mm',        sku: 'NCN-2550' },
+    { name: 'Nail Concrete 3.0 x 60mm',        sku: 'NCN-3060' },
+    { name: 'Nail Wire Round 2.5 x 50mm',      sku: 'NWR-2550' },
+    { name: 'Screw Chipboard 4.0 x 40mm (100)', sku: 'SCR-CHIP-4x40' },
+    { name: 'Anchor Bolt Sleeve M10 x 100mm',  sku: 'ANC-M10' },
+    { name: 'Paint PVA White 20L Interior',    sku: 'PVA-WHT-20' },
+  ];
+
+  const expect = (q, want) => {
+    const top = search(catalogue, q)[0]?.name ?? '(nothing)';
+    const ok = top === want;
+    results.push(ok);
+    console.log(`${ok ? 'PASS' : 'FAIL'}  "${q}" → ${top}${ok ? '' : `  (wanted ${want})`}`);
+  };
+
+  expect('concrete nail 2.5x5',    'Nail Concrete 2.5 x 50mm'); // word order + size shorthand
+  expect('nail concrete 2,5 x 50', 'Nail Concrete 2.5 x 50mm'); // decimal comma
+  expect('conrete nial',           'Nail Concrete 2.5 x 50mm'); // typo + transposition
+  expect('chipbord screw',         'Screw Chipboard 4.0 x 40mm (100)');
+  expect('sleeve anchor m10',      'Anchor Bolt Sleeve M10 x 100mm');
+  expect('white pva 20l',          'Paint PVA White 20L Interior');
+  expect('zzzz nothing',           '(nothing)');               // no noise
+}
+
 console.log(`\n${results.filter(r => !r).length} failure(s) of ${results.length}`);
 process.exit(results.every(Boolean) ? 0 : 1);

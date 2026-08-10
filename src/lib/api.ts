@@ -217,6 +217,31 @@ export async function listCustomers(): Promise<Customer[]> {
   return data as Customer[];
 }
 
+// --- Search -----------------------------------------------------------------
+
+/**
+ * Server-side product search: normalises the query, matches every word
+ * independently, tolerates typos, and ranks the results.
+ *
+ * Preferred over the on-device search when the network is up, because it sees
+ * the whole catalogue and uses real trigram indexes. `searchProductsLocal` in
+ * search.ts is the offline equivalent.
+ */
+export async function searchProducts(
+  query: string,
+  limit = 25
+): Promise<Product[]> {
+  const { data, error } = await supabase.rpc("pos_search_products", {
+    p_register_token: requireToken(),
+    p_query: query,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  // The RPC returns a score alongside the product shape; the till doesn't need
+  // it, and dropping it here keeps Product honest.
+  return (data as (Product & { score: number })[]).map(({ score: _s, ...p }) => p);
+}
+
 // --- Recent sales -----------------------------------------------------------
 
 export async function recentSales(limit = 20): Promise<RecentSale[]> {

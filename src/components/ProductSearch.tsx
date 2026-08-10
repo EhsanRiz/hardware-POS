@@ -1,19 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { searchProducts } from "../lib/api";
 import { money } from "../lib/format";
+import { isNetworkError, useOnline } from "../lib/offline";
+import { exactMatch, searchProductsLocal } from "../lib/search";
 import type { Category, Product } from "../lib/types";
 
 /**
  * Finding a product in a hardware shop.
  *
  * The cafe's photo-tile grid works for forty items and falls apart at four
- * thousand, so the primary input here is the keyboard: type a few characters of
- * a name or a SKU and the list narrows. A barcode scanner is just a keyboard
- * that types fast and presses Enter, so scanning works through the same box
- * with no extra hardware integration — an exact barcode match adds the item to
- * the cart immediately and clears the field, ready for the next scan.
+ * thousand, so the primary input here is the keyboard. Three things a counter
+ * actually needs, in order of how often they matter:
  *
- * Category tiles remain as a fallback for the loose goods that have no barcode
- * and whose names nobody can spell (sand, stone, cut lengths).
+ *   1. SCANNING. A barcode scanner is a keyboard that types fast and presses
+ *      Enter, so it works through this same box with no hardware integration.
+ *      An exact code rings straight through rather than showing a list of one.
+ *   2. THE SHOP'S NAME vs THE CUSTOMER'S WORDS. Someone asks for a "concrete
+ *      nail 2.5x5"; the shelf label says "Nail Concrete 2.5 x 50mm". Matching
+ *      each word independently and normalising size notation bridges that.
+ *   3. TYPOS, because the counter is busy.
+ *
+ * The server does this better — it sees the whole catalogue and has real
+ * indexes — so it is used when the network is up. When it is not, the same
+ * logic runs on the cached catalogue, because a search that dies with the
+ * connection is useless at exactly the moment the shop needs it.
  */
 export default function ProductSearch({
   products,
@@ -28,10 +38,13 @@ export default function ProductSearch({
 }) {
   const [term, setTerm] = useState("");
   const [category, setCategory] = useState<string | null>(null);
+  const [remote, setRemote] = useState<Product[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const online = useOnline();
 
-  // Keep focus in the search box: a scanner types wherever the caret is, and a
-  // scan that lands in a quantity field would be a silent mis-sale.
+  // Keep focus in the search box: a scanner types wherever the caret happens to
+  // be, and a scan that lands in a quantity field is a silent mis-sale.
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -39,33 +52,58 @@ export default function ProductSearch({
   const price = (p: Product) =>
     trade && p.price_trade != null ? p.price_trade : p.price_retail;
 
-  const matches = useMemo(() => {
-    const q = term.trim().toLowerCase();
+  // Results shown while the server request is in flight, and whenever offline.
+  const local = useMemo(() => {
     let list = products;
     if (category) list = list.filter((p) => p.category_id === category);
-    if (!q) return list.slice(0, 60);
-    return list
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          (p.barcode ?? "").includes(q)
-      )
-      .slice(0, 60);
+    return searchProductsLocal(list, term, 60);
   }, [products, term, category]);
+
+  // Ask the server, debounced. Typing is faster than a round trip, so a stale
+  // response must never overwrite a newer one.
+  useEffect(() => {
+    const q = term.trim();
+    if (!online || q.length < 2) {
+      setRemote(null);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchProducts(q, 60)
+        .then((rows) => {
+          if (!cancelled) setRemote(rows);
+        })
+        .catch((e) => {
+          // Falling back to the local list is the right answer for a dropped
+          // connection; anything else is worth surfacing rather than hiding.
+          if (!cancelled && !isNetworkError(e)) console.error(e);
+          if (!cancelled) setRemote(null);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [term, online]);
+
+  const matches = useMemo(() => {
+    const base = remote ?? local;
+    return category ? base.filter((p) => p.category_id === category) : base;
+  }, [remote, local, category]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const q = term.trim();
     if (!q) return;
 
-    // An exact barcode or SKU is unambiguous — treat it as a scan and ring it
-    // straight through rather than making the cashier pick from a list of one.
-    const exact =
-      products.find((p) => p.barcode && p.barcode === q) ??
-      products.find((p) => p.sku.toLowerCase() === q.toLowerCase());
-    if (exact) {
-      onAdd(exact);
+    // An exact barcode or SKU is unambiguous — treat it as a scan.
+    const hit = exactMatch(products, q);
+    if (hit) {
+      onAdd(hit);
       setTerm("");
       return;
     }
@@ -79,16 +117,23 @@ export default function ProductSearch({
   return (
     <div className="flex flex-col h-full min-h-0">
       <form onSubmit={submit} className="p-3 pb-2">
-        <input
-          ref={inputRef}
-          type="search"
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder="Scan barcode, or type a name or SKU…"
-          autoComplete="off"
-          className="w-full rounded-xl border border-stone-300 px-4 py-3 text-lg
-                     focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        />
+        <div className="relative">
+          <input
+            ref={inputRef}
+            type="search"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder="Scan barcode, or describe the item…"
+            autoComplete="off"
+            className="w-full rounded-xl border border-stone-300 px-4 py-3 text-lg
+                       focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          {searching && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-stone-400">
+              searching…
+            </span>
+          )}
+        </div>
       </form>
 
       <div className="flex gap-2 overflow-x-auto px-3 pb-2 shrink-0">
@@ -118,7 +163,7 @@ export default function ProductSearch({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        {matches.length === 0 && (
+        {matches.length === 0 && term.trim() !== "" && (
           <p className="text-stone-500 text-sm p-4 text-center">
             Nothing matches “{term}”.
           </p>

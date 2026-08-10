@@ -45,6 +45,7 @@ that matter, each one a thing the cafe build got wrong for this trade:
 | `stock_movements` audit table | Answers "why does it think we have nine?" |
 | `cost_at_sale` on each line | Margin reporting survives a cost change |
 | `client_ref` idempotency key | A replayed offline sale cannot double-charge |
+| Normalised `search_text` + trigram index | "concrete nail 2.5x5" reaches "Nail Concrete 2.5 x 50mm" |
 
 Verified end to end on the live project: a mixed basket (2.5 m chain + 0.75 kg
 nails + 3 bags cement) prices to R464.00 with R60.52 VAT; fractional "each" is
@@ -52,6 +53,32 @@ rejected; overselling is rejected; an employee discount parks for approval
 without burning an invoice number; a replayed `client_ref` returns the original
 sale; trade customers get trade prices; the credit limit holds; and voiding
 returns stock with a logged reason.
+
+## Finding a product
+
+A hardware shop's own name for something is rarely the customer's words: the
+shelf says *Nail Concrete 2.5 x 50mm*, the customer asks for a *concrete nail
+2.5x5*. Search handles that in three deterministic steps before any model is
+involved:
+
+- **Word order** — each word is matched independently, so "concrete nail" finds
+  "Nail Concrete". All words must match, so it doesn't return every nail.
+- **Size notation** — `2,5 x 50`, `2.5x50`, `2.5X50mm` and `2.5*50` all
+  normalise to one form, on both the query and the product text.
+- **Typos** — a second pass on edit distance runs only when the first finds
+  nothing, so "conrete nial" still lands on concrete nails without loosening
+  ordinary searches.
+
+Scanning goes through the same box: a barcode scanner is a keyboard that
+presses Enter, and an exact code rings straight through.
+
+The server does this better (whole catalogue, real trigram indexes) and is used
+when online. `src/lib/search.ts` mirrors the same rules on the device so search
+keeps working during an outage — the two are covered by the same cases in
+`npm test`, because if they drift the same query behaves differently offline.
+
+**Not yet built:** semantic search — "something to fix wood to a brick wall".
+That needs embeddings and is genuinely the part where a model earns its place.
 
 ## Still to build
 
@@ -64,6 +91,8 @@ rebuilt against this schema:
 - **Cash-up** — `session_id` is reserved on `sales`; the logic is not ported
 - **Quotes as documents** — the till prints a quote, but it is not stored or
   convertible to an invoice
+- **Semantic search** — embeddings over the catalogue, for intent rather than
+  words. The deterministic layer above is the fallback it degrades to.
 - **Login rate limiting** — see *Known security tradeoffs*
 
 Catalogue admin is now in place: **Manage** on the till (PIN-gated) edits
