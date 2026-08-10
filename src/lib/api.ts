@@ -31,7 +31,8 @@ export class NotPairedError extends Error {
   }
 }
 
-function requireToken(): string {
+/** The pairing token, or NotPairedError. Shared with adminApi — same rule. */
+export function requireToken(): string {
   const token = registerToken();
   if (!token) throw new NotPairedError();
   return token;
@@ -39,9 +40,18 @@ function requireToken(): string {
 
 // --- Sign in ----------------------------------------------------------------
 
-/** Verify a PIN and return the matching user, or null if no match. */
+/**
+ * Verify a PIN and return the matching user, or null if no match.
+ *
+ * The check is scoped to this till's organization by the register token — two
+ * shops' staff may well pick the same six digits, and neither must ever
+ * resolve to the other. That is also why sign-in needs no phone number.
+ */
 export async function login(pin: string): Promise<User | null> {
-  const { data, error } = await supabase.rpc("pos_login", { p_pin: pin });
+  const { data, error } = await supabase.rpc("pos_login", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
   if (error) throw error;
   const rows = data as User[];
   return rows?.[0] ?? null;
@@ -50,14 +60,18 @@ export async function login(pin: string): Promise<User | null> {
 // --- Pairing ----------------------------------------------------------------
 
 /**
- * Pair this device as a till. Returns the token, which is shown exactly once —
+ * Pair this device as a till. The manager's phone identifies them globally
+ * (this is the one moment the org is unknown — afterwards the token carries
+ * it), the PIN proves it. Returns the token, which is shown exactly once —
  * the server only ever stores its hash.
  */
 export async function pairRegister(
+  managerPhone: string,
   managerPin: string,
   name: string
 ): Promise<{ register_id: string; token: string }> {
   const { data, error } = await supabase.rpc("pos_pair_register", {
+    p_phone: managerPhone,
     p_pin: managerPin,
     p_name: name,
   });
@@ -69,6 +83,7 @@ export async function pairRegister(
 
 export async function listRegisters(managerPin: string): Promise<Register[]> {
   const { data, error } = await supabase.rpc("pos_list_registers", {
+    p_register_token: requireToken(),
     p_pin: managerPin,
   });
   if (error) throw error;
@@ -80,6 +95,7 @@ export async function revokeRegister(
   registerId: string
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_revoke_register", {
+    p_register_token: requireToken(),
     p_pin: managerPin,
     p_register_id: registerId,
   });
@@ -89,46 +105,42 @@ export async function revokeRegister(
 // --- Catalogue --------------------------------------------------------------
 
 /**
- * The full sellable range. Read straight from the `catalogue` view rather than
- * an RPC so the service worker can cache it — the till needs the price list
- * available with the network down.
+ * The full sellable range for THIS shop. The register token names the org, so
+ * an unpaired browser sees nothing at all — there is no anonymous read of any
+ * catalogue any more. Offline resilience comes from the till's own cache
+ * (localCache in POS.tsx), which survives outages just as the old
+ * service-worker-cached view did.
  */
 export async function fetchCatalogue(): Promise<Product[]> {
-  const { data, error } = await supabase
-    .from("catalogue")
-    .select("*")
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
+  const { data, error } = await supabase.rpc("pos_catalogue", {
+    p_register_token: requireToken(),
+  });
   if (error) throw error;
   return data as Product[];
 }
 
 export async function fetchCategories(): Promise<Category[]> {
-  const { data, error } = await supabase
-    .from("categories")
-    .select("id, name, sort_order")
-    .order("sort_order", { ascending: true });
+  const { data, error } = await supabase.rpc("pos_categories", {
+    p_register_token: requireToken(),
+  });
   if (error) throw error;
   return data as Category[];
 }
 
 export async function fetchSettings(): Promise<ShopSettings> {
-  const { data, error } = await supabase.from("settings").select("key, value");
+  const { data, error } = await supabase.rpc("pos_org_settings", {
+    p_register_token: requireToken(),
+  });
   if (error) throw error;
-  const map = Object.fromEntries(
-    (data as { key: string; value: string | null }[]).map((r) => [
-      r.key,
-      r.value ?? "",
-    ])
-  );
+  const row = (data as ShopSettings[])?.[0];
   return {
-    shop_name: map.shop_name ?? "Hardware Shop",
-    address_line1: map.address_line1 ?? "",
-    address_line2: map.address_line2 ?? "",
-    phone: map.phone ?? "",
-    vat_number: map.vat_number ?? "",
-    currency: map.currency ?? "R",
-    registration_number: map.registration_number ?? "",
+    shop_name: row?.shop_name ?? "Hardware Shop",
+    address_line1: row?.address_line1 ?? "",
+    address_line2: row?.address_line2 ?? "",
+    phone: row?.phone ?? "",
+    vat_number: row?.vat_number ?? "",
+    currency: row?.currency ?? "R",
+    registration_number: row?.registration_number ?? "",
   };
 }
 
@@ -186,6 +198,7 @@ export async function approveSale(
 ): Promise<Sale> {
   const { data, error } = await supabase.rpc("pos_approve_sale", {
     p_sale_id: saleId,
+    p_register_token: requireToken(),
     p_pin: managerPin,
   });
   if (error) throw error;
@@ -200,6 +213,7 @@ export async function voidSale(
 ): Promise<Sale> {
   const { data, error } = await supabase.rpc("pos_void_sale", {
     p_sale_id: saleId,
+    p_register_token: requireToken(),
     p_pin: managerPin,
     p_reason: reason,
   });

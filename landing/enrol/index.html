@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enrol — InnovaPOS</title>
+<meta name="description" content="Set your InnovaPOS PIN. Enter your phone number, type the code we text you, and choose your own six-digit PIN.">
+<meta name="robots" content="index,follow">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="stylesheet" href="/assets/site.css">
+<style>
+  .enrol-card { max-width: 460px; margin: 0 auto; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .field { display: block; margin-bottom: 22px; }
+  .field > span {
+    display: block; font-family: var(--heading); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.14em; color: var(--n700);
+    margin-bottom: 7px;
+  }
+  .field input {
+    width: 100%; box-sizing: border-box;
+    font-family: var(--body); font-size: 18px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 12px 14px; outline: none;
+  }
+  .field input:focus-visible { border-color: var(--gold); outline: none; }
+  .field input.code {
+    font-family: var(--heading); font-size: 28px; text-align: center;
+    letter-spacing: 0.4em; font-variant-numeric: tabular-nums;
+  }
+  .form-msg { margin-top: 18px; font-size: 15px; min-height: 1.4em; }
+  .form-msg.ok { color: var(--gold-700); }
+  .form-msg.err { color: #b03a2b; }
+  .form-note { font-size: 14px; color: var(--n700); margin-top: 18px; }
+  .steps {
+    display: flex; gap: 8px; margin-bottom: 32px;
+    font-family: var(--heading); font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--n700);
+  }
+  .steps span { padding-bottom: 6px; border-bottom: 2px solid var(--rule); flex: 1; text-align: center; }
+  .steps span.on { color: var(--gold-700); border-bottom-color: var(--gold); }
+  .again { background: none; border: 0; padding: 0; font: inherit; color: var(--gold-700); cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header class="site-header scrolled">
+  <div class="nav">
+    <a href="/" class="lockup" aria-label="InnovaPOS">
+      <svg width="26" height="26" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <path d="M30 12H12v18M66 12h18v18M84 66v18H66M30 84H12V66"
+              stroke="#c8912f" stroke-width="5.5" stroke-linecap="round"/>
+        <path d="M34 34v28M46 34v28M62 34v28"
+              stroke="#8a5f14" stroke-width="5.5" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">Innova<span>POS</span></span>
+    </a>
+    <div class="nav-actions">
+      <a href="https://app.innovaearth.com/" class="btn btn-quiet">Store sign-in</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="narrow">
+    <div class="enrol-card">
+      <span class="kicker">Staff enrolment</span>
+      <h1 style="font-size:clamp(2rem,5vw,2.75rem);margin-bottom:14px">Set your PIN.</h1>
+      <p class="lead" style="font-size:1.0625rem;margin-bottom:28px">
+        Your manager added your phone number. Prove it's yours with the code we
+        text you, then choose a six-digit PIN — yours alone, known to nobody
+        else. The same steps reset a forgotten PIN.
+      </p>
+
+      <div class="steps" aria-hidden="true">
+        <span id="tab1" class="on">Phone</span>
+        <span id="tab2">Code</span>
+        <span id="tab3">PIN</span>
+      </div>
+
+      <form id="step1" class="step active" novalidate>
+        <label class="field">
+          <span>Your phone number</span>
+          <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="082 123 4567" autofocus>
+        </label>
+        <button type="submit" class="btn btn-solid">Text me a code</button>
+      </form>
+
+      <form id="step2" class="step" novalidate>
+        <label class="field">
+          <span>The six-digit code we sent</span>
+          <input id="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="······">
+        </label>
+        <button type="submit" class="btn btn-solid">Verify the code</button>
+        <p class="form-note">
+          Nothing arrived after a minute?
+          <button type="button" class="again" id="resend">Send it again</button>
+        </p>
+      </form>
+
+      <form id="step3" class="step" novalidate>
+        <label class="field">
+          <span>Choose a six-digit PIN</span>
+          <input id="pin1" class="code" type="password" inputmode="numeric" maxlength="6" placeholder="······">
+        </label>
+        <label class="field">
+          <span>Type it once more</span>
+          <input id="pin2" class="code" type="password" inputmode="numeric" maxlength="6" placeholder="······">
+        </label>
+        <button type="submit" class="btn btn-solid">Set my PIN</button>
+      </form>
+
+      <div id="done" class="step">
+        <p class="lead" style="font-size:1.0625rem">
+          Done. Sign in on your shop's till with your new PIN —
+          it also works with the connection down.
+        </p>
+        <a class="btn btn-solid" href="https://app.innovaearth.com/">Go to the till</a>
+      </div>
+
+      <p class="form-msg" id="msg" role="status" aria-live="polite"></p>
+      <p class="form-note">
+        The code expires in 10 minutes. Your PIN is never sent by SMS and we
+        will never ask you for it — the code only lets <em>you</em> choose one.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="foot-end" style="border-top:0;padding-top:0">
+      <span>&copy; 2026 InnovaEarth. All rights reserved.</span>
+      <span>InnovaPOS is a product of InnovaEarth.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var ENDPOINT = "https://krkatpesfwqnjitcxkco.supabase.co/functions/v1/auth";
+  var msg = document.getElementById("msg");
+  var phone = "";
+  var setpinToken = "";
+
+  function show(n) {
+    ["step1", "step2", "step3", "done"].forEach(function (id, i) {
+      document.getElementById(id).classList.toggle("active", i === n - 1);
+    });
+    [1, 2, 3].forEach(function (i) {
+      document.getElementById("tab" + i).classList.toggle("on", i <= Math.min(n, 3));
+    });
+    msg.textContent = "";
+  }
+
+  function say(text, kind) {
+    msg.className = "form-msg " + (kind || "");
+    msg.textContent = text;
+  }
+
+  async function call(body) {
+    var res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  async function requestCode() {
+    say("Sending…");
+    try {
+      var out = await call({ action: "request_code", phone: phone, purpose: "enrol" });
+      say(out.message || "If that number is registered, a code has been sent.", "ok");
+    } catch (e) {
+      say("Could not reach the server. Check your connection and try again.", "err");
+      throw e;
+    }
+  }
+
+  document.getElementById("step1").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    phone = document.getElementById("phone").value.trim();
+    if (phone.replace(/[\s()-]/g, "").length < 8) {
+      return say("Enter the phone number your manager registered.", "err");
+    }
+    try { await requestCode(); } catch (err) { return; }
+    show(2);
+    say("If that number is registered, a code is on its way.", "ok");
+    document.getElementById("code").focus();
+  });
+
+  document.getElementById("resend").addEventListener("click", function () {
+    requestCode().catch(function () {});
+  });
+
+  document.getElementById("step2").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var code = document.getElementById("code").value.trim();
+    if (!/^\d{6}$/.test(code)) return say("The code is six digits.", "err");
+    say("Checking…");
+    try {
+      var out = await call({ action: "verify_code", phone: phone, code: code });
+      if (!out.ok) return say(out.message || "That code didn't work.", "err");
+      setpinToken = out.token;
+      show(3);
+      document.getElementById("pin1").focus();
+    } catch (err) {
+      say("Could not reach the server. Check your connection and try again.", "err");
+    }
+  });
+
+  document.getElementById("step3").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var p1 = document.getElementById("pin1").value;
+    var p2 = document.getElementById("pin2").value;
+    if (!/^\d{6}$/.test(p1)) return say("The PIN must be exactly six digits.", "err");
+    if (p1 !== p2) return say("The two PINs don't match.", "err");
+    say("Saving…");
+    try {
+      var out = await call({ action: "set_pin", token: setpinToken, pin: p1 });
+      if (!out.ok) return say(out.message || "That didn't work. Start again with a new code.", "err");
+      show(4);
+      say(out.message || "PIN set.", "ok");
+    } catch (err) {
+      say("Could not reach the server. Check your connection and try again.", "err");
+    }
+  });
+})();
+</script>
+</body>
+</html>

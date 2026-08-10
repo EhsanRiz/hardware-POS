@@ -1,10 +1,12 @@
 /**
- * Classical — the design system from design_handoff_innovapos.
+ * Classical — the design system from design_handoff_innovapos, in the
+ * InnovaEarth house palette from brand_assets_innovapos/colors/colors.css.
  *
- * Values are taken literally from the handoff's token sheet
- * (design/_ds/classical-.../styles.css) and its README. Do not substitute:
- * several of these were arrived at by a contrast audit during the design work,
- * and a "close enough" hex undoes it.
+ * The STRUCTURE (hairline weights, stroke-only accent, type scale) is the
+ * handoff's; the VALUES are the brand sheet's — green grounds, cream reading
+ * surfaces, amber strokes. Do not substitute: the brand sheet's pairings were
+ * arrived at by a contrast audit (which amber goes on which ground), and a
+ * "close enough" hex undoes it.
  *
  * FONTS ARE SELF-HOSTED, DELIBERATELY.
  * A till that must complete sales through a fibre cut cannot fetch a stylesheet
@@ -15,33 +17,33 @@
 
 :root {
   /* Ground and ink ------------------------------------------------------ */
-  --color-bg: #f3f2f2;          /* paper */
-  --color-surface: #eae9e9;     /* recessed surfaces, image mats */
-  --color-text: #201f1d;        /* ink */
+  --color-bg: #f5f2ea;          /* cream — the reading surface */
+  --color-surface: #eae5d8;     /* cream-sunk: input wells, image mats */
+  --color-text: #1b2a24;        /* ink */
 
-  /* Gold. Always a stroke — never a fill. The only filled ground in the
+  /* Amber. Always a stroke — never a fill. The only filled ground in the
      identity is --color-colophon, used for the app-icon tile. */
-  --color-accent: #b68235;
-  --color-accent-100: #fff3e4;  /* just-scanned row tint */
-  --color-accent-400: #e1ad66;  /* the gold on dark grounds, lifted */
-  --color-accent-700: #7d5411;  /* accent TEXT at paragraph size */
+  --color-accent: #c8912f;
+  --color-accent-100: rgba(200, 145, 47, 0.14);  /* just-scanned row tint */
+  --color-accent-400: #e0b45c;  /* the amber on green grounds, lifted */
+  --color-accent-700: #8a5f14;  /* accent TEXT at paragraph size, on cream */
 
-  --color-neutral-100: #f8f4f4; /* scan field, row hover */
-  --color-neutral-200: #eae7e7;
-  --color-neutral-300: #d7d3d3; /* disabled rules */
-  --color-neutral-400: #bab6b6; /* muted text ON NEAR-BLACK ONLY */
-  --color-neutral-700: #605d5d; /* floor for secondary text on paper */
-  --color-neutral-800: #444141; /* body copy */
-  --color-neutral-900: #2d2b2b;
+  --color-neutral-100: #faf8f1; /* scan field, row hover */
+  --color-neutral-200: #eae5d8;
+  --color-neutral-300: #d6d0c0; /* disabled rules */
+  --color-neutral-400: #a9bbb1; /* muted text ON GREEN ONLY — the floor there */
+  --color-neutral-700: #55625b; /* floor for secondary text on cream */
+  --color-neutral-800: #3d4b44; /* body copy */
+  --color-neutral-900: #092a20; /* green-deep: recessed panels on green */
 
-  --color-colophon: #16150f;    /* app-icon tiles, inverted panels, splash */
+  --color-colophon: #0e3a2d;    /* green: app-icon tiles, inverted panels, splash */
 
   /* Hairlines. Three weights, and they are not interchangeable: a row
      separator must read lighter than a section divider or the line-item table
      turns into a grid of boxes. */
-  --divider: rgba(32, 31, 29, 0.16);      /* sections, frame */
-  --divider-row: rgba(32, 31, 29, 0.09);  /* line items */
-  --divider-dark: rgba(255, 255, 255, 0.14); /* rules on colophon black */
+  --divider: rgba(27, 42, 36, 0.16);      /* sections, frame */
+  --divider-row: rgba(27, 42, 36, 0.09);  /* line items */
+  --divider-dark: rgba(245, 242, 234, 0.20); /* rules on green */
 
   /* Type ---------------------------------------------------------------- */
   --font-heading: "Cormorant Garamond", Georgia, "Times New Roman", serif;
@@ -63,14 +65,17 @@
   --radius-md: 4px;
   --radius-lg: 7px;
 
-  --shadow-sm: 0 1px 2px rgba(45, 43, 43, 0.14);
-  --shadow-md: 0 3px 10px rgba(45, 43, 43, 0.16);
-  --shadow-lg: 0 12px 32px rgba(45, 43, 43, 0.22);
+  --shadow-sm: 0 1px 2px rgba(9, 42, 32, 0.14);
+  --shadow-md: 0 3px 10px rgba(9, 42, 32, 0.16);
+  --shadow-lg: 0 12px 32px rgba(9, 42, 32, 0.22);
 
   /* Interaction states, themed rather than left to the browser. */
-  --state-hover: rgba(182, 130, 53, 0.12);
-  --state-pressed: rgba(182, 130, 53, 0.22);
-  --state-selected: rgba(182, 130, 53, 0.10);
+  --state-hover: rgba(200, 145, 47, 0.12);
+  --state-pressed: rgba(200, 145, 47, 0.22);
+  --state-selected: rgba(200, 145, 47, 0.10);
+
+  /* Semantic: money owed, overdue, declined. Nothing else. */
+  --color-owing: #b03a2b;
 }
 
 /* Self-hosted faces: latin subsets from Google Fonts, served from our own

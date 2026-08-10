@@ -63,10 +63,18 @@ const PRODUCTS: DemoProduct[] = [
 ];
 
 const USERS = [
-  { pin: "1234", id: "u1", name: "Manager", role: "admin", permissions: [] as string[] },
-  { pin: "5678", id: "u2", name: "Sam", role: "employee",
+  { pin: "1234", phone: "+27820000001", id: "u1", name: "Manager", role: "admin",
+    permissions: [] as string[] },
+  { pin: "5678", phone: "+27820000002", id: "u2", name: "Sam", role: "employee",
     permissions: ["take_payments", "apply_discount"] },
 ];
+
+// Any local-looking or E.164 number pairs the demo till: the demo teaches the
+// FLOW (phone identifies the manager, PIN proves it), not a phone directory.
+function phoneLooksValid(raw: string): boolean {
+  const t = (raw ?? "").replace(/[\s()-]/g, "");
+  return /^0\d{9}$/.test(t) || /^[5-6]\d{7}$/.test(t) || /^\+\d{9,15}$/.test(t);
+}
 
 const CUSTOMERS = [
   { id: "k1", code: "TRD-001", name: "Mokoena Building Contractors", phone: "051 924 0000",
@@ -231,12 +239,14 @@ export function installDemoBackend(): void {
 
     switch (path) {
       case "rpc/pos_pair_register":
-        if (body.p_pin !== "1234") return bad("Invalid PIN");
+        if (!phoneLooksValid(String(body.p_phone ?? "")) || body.p_pin !== "1234") {
+          return bad("Invalid phone or PIN");
+        }
         paired = true;
         return ok([{ register_id: "demo-reg", token: "demo-token" }]);
       case "rpc/pos_login":
         return ok(user ? [{ id: user.id, name: user.name, role: user.role,
-                            phone: null, email: null, permissions: effective(user) }] : []);
+                            phone: user.phone, email: null, permissions: effective(user) }] : []);
       case "rpc/pos_search_products":
         return ok(search(String(body.p_query ?? "")));
       case "rpc/pos_list_customers":
@@ -250,9 +260,9 @@ export function installDemoBackend(): void {
                                          description: null, active: true })));
       case "rpc/pos_recent_sales":
         return ok(sales.slice(-20).reverse().map((s) => s.row));
-      case "catalogue":
+      case "rpc/pos_catalogue":
         return ok(PRODUCTS);
-      case "categories":
+      case "rpc/pos_categories":
         return ok([{ id: "c1", name: "Building", sort_order: 10 },
                    { id: "c2", name: "Fasteners", sort_order: 20 },
                    { id: "c3", name: "Plumbing", sort_order: 30 }]);
@@ -266,16 +276,16 @@ export function installDemoBackend(): void {
           { code: "box", name: "Box", allows_fraction: false, sort_order: 90 },
           { code: "roll", name: "Roll", allows_fraction: false, sort_order: 110 },
         ]);
-      case "settings":
-        return ok([
-          { key: "shop_name", value: "Ladybrand Hardware" },
-          { key: "address_line1", value: "12 Church Street" },
-          { key: "address_line2", value: "Ladybrand, Free State" },
-          { key: "phone", value: "051 924 0000" },
-          { key: "vat_number", value: "4001234567" },
-          { key: "currency", value: "R" },
-          { key: "registration_number", value: "" },
-        ]);
+      case "rpc/pos_org_settings":
+        return ok([{
+          shop_name: "Ladybrand Hardware",
+          address_line1: "12 Church Street",
+          address_line2: "Ladybrand, Free State",
+          phone: "051 924 0000",
+          vat_number: "4001234567",
+          currency: "R",
+          registration_number: "",
+        }]);
       default:
         return ok([]);
     }

@@ -29,9 +29,10 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
 
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
   await page.locator("input[type=password]").fill("9999");
   await page.getByRole("button", { name: /Pair this till/i }).click();
-  await expect(page.getByText(/Invalid PIN|Pairing failed/i)).toBeVisible();
+  await expect(page.getByText(/Invalid phone or PIN|Pairing failed/i)).toBeVisible();
   await expect(page.getByText("Set up this till")).toBeVisible();
 });
 

@@ -6,12 +6,16 @@ import ShopLogo from "./ShopLogo";
 /**
  * First-run screen: pair this tablet as a till.
  *
- * A manager does this once. The server returns a random token which is stored
- * on the device and never shown again — it is what lets a sale taken during an
- * outage sync later without anyone's PIN. If the tablet is lost, the token is
- * revoked from Settings on another device; nobody's PIN has to change.
+ * A manager does this once, with their phone number and PIN. The phone is
+ * needed here and only here: it is the one moment the server does not yet know
+ * which shop this device belongs to, and the phone — globally unique across
+ * all of InnovaPOS — answers that. The server returns a random token which is
+ * stored on the device and never shown again — it is what lets a sale taken
+ * during an outage sync later without anyone's PIN. If the tablet is lost, the
+ * token is revoked from Settings on another device; nobody's PIN has to change.
  */
 export default function PairRegister({ onPaired }: { onPaired: () => void }) {
+  const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
   const [name, setName] = useState("Front Counter");
   const [busy, setBusy] = useState(false);
@@ -22,12 +26,14 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const { register_id, token } = await pairRegister(pin, name);
+      const { register_id, token } = await pairRegister(phone, pin, name);
       savePairing(register_id, token, name);
       onPaired();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Pairing failed — check the PIN."
+        err instanceof Error
+          ? err.message
+          : "Pairing failed — check the phone number and PIN."
       );
       setBusy(false);
     }
@@ -59,9 +65,21 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         </label>
 
         <label className="block">
-          <span className="text-sm text-stone-600">Manager PIN</span>
+          <span className="text-sm text-stone-600">Manager phone number</span>
           <input
             autoFocus
+            type="tel"
+            inputMode="tel"
+            placeholder="082 123 4567"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-sm text-stone-600">Manager PIN</span>
+          <input
             type="password"
             inputMode="numeric"
             value={pin}
@@ -74,7 +92,7 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <button
-          disabled={busy || pin.length < 4}
+          disabled={busy || pin.length < 4 || phone.trim().length < 8}
           className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold
                      disabled:opacity-40"
         >

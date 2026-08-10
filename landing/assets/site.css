@@ -21,26 +21,26 @@
 @font-face { font-family: "Lora"; src: url("/assets/fonts/lora-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
 
 :root {
-  --paper: #f3f2f2;
-  --surface: #eae9e9;
-  --ink: #201f1d;
-  --gold: #b68235;
-  --gold-100: #fff3e4;
-  --gold-400: #e1ad66;
-  --gold-700: #7d5411;
-  --n100: #f8f4f4;
-  --n300: #d7d3d3;
-  --n400: #bab6b6;
-  --n700: #605d5d;
-  --n800: #444141;
-  --colophon: #16150f;
-  --rule: rgba(32, 31, 29, 0.16);
-  --rule-row: rgba(32, 31, 29, 0.09);
-  --rule-dark: rgba(255, 255, 255, 0.14);
+  --paper: #f5f2ea;          /* cream */
+  --surface: #eae5d8;        /* cream-sunk */
+  --ink: #1b2a24;
+  --gold: #c8912f;           /* amber — stroke only */
+  --gold-100: rgba(200, 145, 47, 0.14);
+  --gold-400: #e0b45c;       /* the amber ON GREEN */
+  --gold-700: #8a5f14;       /* accent text on cream */
+  --n100: #faf8f1;
+  --n300: #d6d0c0;
+  --n400: #a9bbb1;           /* muted text ON GREEN */
+  --n700: #55625b;           /* muted floor on cream */
+  --n800: #3d4b44;
+  --colophon: #0e3a2d;       /* green — the filled ground */
+  --rule: rgba(27, 42, 36, 0.16);
+  --rule-row: rgba(27, 42, 36, 0.09);
+  --rule-dark: rgba(245, 242, 234, 0.20);
   --heading: "Cormorant Garamond", Georgia, "Times New Roman", serif;
   --body: "Lora", Georgia, "Times New Roman", serif;
-  --shadow-md: 0 3px 10px rgba(45, 43, 43, 0.16);
-  --shadow-lg: 0 12px 32px rgba(45, 43, 43, 0.22);
+  --shadow-md: 0 3px 10px rgba(9, 42, 32, 0.16);
+  --shadow-lg: 0 12px 32px rgba(9, 42, 32, 0.22);
 }
 
 * { box-sizing: border-box; }
@@ -109,13 +109,13 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
   color: var(--gold-700); background: transparent;
   cursor: pointer; transition: background .16s ease;
 }
-.btn:hover { background: rgba(182, 130, 53, 0.12); color: var(--gold-700); }
-.btn:active { background: rgba(182, 130, 53, 0.22); }
+.btn:hover { background: rgba(200, 145, 47, 0.12); color: var(--gold-700); }
+.btn:active { background: rgba(200, 145, 47, 0.22); }
 .btn-quiet { border-color: var(--rule); color: var(--n700); }
-.btn-quiet:hover { background: rgba(182, 130, 53, 0.12); color: var(--gold-700); }
+.btn-quiet:hover { background: rgba(200, 145, 47, 0.12); color: var(--gold-700); }
 /* The single deepened fill in the system, reserved for the primary action. */
-.btn-solid { background: rgba(182, 130, 53, 0.1); }
-.btn-solid:hover { background: rgba(182, 130, 53, 0.2); }
+.btn-solid { background: rgba(200, 145, 47, 0.1); }
+.btn-solid:hover { background: rgba(200, 145, 47, 0.2); }
 
 :where(a, button, input, [tabindex]):focus-visible {
   outline: 2px solid var(--gold); outline-offset: 2px;
@@ -124,7 +124,7 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
 /* ---- Header ------------------------------------------------------------ */
 .site-header {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(243, 242, 242, 0.94);
+  background: rgba(245, 242, 234, 0.94);
   backdrop-filter: saturate(140%) blur(8px);
   border-bottom: 1px solid transparent;
   transition: border-color .2s ease;
@@ -245,7 +245,7 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
   border: 1px solid var(--rule); border-radius: 2px; background: transparent;
   color: var(--n800); padding: 4px 10px; cursor: pointer;
 }
-.try button:hover { border-color: var(--gold); color: var(--gold-700); background: rgba(182,130,53,0.12); }
+.try button:hover { border-color: var(--gold); color: var(--gold-700); background: rgba(200,145,47,0.12); }
 
 /* ---- Cards / grids ------------------------------------------------------ */
 .grid { display: grid; gap: 27.6px; }
@@ -261,8 +261,8 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
 .status-soon { color: var(--n700); border-bottom-color: var(--n300); }
 
 /* ---- Dark band: the only near-black ground outside the app icon --------- */
-.band { background: var(--colophon); color: #e7e3da; }
-.band h2, .band h3, .band h4 { color: #faf7f2; }
+.band { background: var(--colophon); color: #dde5df; }
+.band h2, .band h3, .band h4 { color: #f5f2ea; }
 .band .kicker { color: var(--gold-400); }
 .band .lead { color: var(--n400); }
 .band .muted { color: var(--n400); }
@@ -276,7 +276,7 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
 .feature { display: grid; grid-template-columns: 14px 1fr; gap: 13px; align-items: start; }
 .feature .tick { color: var(--gold); font-size: 13px; line-height: 1.6; }
 .feature strong { display: block; font-family: var(--heading); font-size: 17px; font-weight: 600; color: var(--ink); margin-bottom: 2px; }
-.band .feature strong { color: #faf7f2; }
+.band .feature strong { color: #f5f2ea; }
 .feature span { font-size: 14px; color: var(--n800); }
 .band .feature span { color: var(--n400); }
 

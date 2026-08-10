@@ -2,11 +2,17 @@
 // the database, so the manager's PIN is passed per call rather than held in a
 // session — it is typed once when the Manage area is opened and kept in memory
 // only, never written to the device.
+//
+// The register token travels with every call too. It is not a second secret so
+// much as an address: it tells the server WHICH shop's staff list to check the
+// PIN against, because a PIN alone identifies nobody in a multi-tenant system.
+import { requireToken } from "./api";
 import { supabase } from "./supabase";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "./types";
 
 export async function adminListProducts(pin: string): Promise<AdminProduct[]> {
   const { data, error } = await supabase.rpc("pos_admin_list_products", {
+    p_register_token: requireToken(),
     p_pin: pin,
   });
   if (error) throw error;
@@ -35,6 +41,7 @@ export async function adminSaveProduct(
   p: ProductInput
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_save_product", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_id: p.id ?? null,
     p_sku: p.sku,
@@ -60,6 +67,7 @@ export async function adminDeleteProduct(
   id: string
 ): Promise<string> {
   const { data, error } = await supabase.rpc("pos_admin_delete_product", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_id: id,
   });
@@ -75,6 +83,7 @@ export async function adminAdjustStock(
   note: string | null
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_adjust_stock", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_product_id: productId,
     p_new_qty: newQty,
@@ -88,6 +97,7 @@ export async function adminStockHistory(
   productId: string
 ): Promise<StockMovement[]> {
   const { data, error } = await supabase.rpc("pos_admin_stock_history", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_product_id: productId,
   });
@@ -100,6 +110,7 @@ export async function adminSaveCategory(
   c: { id?: string | null; name: string; sort_order: number; active: boolean }
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_save_category", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_id: c.id ?? null,
     p_name: c.name,
@@ -115,6 +126,7 @@ export async function adminDeleteCategory(
   reassignTo: string | null
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_delete_category", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_id: id,
     p_reassign_to: reassignTo,
@@ -147,6 +159,7 @@ export async function adminImportProducts(
   rows: ImportRow[]
 ): Promise<ImportResult[]> {
   const { data, error } = await supabase.rpc("pos_admin_import_products", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_rows: rows,
   });
@@ -159,12 +172,62 @@ export async function adminSaveSettings(
   settings: Record<string, string>
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_save_settings", {
+    p_register_token: requireToken(),
     p_pin: pin,
     p_settings: settings,
   });
   if (error) throw error;
 }
 
+/** Staff roster for this shop. Names, phones, roles — never PINs. */
+export interface StaffUser {
+  id: string;
+  name: string;
+  phone: string;
+  role: "admin" | "manager" | "employee";
+  status: "invited" | "active" | "disabled";
+  active: boolean;
+  permissions: string[];
+}
+
+export async function adminListUsers(pin: string): Promise<StaffUser[]> {
+  const { data, error } = await supabase.rpc("pos_admin_list_users", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
+  if (error) throw error;
+  return data as StaffUser[];
+}
+
+/**
+ * Invite a colleague by phone number. The row is created 'invited' with no
+ * PIN; they prove possession of the phone via OTP and choose their own PIN at
+ * the enrolment page. Nobody ever learns anyone else's PIN.
+ */
+export async function adminInviteUser(
+  pin: string,
+  name: string,
+  phone: string,
+  role: "admin" | "manager" | "employee" = "employee",
+  permissions: string[] = []
+): Promise<StaffUser> {
+  const { data, error } = await supabase.rpc("pos_admin_invite_user", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_name: name,
+    p_phone: phone,
+    p_role: role,
+    p_permissions: permissions,
+  });
+  if (error) throw error;
+  const rows = data as StaffUser[];
+  if (!rows?.[0]) throw new Error("Invite failed");
+  return rows[0];
+}
+
+// Units are global reference data (kg, ea, m) with nothing tenant-specific in
+// them, so they remain a plain anon-readable table — the one survivor of the
+// old "just read the table" era.
 export async function fetchUnits(): Promise<UnitOfMeasure[]> {
   const { data, error } = await supabase
     .from("units_of_measure")
@@ -175,10 +238,9 @@ export async function fetchUnits(): Promise<UnitOfMeasure[]> {
 }
 
 export async function fetchAllCategories(): Promise<Category[]> {
-  const { data, error } = await supabase
-    .from("categories")
-    .select("id, name, sort_order")
-    .order("sort_order");
+  const { data, error } = await supabase.rpc("pos_categories", {
+    p_register_token: requireToken(),
+  });
   if (error) throw error;
   return data as Category[];
 }

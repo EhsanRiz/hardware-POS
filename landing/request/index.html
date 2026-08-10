@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Request InnovaPOS — InnovaEarth</title>
+<meta name="description" content="Tell us about your shop and we will set up InnovaPOS for it — usually within one working day.">
+<meta name="robots" content="index,follow">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="stylesheet" href="/assets/site.css">
+<style>
+  /* Form dressing, in the system's own vocabulary: hairlines, amber strokes,
+     no filled buttons. Fields sit on the sunk cream, as input wells do. */
+  .form-card { max-width: 640px; margin: 0 auto; }
+  .field { display: block; margin-bottom: 22px; }
+  .field > span {
+    display: block; font-family: var(--heading); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.14em; color: var(--n700);
+    margin-bottom: 7px;
+  }
+  .field input, .field select, .field textarea {
+    width: 100%; box-sizing: border-box;
+    font-family: var(--body); font-size: 16px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 12px 14px; outline: none;
+  }
+  .field textarea { min-height: 120px; resize: vertical; }
+  .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
+    border-color: var(--gold); outline: none;
+  }
+  .form-note { font-size: 14px; color: var(--n700); margin-top: 18px; max-width: 56ch; }
+  .form-msg { margin-top: 18px; font-size: 15px; }
+  .form-msg.ok { color: var(--gold-700); }
+  .form-msg.err { color: #b03a2b; }
+  .two { display: grid; gap: 0 22px; }
+  @media (min-width: 560px) { .two { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+
+<header class="site-header scrolled">
+  <div class="nav">
+    <a href="/" class="lockup" aria-label="InnovaPOS">
+      <svg width="26" height="26" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <path d="M30 12H12v18M66 12h18v18M84 66v18H66M30 84H12V66"
+              stroke="#c8912f" stroke-width="5.5" stroke-linecap="round"/>
+        <path d="M34 34v28M46 34v28M62 34v28"
+              stroke="#8a5f14" stroke-width="5.5" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">Innova<span>POS</span></span>
+    </a>
+    <div class="nav-actions">
+      <a href="https://app.innovaearth.com/" class="btn btn-quiet">Store sign-in</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="narrow">
+    <div class="form-card">
+      <span class="kicker">Getting started</span>
+      <h1 style="font-size:clamp(2.25rem,5vw,3.25rem);margin-bottom:18px">Request InnovaPOS for your shop.</h1>
+      <p class="lead" style="margin-bottom:36px">
+        Tell us what you sell and who runs the counter. We set up your shop and
+        confirm by email — usually within one working day — and your manager
+        enrols with nothing more than their phone.
+      </p>
+
+      <form id="req-form" novalidate>
+        <label class="field">
+          <span>Business name</span>
+          <input name="org_name" required maxlength="200" autocomplete="organization" placeholder="Ladybrand Hardware">
+        </label>
+        <div class="two">
+          <label class="field">
+            <span>Your name</span>
+            <input name="contact_name" required maxlength="200" autocomplete="name" placeholder="Thabo Mokoena">
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input name="email" type="email" required maxlength="200" autocomplete="email" placeholder="you@example.co.za">
+          </label>
+        </div>
+        <div class="two">
+          <label class="field">
+            <span>Phone <em style="text-transform:none;letter-spacing:0">(optional)</em></span>
+            <input name="phone" type="tel" maxlength="40" autocomplete="tel" placeholder="082 123 4567">
+          </label>
+          <label class="field">
+            <span>Country</span>
+            <select name="country">
+              <option>South Africa</option>
+              <option>Lesotho</option>
+              <option>Other</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>What do you sell?</span>
+          <select name="vertical">
+            <option value="hardware">Hardware &amp; building material</option>
+            <option value="hospitality">Coffee, food &amp; hospitality</option>
+            <option value="other">Something else</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Anything we should know? <em style="text-transform:none;letter-spacing:0">(optional)</em></span>
+          <textarea name="message" maxlength="2000" placeholder="Two tills, most stock sold by the metre, trade accounts for builders…"></textarea>
+        </label>
+
+        <button type="submit" class="btn btn-solid" id="req-submit">Send the request</button>
+        <p class="form-msg" id="req-msg" role="status" aria-live="polite"></p>
+        <p class="form-note">
+          No card details, no self-service sign-up: a person reads every request
+          and sets your shop up properly. Already invited by your manager?
+          <a href="/enrol/">Enrol here</a> instead.
+        </p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="foot-end" style="border-top:0;padding-top:0">
+      <span>&copy; 2026 InnovaEarth. All rights reserved.</span>
+      <span>InnovaPOS is a product of InnovaEarth.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var ENDPOINT = "https://krkatpesfwqnjitcxkco.supabase.co/functions/v1/pos-request";
+  var form = document.getElementById("req-form");
+  var msg = document.getElementById("req-msg");
+  var btn = document.getElementById("req-submit");
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var data = Object.fromEntries(new FormData(form).entries());
+    if (!data.org_name.trim() || !data.contact_name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) {
+      msg.className = "form-msg err";
+      msg.textContent = "Please fill in the business name, your name and a valid email.";
+      return;
+    }
+    btn.disabled = true;
+    msg.className = "form-msg";
+    msg.textContent = "Sending…";
+    try {
+      var res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      var body = await res.json();
+      msg.className = "form-msg " + (body.ok ? "ok" : "err");
+      msg.textContent = body.message || (body.ok ? "Thank you — we will be in touch." : "Something went wrong. Please try again.");
+      if (body.ok) form.reset(); else btn.disabled = false;
+    } catch (err) {
+      msg.className = "form-msg err";
+      msg.textContent = "Could not reach the server. Check your connection and try again.";
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

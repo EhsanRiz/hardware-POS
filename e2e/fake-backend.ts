@@ -64,9 +64,12 @@ function mk(
 }
 
 export const USERS = {
-  manager: { pin: "1234", row: { id: "u1", name: "Manager", role: "admin", phone: null, email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports"] } },
-  employee: { pin: "5678", row: { id: "u2", name: "Sam", role: "employee", phone: null, email: null, permissions: ["take_payments","apply_discount"] } },
+  manager: { pin: "1234", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports"] } },
+  employee: { pin: "5678", phone: "+27820000002", row: { id: "u2", name: "Sam", role: "employee", phone: "+27820000002", email: null, permissions: ["take_payments","apply_discount"] } },
 };
+
+/** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
+export const REGISTER_TOKEN = "test-register-token";
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -231,20 +234,31 @@ export async function installBackend(page: Page): Promise<Backend> {
       body = JSON.parse(route.request().postData() || "{}");
     } catch { /* GETs have no body */ }
 
+    // The real till RPCs resolve the org from the register token before
+    // anything else; the fake enforces the same so a client that forgets the
+    // token fails the suite instead of only failing in production.
+    const tokenOk = body.p_register_token === REGISTER_TOKEN;
+
     switch (path) {
       case "rpc/pos_pair_register": {
-        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        return json([{ register_id: "reg1", token: "test-register-token" }]);
+        if (body.p_phone !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
+          return fail("Invalid phone or PIN");
+        }
+        return json([{ register_id: "reg1", token: REGISTER_TOKEN }]);
       }
       case "rpc/pos_login": {
+        if (!tokenOk) return fail("Register not paired or revoked");
         const hit = Object.values(USERS).find((u) => u.pin === body.p_pin);
         return json(hit ? [hit.row] : []);
       }
       case "rpc/pos_list_customers":
+        if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
       case "rpc/pos_search_products":
+        if (!tokenOk) return fail("Register not paired or revoked");
         return json(searchProducts(String(body.p_query ?? "")));
       case "rpc/pos_create_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
         try {
           return json(be.createSale(body));
         } catch (e) {
@@ -252,22 +266,26 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
       }
       case "rpc/pos_admin_list_products": {
+        if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
         return json(PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })));
       }
-      case "settings":
-        return json([
-          { key: "shop_name", value: "Ladybrand Hardware" },
-          { key: "address_line1", value: "12 Church St" },
-          { key: "address_line2", value: "Ladybrand, Free State" },
-          { key: "phone", value: "051 924 0000" },
-          { key: "vat_number", value: "4001234567" },
-          { key: "currency", value: "R" },
-          { key: "registration_number", value: "" },
-        ]);
-      case "categories":
+      case "rpc/pos_org_settings":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json([{
+          shop_name: "Ladybrand Hardware",
+          address_line1: "12 Church St",
+          address_line2: "Ladybrand, Free State",
+          phone: "051 924 0000",
+          vat_number: "4001234567",
+          currency: "R",
+          registration_number: "",
+        }]);
+      case "rpc/pos_categories":
+        if (!tokenOk) return fail("Register not paired or revoked");
         return json([{ id: "c1", name: "Building", sort_order: 10 }]);
-      case "catalogue":
+      case "rpc/pos_catalogue":
+        if (!tokenOk) return fail("Register not paired or revoked");
         return json(PRODUCTS);
       case "units_of_measure":
         return json([
@@ -287,6 +305,7 @@ export async function installBackend(page: Page): Promise<Backend> {
 /** Pair the till and sign in, which every till test needs first. */
 export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.goto("/");
+  await page.locator('input[type=tel]').fill(USERS.manager.phone);
   await page.locator('input[type=password]').fill(USERS.manager.pin);
   await page.getByRole("button", { name: /Pair this till/i }).click();
   await page.waitForSelector('button:text-is("1")');
