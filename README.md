@@ -5,50 +5,61 @@ Android tablet behind the counter. It's a **PWA** (installable web app) that
 talks to a **Supabase** (Postgres) backend and hands receipt printing off to
 the **RawBT** Android app over Bluetooth.
 
-> **Status: seeded, not yet a hardware POS.**
-> This repo starts as a fork of a working coffee-shop POS, kept for its
-> infrastructure (auth, RBAC, offline queue, house accounts, cash-up,
-> printing). The retail model is still the cafe's — see
-> [`docs/PLAN.md`](docs/PLAN.md) for what has to change and in what order.
-> **Do not put this in front of a customer yet.** The blockers in Phase 1 are
-> real, and every one of them gets harder to fix once there is live sales data.
+> **Status: hardware schema built and verified; the app UI has not caught up yet.**
+>
+> The database is a clean hardware-first design — not the cafe's schema with
+> patches. It is deployed and tested (see *Schema* below). The React client is
+> still the cafe's and calls RPCs that no longer exist, so **the app will not
+> run against this backend yet.** Reworking the client is the next phase.
+> See [`docs/PLAN.md`](docs/PLAN.md).
 
-## What already works
+## What is carried over
 
-Inherited from the cafe build and vertical-neutral:
+The client-side plumbing from the cafe build, kept because it is proven in
+production and expensive to rewrite. All of it still needs rewiring to the new
+backend:
 
-- **PIN login** with bcrypt hashes, verified server-side (never in the client)
-- **Roles & permissions** — Admin / Manager / Employee plus per-user permission
-  grants, enforced in Postgres `SECURITY DEFINER` functions, not just hidden in
-  the UI
-- **Offline-first** — the till keeps selling with no connectivity; writes queue
-  on the device and sync when the link returns, with idempotent payment so a
-  retried sale can't double-charge
-- **Payments** — cash (with tendered → change), card, and split cash/card
-- **Customer accounts** — house accounts with credit limits and a full
-  charge/payment ledger (this is what contractors will run on)
-- **Cash-up** — opening float, petty-cash pay-ins/outs, counted drawer with
-  over/short variance, plus expected-vs-settled card totals
-- **Reports** — today / 7-day / month, top sellers, by-cashier, drill into any
-  sale to reprint, void or refund (which restores stock)
-- **Stock** — optional per-item quantity that decrements on sale, with low and
-  out-of-stock badges
-- **Receipt printing** — ESC/POS via RawBT over Bluetooth, with a desktop
-  preview fallback
+- **Offline-first write queue** — the till keeps selling with no connectivity;
+  writes queue on the device and sync when the link returns. The new schema's
+  `client_ref` idempotency key is wired for exactly this.
+- **ESC/POS receipt printing** via RawBT over Bluetooth, with a desktop preview
+  fallback so layout can be checked without hardware.
+- **PIN auth pattern** — bcrypt hashes, verified server-side, never in the client.
+- **RBAC** — roles plus per-user grants, enforced in the database rather than
+  hidden in the UI.
 
-## What is missing for a hardware shop
+## Schema
 
-Summarised here, detailed in [`docs/PLAN.md`](docs/PLAN.md):
+Six migrations, applied and verified against a live project. The design points
+that matter, each one a thing the cafe build got wrong for this trade:
 
-| Gap | Why it matters |
+| Decision | Why |
 |---|---|
-| Quantities are integers | Can't sell 2.5 m of chain or 0.75 kg of nails |
-| No SKU or barcode | Thousands of SKUs need scanning, not a photo grid |
-| No unit of measure | "each" vs "per m" vs "per kg" vs "per bag" |
-| VAT computed at print time | Historical invoices reprint at today's rate |
-| Invoice number is a truncated UUID | SARS wants a sequential number |
-| No suppliers / goods receiving | Stock only ever goes down; no GRV, no cost updates |
-| No quotes | Builders expect a price on paper |
+| `qty numeric(14,3)` | 2.5 m of chain, 0.75 kg of loose nails |
+| `units_of_measure.allows_fraction` | 2.5 m is a sale; 2.5 padlocks is a typo, and the till rejects it |
+| `sku` + unique `barcode` | Thousands of lines, found by scanning, not by photo |
+| `price_retail` + `price_trade` | Contractors price off a different list automatically |
+| `tax_rate` + `tax_amount` stored per line | Reprinting a 2-year-old invoice restates what was *charged* |
+| `doc_number` from a sequence | SARS wants sequential tax invoice numbers |
+| `stock_movements` audit table | Answers "why does it think we have nine?" |
+| `cost_at_sale` on each line | Margin reporting survives a cost change |
+| `client_ref` idempotency key | A replayed offline sale cannot double-charge |
+
+Verified end to end on the live project: a mixed basket (2.5 m chain + 0.75 kg
+nails + 3 bags cement) prices to R464.00 with R60.52 VAT; fractional "each" is
+rejected; overselling is rejected; an employee discount parks for approval
+without burning an invoice number; a replayed `client_ref` returns the original
+sale; trade customers get trade prices; the credit limit holds; and voiding
+returns stock with a logged reason.
+
+## Still to build
+
+- **Client rework** — the UI still speaks the cafe's RPC vocabulary
+- **Goods receiving** — suppliers exist; purchase orders and GRVs do not
+- **Quotes** — builders expect a price on paper
+- **Cash-up** — tables reserved (`session_id`), logic not yet ported
+- **Reports** — sales, margin, reorder
+- **Login rate limiting** — see *Known security tradeoffs*
 
 ## Architecture
 
@@ -67,8 +78,10 @@ RLS enabled with no policies and are reachable only through those functions.
 
 ### 1. Backend (Supabase)
 
-**Create a new Supabase project** — do not reuse the cafe's. Then apply the
-migrations in [`supabase/migrations/`](supabase/migrations) in filename order.
+Apply the migrations in [`supabase/migrations/`](supabase/migrations) in
+filename order to a Supabase project of your own. `0005_seed.sql` loads demo
+staff and a sample range — replace it with the shop's real price list before
+go-live.
 
 ### 2. App
 
@@ -83,7 +96,7 @@ Node is pinned to 20 via `.nvmrc`.
 
 ### 3. Demo logins
 
-Seeded by `0002_pos_seed_data.sql`: Manager `1234`, Employee `5678`.
+Seeded by `0005_seed.sql`: Manager `1234`, Employee `5678`.
 **Rotate both before this goes anywhere near a shop floor.**
 
 ## Deploying (Cloudflare Pages)
@@ -123,12 +136,22 @@ a bigger float, higher-value stock and customers on credit:
 
 - The anon key ships in the PWA and can call `pos_login`, so **PINs are
   brute-forceable over the public API**. There is no rate limiting or lockout.
-  Add this before go-live.
-- Item-image uploads use the anon key against an anon-writable bucket.
+  Add this before go-live — it is the one inherited weakness still open.
+- Fixed in `0006`: internal helpers (notably `user_by_pin`, which returns
+  `pin_hash`) were reachable over PostgREST with just the anon key. Only the
+  `pos_*` entry points are callable from the device now, and `products.cost` is
+  withheld at the grant level.
 
 ## Provenance
 
-Forked from `EhsanRiz/coffee-shop-pos` (branch `claude/laughing-euler-d7r2gc`)
-at commit `b4763f4`. Cafe-specific assets, branding and the live Supabase
-config were removed during the fork; cafe *features* (tips, table/tab open
-orders, "menu" vocabulary) are still present and are removed in Phase 1.
+The client plumbing — offline write queue, ESC/POS printing, PIN auth pattern,
+RBAC — is carried over from `EhsanRiz/coffee-shop-pos` (`b4763f4`), which is
+proven in production and expensive to rewrite.
+
+The database is **not** carried over. The cafe's 26 migrations were discarded
+and the schema rebuilt from scratch for this trade, because its problems were
+structural: integer quantities, no SKU or unit of measure, VAT computed at
+print time, and invoice numbers that were truncated UUIDs.
+
+Cafe features still present in the UI (tips, table/tab open orders, "menu"
+vocabulary) come out during the client rework.
