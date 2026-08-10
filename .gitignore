@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.vscode/*
+!.vscode/extensions.json
+
+# TypeScript build output (from tsc -b composite project)
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
