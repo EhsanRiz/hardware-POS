@@ -1,0 +1,130 @@
+/**
+ * Classical — the design system from design_handoff_innovapos.
+ *
+ * Values are taken literally from the handoff's token sheet
+ * (design/_ds/classical-.../styles.css) and its README. Do not substitute:
+ * several of these were arrived at by a contrast audit during the design work,
+ * and a "close enough" hex undoes it.
+ *
+ * FONTS ARE NOT LOADED HERE, DELIBERATELY.
+ * The handoff says to self-host Cormorant Garamond and Lora, and it is right:
+ * a till that must complete sales during a fibre cut cannot fetch a stylesheet
+ * from fonts.googleapis.com. A @import would work in the showroom and fall back
+ * to a system serif in the shop — the one place it matters. The @font-face
+ * blocks below expect the files in /public/fonts; see README for what to add.
+ */
+
+:root {
+  /* Ground and ink ------------------------------------------------------ */
+  --color-bg: #f3f2f2;          /* paper */
+  --color-surface: #eae9e9;     /* recessed surfaces, image mats */
+  --color-text: #201f1d;        /* ink */
+
+  /* Gold. Always a stroke — never a fill. The only filled ground in the
+     identity is --color-colophon, used for the app-icon tile. */
+  --color-accent: #b68235;
+  --color-accent-100: #fff3e4;  /* just-scanned row tint */
+  --color-accent-400: #e1ad66;  /* the gold on dark grounds, lifted */
+  --color-accent-700: #7d5411;  /* accent TEXT at paragraph size */
+
+  --color-neutral-100: #f8f4f4; /* scan field, row hover */
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3; /* disabled rules */
+  --color-neutral-400: #bab6b6; /* muted text ON NEAR-BLACK ONLY */
+  --color-neutral-700: #605d5d; /* floor for secondary text on paper */
+  --color-neutral-800: #444141; /* body copy */
+  --color-neutral-900: #2d2b2b;
+
+  --color-colophon: #16150f;    /* app-icon tiles, inverted panels, splash */
+
+  /* Hairlines. Three weights, and they are not interchangeable: a row
+     separator must read lighter than a section divider or the line-item table
+     turns into a grid of boxes. */
+  --divider: rgba(32, 31, 29, 0.16);      /* sections, frame */
+  --divider-row: rgba(32, 31, 29, 0.09);  /* line items */
+  --divider-dark: rgba(255, 255, 255, 0.14); /* rules on colophon black */
+
+  /* Type ---------------------------------------------------------------- */
+  --font-heading: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-body: "Lora", Georgia, "Times New Roman", serif;
+  /* Bold is retired from this system. 600 is the interface ceiling, and
+     display sizes go LIGHTER as they grow, not heavier. */
+  --font-heading-weight: 600;
+
+  /* Spacing: a 1.15x density scale. Airy by design — cut content rather than
+     tightening this to fit more in. */
+  --space-1: 4.6px;
+  --space-2: 9.2px;
+  --space-3: 13.8px;
+  --space-4: 18.4px;
+  --space-6: 27.6px;
+  --space-8: 36.8px;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+
+  --shadow-sm: 0 1px 2px rgba(45, 43, 43, 0.14);
+  --shadow-md: 0 3px 10px rgba(45, 43, 43, 0.16);
+  --shadow-lg: 0 12px 32px rgba(45, 43, 43, 0.22);
+
+  /* Interaction states, themed rather than left to the browser. */
+  --state-hover: rgba(182, 130, 53, 0.12);
+  --state-pressed: rgba(182, 130, 53, 0.22);
+  --state-selected: rgba(182, 130, 53, 0.10);
+}
+
+/* Self-hosted faces. Woff2 files go in public/fonts/ — see README. Until they
+   are added the stack falls back to Georgia, which is a reasonable serif and
+   keeps the till readable rather than dropping to a system sans. */
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("/fonts/cormorant-garamond-variable.woff2") format("woff2-variations");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("/fonts/lora-variable.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Base ------------------------------------------------------------------ */
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  letter-spacing: -0.015em;
+  line-height: 1.08;
+}
+
+/* Numbers that stand as figures or columns are tabular; running prose is not,
+   because Lora's tabular figures widen word-spaces and loosen paragraphs. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kicker: the small-caps label used above sections and on table headers. */
+.kicker {
+  font-family: var(--font-heading);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-neutral-700);
+}
+
+/* Focus is themed, never the browser's blue ring. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
