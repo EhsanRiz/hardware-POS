@@ -1,35 +1,64 @@
-/* Live product-search demo.
+/* InnovaPOS — live product search on the landing page.
  *
- * This is not a mockup. It runs the same normalisation and matching rules as
- * src/lib/search.ts in the POS itself — the offline path that a real till uses
- * when the connection is down. Anyone can verify the claim on the page by
- * typing into it, which is the point: a demo that fakes its results is worth
- * less than no demo.
+ * Not a mockup. It runs the same normalisation and matching rules as
+ * src/lib/search.ts in the till, and as pos_search_products in migrations
+ * 0010–0011. Anyone can check the claim by typing into it, which is the point:
+ * a demo that fakes its results is worth less than no demo.
  *
- * Keep in step with src/lib/search.ts and supabase/migrations/0010–0011.
+ * Keep in step with src/lib/search.ts. If the rules change there, change them
+ * here, or this page starts advertising behaviour the product no longer has.
  */
 (function () {
   "use strict";
 
+  var THIN = " "; // U+2009 THIN SPACE — the SA thousands separator
+  var VAT_RATE = 0.15;
+
+  /* The catalogue mirrors the handoff's reference rows, so the till on this
+     page shows the same four lines as the design document. */
   var CATALOGUE = [
-    { name: "Nail Concrete 2.5 x 50mm",         sku: "NCN-2550",      unit: "kg",  price: 68.0 },
-    { name: "Nail Concrete 3.0 x 60mm",         sku: "NCN-3060",      unit: "kg",  price: 72.0 },
-    { name: "Nail Wire Round 2.5 x 50mm",       sku: "NWR-2550",      unit: "kg",  price: 42.0 },
-    { name: "Screw Chipboard 4.0 x 40mm (100)", sku: "SCR-CHIP-4X40", unit: "box", price: 68.0 },
-    { name: "Anchor Bolt Sleeve M10 x 100mm",   sku: "ANC-M10",       unit: "ea",  price: 18.5 },
-    { name: "Cement 42.5N 50kg",                sku: "CEM-425-50",    unit: "bag", price: 115.0, barcode: "6001234000015" },
-    { name: "Chain 6mm Galvanised",             sku: "CHN-06",        unit: "m",   price: 35.0 },
-    { name: "River Sand",                       sku: "SND-RIV",       unit: "m3",  price: 420.0 },
-    { name: "Paint PVA White 20L Interior",     sku: "PVA-WHT-20",    unit: "ea",  price: 749.0 },
-    { name: "Poly Pipe 20mm x 25m",             sku: "PPE-20",        unit: "roll", price: 289.0 },
-    { name: "Twin & Earth 2.5mm 100m",          sku: "CBL-25-100",    unit: "roll", price: 1450.0 },
-    { name: "Padlock 50mm Brass",               sku: "PDL-50",        unit: "ea",  price: 89.0 }
+    { sku: "601240", name: "Cement, 42.5N — 50 kg bag", barcode: "6001240000015",
+      unit: "bag", price: 120.90, kind: "plain", meta: "601240 · stock 148 → 128", qty: 20 },
+    { sku: "704410", name: "Rebar Y12 — cut to 2.4 m", barcode: null,
+      unit: "ea", price: 94.70, kind: "cut", meta: "7.2 m from 6 m stock · offcut 0.4 m", qty: 3 },
+    { sku: "550120", name: "Galvanised wire, 2.0 mm — loose", barcode: null,
+      unit: "kg", price: 31.05, kind: "weighed", meta: "scale 02 · tare 0.35 kg", qty: 6.40 },
+    { sku: "880310", name: "Sikaflex 11FC — 300 ml", barcode: "6008803000101",
+      unit: "ea", price: 119.00, kind: "fresh", meta: "just scanned · stock 41 → 40", qty: 1 },
+    { sku: "NCN-2550", name: "Nail Concrete 2.5 × 50 mm", barcode: null,
+      unit: "kg", price: 68.00, kind: "plain", meta: "NCN-2550 · stock 40 → 39", qty: 1 },
+    { sku: "NCN-3060", name: "Nail Concrete 3.0 × 60 mm", barcode: null,
+      unit: "kg", price: 72.00, kind: "plain", meta: "NCN-3060 · stock 35 → 34", qty: 1 },
+    { sku: "NWR-2550", name: "Nail Wire Round 2.5 × 50 mm", barcode: null,
+      unit: "kg", price: 42.00, kind: "plain", meta: "NWR-2550 · stock 85 → 84", qty: 1 },
+    { sku: "CHN-06", name: "Chain 6 mm Galvanised", barcode: null,
+      unit: "m", price: 35.00, kind: "cut", meta: "2.5 m from 30 m coil", qty: 2.5 },
+    { sku: "ANC-M10", name: "Anchor Bolt Sleeve M10 × 100 mm", barcode: null,
+      unit: "ea", price: 18.50, kind: "plain", meta: "ANC-M10 · stock 200 → 199", qty: 1 }
   ];
 
-  // Mirrors normalize_search_text() in SQL and normalizeSearchText() in TS.
-  function normalize(text) {
-    return (text || "")
-      .toLowerCase()
+  /* ---- The one number formatter, matching src/lib/money.ts --------------- */
+  function group(intPart) {
+    var out = "";
+    for (var i = 0; i < intPart.length; i++) {
+      if (i > 0 && i % 3 === 0) out = THIN + out;
+      out = intPart[intPart.length - 1 - i] + out;
+    }
+    return out;
+  }
+  function money(v, withR) {
+    var fixed = Math.abs(v).toFixed(2).split(".");
+    var s = group(fixed[0]) + "." + fixed[1];
+    return withR ? "R" + THIN + s : s;
+  }
+  function qty(v, unit, weighed) {
+    var n = weighed ? v.toFixed(2) : String(Number(v.toFixed(3)));
+    return unit && unit !== "ea" ? n + " " + unit : n;
+  }
+
+  /* ---- Search, mirroring normalize_search_text() ------------------------- */
+  function normalize(t) {
+    return (t || "").toLowerCase()
       .replace(/(\d),(\d)/g, "$1.$2")
       .replace(/(\d)\s*[x*×]\s*(\d)/g, "$1 x $2")
       .replace(/(\d)(mm|cm|m|kg|g|l|ml)\b/g, "$1 $2")
@@ -37,11 +66,9 @@
       .replace(/\s+/g, " ")
       .trim();
   }
-
   function textFor(p) {
     return normalize(p.name + " " + p.sku + " " + (p.barcode || ""));
   }
-
   function editDistance(a, b, max) {
     if (Math.abs(a.length - b.length) > max) return max + 1;
     var prev = [], i, j;
@@ -62,7 +89,6 @@
   function search(query) {
     var n = normalize(query);
     if (!n) return CATALOGUE.slice(0, 4);
-
     var toks = n.split(" ").filter(function (t) { return t && t !== "x"; });
     if (!toks.length) return CATALOGUE.slice(0, 4);
 
@@ -72,7 +98,7 @@
       return toks.every(function (tok) { return t.indexOf(tok) !== -1; });
     });
 
-    // Pass 2: only if the precise pass found nothing.
+    // Pass 2: edit distance, only when the precise pass found nothing.
     if (!hits.length) {
       hits = CATALOGUE.filter(function (p) {
         var words = textFor(p).split(" ").filter(Boolean);
@@ -82,44 +108,73 @@
         });
       });
     }
-
-    return hits.sort(function (a, b) { return a.name.length - b.name.length; }).slice(0, 5);
+    return hits.sort(function (a, b) { return a.name.length - b.name.length; }).slice(0, 4);
   }
 
-  var money = function (n) { return "R" + n.toFixed(2); };
-
+  /* ---- Render ------------------------------------------------------------ */
   var input = document.getElementById("demo-q");
   var list = document.getElementById("demo-results");
   if (!input || !list) return;
 
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
   function render() {
     var rows = search(input.value);
     list.innerHTML = "";
+
     if (!rows.length) {
-      var li = document.createElement("li");
-      li.className = "empty";
-      li.textContent = "Nothing matches “" + input.value + "”.";
-      list.appendChild(li);
+      var none = el("div", "line");
+      none.style.gridTemplateColumns = "1fr";
+      none.appendChild(el("div", "meta", "Nothing matches “" + input.value + "”."));
+      list.appendChild(none);
+      setTotals([]);
       return;
     }
-    rows.forEach(function (p) {
-      var li = document.createElement("li");
-      var left = document.createElement("div");
-      var nm = document.createElement("div");
-      nm.className = "nm";
-      nm.textContent = p.name;
-      var meta = document.createElement("div");
-      meta.className = "meta";
-      meta.textContent = p.sku + "  ·  per " + p.unit;
-      left.appendChild(nm);
-      left.appendChild(meta);
-      var pr = document.createElement("div");
-      pr.className = "pr";
-      pr.textContent = money(p.price);
-      li.appendChild(left);
-      li.appendChild(pr);
-      list.appendChild(li);
+
+    rows.forEach(function (p, i) {
+      var row = el("div", "line" + (p.kind === "fresh" ? " fresh" : ""));
+      row.appendChild(el("span", "n", String(i + 1)));
+
+      var item = el("div");
+      item.appendChild(el("div", "desc", p.name));
+      var meta = el("div", "meta");
+      // Cut and weighed lines carry a tag before their metadata, because these
+      // are the lines a customer queries later.
+      if (p.kind === "cut" || p.kind === "weighed") {
+        meta.appendChild(el("span", "tag", p.kind === "cut" ? "Cut" : "Weighed"));
+      }
+      meta.appendChild(document.createTextNode(p.meta));
+      item.appendChild(meta);
+      row.appendChild(item);
+
+      row.appendChild(el("span", "qty", qty(p.qty, p.unit, p.kind === "weighed")));
+      row.appendChild(el("span", "amt", money(p.price * p.qty, false)));
+      list.appendChild(row);
     });
+
+    setTotals(rows);
+  }
+
+  function setTotals(rows) {
+    var total = rows.reduce(function (s, p) {
+      return s + Math.round(p.price * p.qty * 100) / 100;
+    }, 0);
+    total = Math.round(total * 100) / 100;
+    var units = rows.reduce(function (s, p) { return s + p.qty; }, 0);
+    var vat = Math.round((total - total / (1 + VAT_RATE)) * 100) / 100;
+    var ex = Math.round((total - vat) * 100) / 100;
+
+    document.getElementById("line-count").textContent =
+      rows.length + (rows.length === 1 ? " line · " : " lines · ") +
+      Number(units.toFixed(2)) + " units";
+    document.getElementById("sub-fig").textContent = money(ex, false);
+    document.getElementById("vat-fig").textContent = money(vat, false);
+    document.getElementById("total-fig").textContent = money(total, true);
   }
 
   input.addEventListener("input", render);
@@ -132,14 +187,16 @@
     });
   });
 
+  // F2 opens search, as the till does.
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "F2") { e.preventDefault(); input.focus(); input.select(); }
+  });
+
   render();
 
-  // Header shadow on scroll, matching innovaearth.com.
   var header = document.querySelector(".site-header");
   if (header) {
-    var onScroll = function () {
-      header.classList.toggle("scrolled", window.scrollY > 8);
-    };
+    var onScroll = function () { header.classList.toggle("scrolled", window.scrollY > 8); };
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
   }

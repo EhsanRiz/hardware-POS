@@ -1,8 +1,20 @@
-# InnovaEarth POS — landing page
+# InnovaPOS — landing page
 
 The public page for **pos.innovaearth.com**. Plain static HTML/CSS/JS, no build
-step, no backend. It borrows the palette and type from innovaearth.com so the
-two read as one company.
+step, no backend.
+
+Built to the **Classical** design system from `design_handoff_innovapos`: paper
+ground, ink text, gold as stroke and never fill, Cormorant Garamond over Lora,
+no sans-serif anywhere. Display type gets *lighter* as it gets bigger — bold is
+retired from the system.
+
+Brand tiers matter here. **InnovaEarth** is the house (contracts, invoices,
+innovaearth.com); **InnovaPOS** is the product and the only tier that owns a
+drawn mark; **Hardware** is the edition, earned by a hairline rule and one word
+rather than a new logo. Never stack all three in one lockup.
+
+Fonts are self-hosted in `assets/fonts/` — the same latin subsets the till uses,
+so the marketing page and the product type identically.
 
 ## Deploying
 

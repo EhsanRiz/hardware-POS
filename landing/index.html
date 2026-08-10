@@ -3,14 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>InnovaEarth POS — Point of sale that keeps trading when the line drops</title>
-<meta name="description" content="Point-of-sale for African retail. Offline-first, VAT-correct tax invoices, trade pricing and real stock control — for hardware, hospitality and general retail.">
-<meta property="og:title" content="InnovaEarth POS — Point of sale that keeps trading when the line drops">
-<meta property="og:description" content="Offline-first point of sale for African retail. VAT-correct invoices, trade pricing, barcode scanning and a stock ledger that explains itself.">
+<title>InnovaPOS — Point of sale that keeps trading when the line drops</title>
+<meta name="description" content="Point of sale for South African retail, launching into hardware and building material. Offline-first, SARS-compliant VAT invoices, trade and retail price bands, cut-to-length and weighed stock.">
+<meta property="og:title" content="InnovaPOS — Point of sale that keeps trading when the line drops">
+<meta property="og:description" content="Offline-first point of sale for South African retail. VAT invoices that reproduce, trade pricing, cut-to-length and weighed stock, and a counter that keeps selling through load shedding.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pos.innovaearth.com/">
-<meta property="og:site_name" content="InnovaEarth POS">
-<meta name="twitter:card" content="summary_large_image">
+<meta property="og:site_name" content="InnovaPOS">
 <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
 <link rel="stylesheet" href="/assets/site.css">
 </head>
@@ -18,85 +17,100 @@
 
 <header class="site-header">
   <div class="nav">
-    <a href="/" class="brand">InnovaEarth <span class="pos">POS</span></a>
+    <a href="/" class="lockup" aria-label="InnovaPOS Hardware">
+      <!-- Scan frame: four brackets closing on a barcode. Paper variant. -->
+      <svg width="26" height="26" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <path d="M30 12H12v18M66 12h18v18M84 66v18H66M30 84H12V66"
+              stroke="#b68235" stroke-width="5.5" stroke-linecap="round"/>
+        <path d="M34 34v28M46 34v28M62 34v28"
+              stroke="#7d5411" stroke-width="5.5" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">Innova<span>POS</span></span>
+      <span class="bar"></span>
+      <span class="edition">Hardware</span>
+    </a>
+
     <nav class="nav-links">
+      <a href="#counter">The counter</a>
       <a href="#offline">Offline</a>
-      <a href="#verticals">For your trade</a>
-      <a href="#search">Finding stock</a>
-      <a href="#features">What's included</a>
-      <a href="#faq">Questions</a>
+      <a href="#finding">Finding stock</a>
+      <a href="#included">What's included</a>
+      <a href="#questions">Questions</a>
     </nav>
+
     <div class="nav-actions">
-      <a href="https://app.innovaearth.com/" class="btn btn-secondary">Store sign-in</a>
-      <a href="#contact" class="btn btn-primary">Book a demo</a>
+      <a href="https://app.innovaearth.com/" class="btn btn-quiet">Store sign-in</a>
+      <a href="#contact" class="btn btn-solid">Book a demo</a>
     </div>
   </div>
 </header>
 
-<!-- ============ HERO ============ -->
+<!-- ============================ HERO ============================ -->
 <section class="hero">
-  <div class="container">
+  <div class="wrap">
     <div class="hero-grid">
       <div>
-        <span class="eyebrow">Point of sale · Southern Africa</span>
+        <span class="kicker">Point of sale · South Africa</span>
         <h1>The till still works when the line goes down.</h1>
         <p class="lead">
           Most point-of-sale systems stop selling the moment the internet does.
-          Ours keeps ringing up sales, printing invoices and taking payment
+          InnovaPOS keeps ringing up sales, printing invoices and taking payment
           through a fibre cut or a load-shedding block — then reconciles itself
-          when the connection returns, without double-charging anyone.
+          when the connection returns, without charging anyone twice.
         </p>
         <div class="hero-ctas">
-          <a href="#contact" class="btn btn-primary btn-arrow">Book a demo</a>
-          <a href="#search" class="btn btn-secondary">Try the product search</a>
+          <a href="#contact" class="btn btn-solid">Book a demo</a>
+          <a href="#finding" class="btn btn-quiet">Try the product search</a>
         </div>
         <div class="hero-points">
-          <span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-            Runs on an ordinary Android tablet
-          </span>
-          <span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-            SARS-ready tax invoices
-          </span>
-          <span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-            Bluetooth slip printer
-          </span>
+          <div><span class="tick">✦</span><span>Runs on a desktop till or a landscape tablet</span></div>
+          <div><span class="tick">✦</span><span>SARS-compliant VAT invoices at 15%</span></div>
+          <div><span class="tick">✦</span><span>Cut-to-length, weighed and per-each stock</span></div>
+          <div><span class="tick">✦</span><span>Trade and retail price bands</span></div>
         </div>
       </div>
 
-      <!-- Live till, running the real search rules -->
-      <div class="till" id="search">
-        <div class="till-bar">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-          <span class="title">Front Counter</span>
-          <span class="pill pill-offline">Offline</span>
-          <span class="pill pill-sync">3 to sync</span>
+      <!-- A working till, not a picture of one. -->
+      <div class="till" id="finding">
+        <div class="till-head">
+          <span class="who">Till 03 · Branch 04</span>
+          <span class="chip" id="sync-chip">Offline · 3 queued</span>
         </div>
-        <div class="till-body">
-          <div class="till-search">
+
+        <div class="till-scan">
+          <div class="scanfield">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/>
+              <path d="M7 8v8M11 8v8M15 8v8" stroke-linecap="round"/>
+            </svg>
             <input id="demo-q" type="search" value="concrete nail 2.5x5"
-                   aria-label="Search products" autocomplete="off"
-                   placeholder="Scan barcode, or describe the item…">
-            <ul class="results" id="demo-results"></ul>
-            <div class="try-hints">
-              <span class="lbl">Try:</span>
-              <button class="chip" data-try="conrete nial">conrete nial</button>
-              <button class="chip" data-try="nail concrete 2,5 x 50">2,5 x 50</button>
-              <button class="chip" data-try="6001234000015">a barcode</button>
-              <button class="chip" data-try="galv chain">galv chain</button>
-            </div>
+                   aria-label="Scan barcode or search products" autocomplete="off"
+                   placeholder="Scan barcode, or type a code">
+            <span class="hint">F2 search</span>
           </div>
-          <div class="till-cart">
-            <div class="cart-line"><span>Cement 42.5N 50kg</span><span class="q">1 bag</span></div>
-            <div class="cart-line"><span>Chain 6mm Galvanised</span><span class="q">2.5 m</span></div>
-            <div class="cart-line"><span>Wire Nails 100mm</span><span class="q">0.75 kg</span></div>
-            <div class="cart-total"><span>Total</span><span>R234.00</span></div>
-            <button class="charge" type="button">Charge R234.00</button>
-            <p class="small muted" style="margin:.625rem 0 0">
-              VAT R30.52 included · invoice number issued on sync
-            </p>
+          <div class="try">
+            <span class="lbl">Try</span>
+            <button type="button" data-try="conrete nial">conrete nial</button>
+            <button type="button" data-try="nail concrete 2,5 x 50">2,5 × 50</button>
+            <button type="button" data-try="6001240000015">a barcode</button>
+            <button type="button" data-try="rebar">rebar</button>
+          </div>
+        </div>
+
+        <div class="lines">
+          <div class="line-head">
+            <span>#</span><span>Item</span><span class="qty">Qty</span><span class="amt">Amount</span>
+          </div>
+          <div id="demo-results"></div>
+        </div>
+
+        <div class="till-total">
+          <div class="trow"><span id="line-count">4 lines · 30.40 units</span><span id="sub-fig">2 625.93</span></div>
+          <div class="trow"><span>VAT at 15%</span><span id="vat-fig">393.89</span></div>
+          <div class="double-rule"></div>
+          <div class="total-row">
+            <span class="lbl">Total</span>
+            <span class="fig" id="total-fig">R&thinsp;3&thinsp;019.82</span>
           </div>
         </div>
       </div>
@@ -104,220 +118,242 @@
   </div>
 </section>
 
-<!-- ============ OFFLINE ============ -->
+<!-- ============================ COUNTER ============================ -->
+<section id="counter">
+  <div class="wrap">
+    <div style="max-width:720px;margin-bottom:46px">
+      <span class="kicker">Scope</span>
+      <h2>A counter screen does four things.</h2>
+      <p class="lead">
+        Scan, bill, take payment, print. Stock movement shows as a consequence on
+        each line, never as a task. Quotes, statements, age analysis, branch
+        transfers and stock takes live one tab away — a screen that tries to hold
+        every operational reality at once is precisely why the incumbent hardware
+        software is disliked.
+      </p>
+    </div>
+    <div class="grid g3">
+      <div class="card">
+        <h4>Cut to length</h4>
+        <p class="small muted">
+          Rebar cut to 2.4 m records how many stock lengths it consumed and what
+          offcut is left — on the line, at the moment of sale, where a dispute
+          later can still be answered.
+        </p>
+      </div>
+      <div class="card">
+        <h4>Weighed off the scale</h4>
+        <p class="small muted">
+          Loose bin stock reads from the scale, subtracts the tare, and records
+          which scale it came from. If the mass is keyed by hand, the line says
+          so — these are the lines that get argued about.
+        </p>
+      </div>
+      <div class="card">
+        <h4>Stock, shown not managed</h4>
+        <p class="small muted">
+          Each line carries its own movement: <span class="tabular">stock 148 → 128</span>.
+          The cashier sees the consequence without being handed a second job.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ OFFLINE ============================ -->
 <section id="offline" class="band">
-  <div class="container">
-    <div class="section-head">
-      <span class="eyebrow">Why this matters here</span>
+  <div class="wrap">
+    <div style="max-width:720px;margin-bottom:46px">
+      <span class="kicker">Why this matters here</span>
       <h2>Built for the connection you actually have.</h2>
       <p class="lead">
         A till that needs the internet is a till that closes when the internet
-        does. In a Free State border town or a Maseru side street, that is not a
-        rare event — it is a Tuesday.
+        does. Load shedding means a counter may run for hours offline and then
+        sync hundreds of transactions at once. That is a design requirement, not
+        an edge case.
       </p>
     </div>
     <div class="grid g3">
       <div class="card">
         <h4>Sell through the outage</h4>
         <p class="small muted">
-          The price list lives on the tablet. Staff carry on scanning, pricing
-          and printing while the line is down; nobody stands at the counter
-          waiting for a spinner.
+          The catalogue, both price bands, account limits and the VAT rate all
+          live on the till. Nobody stands at the counter waiting for a spinner.
         </p>
       </div>
       <div class="card">
         <h4>Reconcile without duplicates</h4>
         <p class="small muted">
-          Every sale carries a key generated on the device. If a request
-          committed but its reply was lost, the retry resolves to the same sale
-          instead of charging the customer twice.
+          Every sale carries a key made on the device. If a request committed but
+          its reply was lost, the retry resolves to the same sale rather than
+          charging the customer a second time.
         </p>
       </div>
       <div class="card">
         <h4>Honest paperwork</h4>
         <p class="small muted">
-          A slip printed offline says the invoice number is pending rather than
-          inventing one. The sequential number is issued by the server the
-          moment the sale lands.
+          A slip printed offline says its invoice number is pending rather than
+          inventing one. The sequential number is issued the moment the sale
+          reaches the server.
         </p>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ============ VERTICALS ============ -->
-<section id="verticals">
-  <div class="container">
-    <div class="section-head">
-      <span class="eyebrow">One platform, different counters</span>
+<!-- ============================ SEARCH ============================ -->
+<section>
+  <div class="wrap">
+    <div style="max-width:760px;margin-bottom:46px">
+      <span class="kicker">Finding stock</span>
+      <h2>Type what the customer says, not what the label says.</h2>
+      <p class="lead">
+        A customer asks for a <em>concrete nail 2.5×5</em>. The shelf label reads
+        <em>Nail Concrete 2.5 × 50 mm</em>. A new staff member should not have to
+        know that. The search in the till above is live — it runs the same rules
+        the product does.
+      </p>
+    </div>
+    <div class="features">
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Any word order</strong>
+        <span>“concrete nail” finds “Nail Concrete” — without returning every nail in the shop.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Any size notation</strong>
+        <span>2,5 × 50 · 2.5x50 · 2.5X50mm · 2.5*50 all reach the same product.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Typos at a busy counter</strong>
+        <span>“conrete nial” still lands on concrete nails.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Scanning, same field</strong>
+        <span>A scanner types and presses Enter. An exact code rings straight through.</span>
+      </div></div>
+    </div>
+    <div class="card" style="margin-top:46px;max-width:760px">
+      <h4>What we are building next</h4>
+      <p class="small muted" style="margin-bottom:0">
+        Search today matches words, sizes and spelling. The next step is
+        <em>meaning</em> — asking for “something to fix wood to a brick wall” and
+        being shown sleeve anchors and frame fixings. That work is underway and
+        not yet shipped. It will sit on top of what is described above and never
+        in place of it, so the counter keeps working when it cannot reach a
+        server.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ INCLUDED ============================ -->
+<section id="included" style="background:var(--surface)">
+  <div class="wrap">
+    <div style="max-width:720px;margin-bottom:46px">
+      <span class="kicker">What's included</span>
+      <h2>The unglamorous things that decide whether a shop keeps using it.</h2>
+    </div>
+    <div class="features">
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Tax invoices that reproduce</strong>
+        <span>VAT is stored as it was charged, so reprinting a two-year-old invoice shows what was actually paid — not today's rate. Sequential numbering throughout.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Quantity is a decimal with a unit</strong>
+        <span>2.5 m of chain and 0.75 kg of loose stock are ordinary sales. Goods sold per-each refuse a fraction, so a slip of the finger is caught at the counter.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Trade and retail price bands</strong>
+        <span>Selecting an account customer re-prices every line, with the credit limit checked before the sale rather than after the bakkie is loaded.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Stock that explains itself</strong>
+        <span>Every movement is recorded with a reason and a person — sale, count, breakage, return — so “why does it think we have nine?” has an answer.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Cash-up with over and short</strong>
+        <span>Opening float, petty cash in and out, counted drawer against expected, and card settled against the terminal.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Permissions that hold</strong>
+        <span>Discounts, voids, cost prices and price changes are gated in the database, not merely hidden on screen — so the rule survives a curious staff member.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Your price list, loaded in minutes</strong>
+        <span>Paste a spreadsheet. Matching lines update, new ones are created, and every rejected row says why instead of failing the lot.</span>
+      </div></div>
+      <div class="feature"><span class="tick">✦</span><div>
+        <strong>Keyboard-complete</strong>
+        <span>A hardware counter is faster on keys than on glass. Scan, amount, Enter — the whole sale without touching the screen.</span>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ EDITIONS ============================ -->
+<section>
+  <div class="wrap">
+    <div style="max-width:720px;margin-bottom:46px">
+      <span class="kicker">Editions</span>
       <h2>A hardware shop does not sell like a coffee shop.</h2>
       <p class="lead">
         Selling 2.5 metres of chain and selling a cappuccino are different
-        problems. Rather than bend one till to fit every trade, each build
+        problems. Rather than bend one till to fit every trade, each edition
         starts from how that counter actually works.
       </p>
     </div>
     <div class="grid g3">
       <div class="card">
-        <span class="status status-build">First site going live</span>
-        <h3>Hardware &amp; building supply</h3>
+        <span class="status">First site going live</span>
+        <h3>Hardware</h3>
         <p class="small muted">
           Cut-to-length and weighed goods, thousands of SKUs found by barcode or
-          description, trade prices for contractors, accounts with credit
-          limits, and a stock ledger that explains every movement.
+          description, contractor accounts on 30 days, and a stock ledger that
+          explains every movement.
         </p>
       </div>
       <div class="card">
-        <span class="status status-live">In production</span>
-        <h3>Coffee &amp; hospitality</h3>
+        <span class="status">In production</span>
+        <h3>Hospitality</h3>
         <p class="small muted">
           Tabs and tables, tips, a fast visual menu, split payments and
-          end-of-day cash-up with over/short — running daily behind a counter,
-          on the same offline-first foundation.
+          end-of-day cash-up — running daily behind a counter on the same
+          offline-first foundation.
         </p>
       </div>
       <div class="card">
-        <span class="status status-next">On the roadmap</span>
-        <h3>General retail &amp; more</h3>
+        <span class="status status-soon">On the roadmap</span>
+        <h3>Pharmacy &amp; general retail</h3>
         <p class="small muted">
-          Pharmacy, agri-supply, spares and grocery all share the same core —
-          catalogue, payments, accounts, cash-up, VAT — and differ in how goods
-          are measured, priced and reordered. Tell us your counter.
+          The same core — catalogue, payments, accounts, cash-up, VAT — differing
+          in how goods are measured, priced and reordered. Tell us about your
+          counter.
         </p>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ============ SEARCH / AI ============ -->
+<!-- ============================ HOW ============================ -->
 <section class="band">
-  <div class="container">
-    <div class="section-head">
-      <span class="eyebrow">Finding stock</span>
-      <h2>Type what the customer says, not what the label says.</h2>
-      <p class="lead">
-        A customer asks for a <em>concrete nail 2.5&#215;5</em>. The shelf label
-        says <em>Nail Concrete 2.5 x 50mm</em>. A new staff member should not
-        need to know that. Try it in the till above — the search on this page
-        runs the same rules the real one does.
-      </p>
-    </div>
-    <div class="features">
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div>
-          <strong>Any word order</strong>
-          <span>“concrete nail” finds “Nail Concrete” — without returning every nail in the shop.</span>
-        </div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div>
-          <strong>Any size notation</strong>
-          <span>2,5 x 50 · 2.5x50 · 2.5X50mm · 2.5*50 all reach the same product.</span>
-        </div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div>
-          <strong>Typos at a busy counter</strong>
-          <span>“conrete nial” still lands on concrete nails.</span>
-        </div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div>
-          <strong>Scanning, same box</strong>
-          <span>A barcode scanner types and presses Enter. An exact code rings straight through.</span>
-        </div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:2.5rem">
-      <h4>What we are building next</h4>
-      <p class="small muted" style="margin-bottom:0">
-        Search today matches words, sizes and spelling. The next step is
-        <strong style="color:#fff">meaning</strong> — asking for “something to fix
-        wood to a brick wall” and getting sleeve anchors and frame fixings. That
-        work is underway and not yet shipped. It will sit on top of what is
-        described above, never in place of it, so the counter keeps working when
-        the shop cannot reach a server.
-      </p>
-    </div>
-  </div>
-</section>
-
-<!-- ============ FEATURES ============ -->
-<section id="features">
-  <div class="container">
-    <div class="section-head">
-      <span class="eyebrow">What's included</span>
-      <h2>The unglamorous things that decide whether a shop keeps using it.</h2>
-    </div>
-    <div class="features">
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Tax invoices that reproduce</strong>
-        <span>VAT is stored as charged, so reprinting a two-year-old invoice shows what was actually paid — not today's rate. Sequential numbering throughout.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Sold by the metre, kilo or cubic metre</strong>
-        <span>2.5 m of chain and 0.75 kg of loose nails are ordinary sales. Whole-unit goods refuse a fraction, so a slip of the finger is caught.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Trade and retail prices</strong>
-        <span>Contractors price off their own list automatically, with credit limits checked before the sale, not after the bakkie is loaded.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Stock that explains itself</strong>
-        <span>Every movement is recorded with a reason and a person — sale, count, breakage, return — so “why does it think we have nine?” has an answer.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Cash-up with over/short</strong>
-        <span>Opening float, petty-cash in and out, counted drawer against expected, and card settled against the terminal.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Permissions that actually hold</strong>
-        <span>Discounts, voids, costs and price changes are gated in the database, not merely hidden in the screen — so the rule survives a curious staff member.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Your own price list, loaded in minutes</strong>
-        <span>Paste a spreadsheet. Matching lines update, new ones are created, and every rejected row tells you why instead of failing the lot.</span></div>
-      </div>
-      <div class="feature">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>
-        <div><strong>Ordinary hardware</strong>
-        <span>An Android tablet and a Bluetooth slip printer. No proprietary terminal, no lock-in, no shipping a box from overseas to replace.</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============ HOW ============ -->
-<section style="background:var(--ie-surface);border-block:1px solid var(--ie-border)">
-  <div class="container">
-    <div class="section-head">
-      <span class="eyebrow">Getting started</span>
+  <div class="wrap">
+    <div style="max-width:720px;margin-bottom:46px">
+      <span class="kicker">Getting started</span>
       <h2>Trading within a day.</h2>
     </div>
-    <div class="steps">
-      <div class="step">
-        <div class="num">01</div>
+    <div class="grid g3">
+      <div class="card">
+        <span class="num">01</span>
         <h4>Send us your price list</h4>
-        <p class="small muted">A spreadsheet is enough. We load your products, departments, units and prices, and set up your VAT details and invoice numbering.</p>
+        <p class="small muted">A spreadsheet is enough. We load your products, departments, units and both price bands, and set your VAT details and invoice numbering.</p>
       </div>
-      <div class="step">
-        <div class="num">02</div>
-        <h4>Pair the tablet</h4>
-        <p class="small muted">A manager pairs each till once. Staff sign in with a PIN, with what each person may do set per role — take payment, approve a discount, see costs.</p>
+      <div class="card">
+        <span class="num">02</span>
+        <h4>Pair the till</h4>
+        <p class="small muted">A manager pairs each till once. Staff sign in with a PIN, with what each person may do set per role — take payment, approve a discount, see cost prices.</p>
       </div>
-      <div class="step">
-        <div class="num">03</div>
+      <div class="card">
+        <span class="num">03</span>
         <h4>Start ringing up</h4>
         <p class="small muted">Scan or search, take cash, card, split or account, print the invoice. We stay involved while the counter settles in.</p>
       </div>
@@ -325,25 +361,25 @@
   </div>
 </section>
 
-<!-- ============ FAQ ============ -->
-<section id="faq">
+<!-- ============================ FAQ ============================ -->
+<section id="questions">
   <div class="narrow">
-    <div class="section-head">
-      <span class="eyebrow">Questions</span>
+    <div style="margin-bottom:46px">
+      <span class="kicker">Questions</span>
       <h2>The things shops ask first.</h2>
     </div>
     <div class="faq">
       <details open>
         <summary>What happens if the internet goes down mid-sale?</summary>
-        <p>Nothing stops. The catalogue is on the tablet, so the sale completes and the invoice prints. It is stored on the device and synced when the line returns — with a key that prevents the same sale being recorded twice.</p>
+        <p>Nothing stops. The catalogue is on the till, so the sale completes and the invoice prints. It is stored on the device and synced when the line returns — with a key that prevents the same sale being recorded twice.</p>
       </details>
       <details>
         <summary>Do we need special hardware?</summary>
-        <p>No. An Android tablet and a Bluetooth thermal printer. A USB or Bluetooth barcode scanner behaves as a keyboard, so scanning works without any extra integration.</p>
+        <p>No. A desktop till or a landscape tablet, and a thermal slip printer. A USB or Bluetooth barcode scanner behaves as a keyboard, so scanning needs no extra integration.</p>
       </details>
       <details>
         <summary>Is it right for SARS?</summary>
-        <p>Invoices carry sequential numbers and your VAT registration, and the VAT amount is stored as it was charged, so a reprint years later shows the original figures. If you also trade in Maloti near the border, tell us — that affects how the drawer and cash-up are set up.</p>
+        <p>Invoices carry sequential numbers and your VAT registration, and the VAT amount is stored as it was charged, so a reprint years later shows the original figures. If you trade in Maloti as well as Rand near the border, tell us — that affects the drawer and the cash-up.</p>
       </details>
       <details>
         <summary>Can we keep our own product codes?</summary>
@@ -351,7 +387,7 @@
       </details>
       <details>
         <summary>Who can see cost prices?</summary>
-        <p>Only staff you grant it to. Seeing costs is a separate permission from managing products, so a supervisor can fix a price or a barcode without seeing the shop's margins.</p>
+        <p>Only staff you grant it to. Seeing costs is a separate permission from managing products, so a supervisor can fix a price or a barcode without being shown the shop's margins.</p>
       </details>
       <details>
         <summary>What does it cost?</summary>
@@ -361,47 +397,45 @@
   </div>
 </section>
 
-<!-- ============ SIGN IN / CTA ============ -->
-<section id="signin">
-  <div class="container">
-    <div class="cta">
-      <h2 id="contact">Bring your counter into the conversation.</h2>
-      <p>
-        Tell us what you sell and how you sell it — by the metre, by the bag, on
-        account, across two tills — and we will show you the till working
-        against your own products.
-      </p>
-      <div class="cta-actions">
-        <a href="mailto:hello@innovaearth.com?subject=POS%20demo" class="btn btn-teal btn-arrow">Book a demo</a>
-        <a href="https://innovaearth.com/contact/" class="btn btn-secondary" style="color:#fff;border-color:rgba(255,255,255,.35)">Contact InnovaEarth</a>
-      </div>
-      <p class="small" style="margin:1.75rem 0 0;color:#8FA6BC">
-        Already a customer?
-        <a href="https://app.innovaearth.com/" style="color:#fff;text-decoration:underline">Sign in to your till</a>
-        <!-- Deliberately a link, not a form. Sign-in belongs on the app origin,
-             where the till already lives; a second login box here would be a
-             second thing to keep in step with the real one. -->
-      </p>
+<!-- ============================ CLOSE ============================ -->
+<section id="contact">
+  <div class="narrow close">
+    <span class="kicker">Next</span>
+    <h2>Bring your counter into the conversation.</h2>
+    <p class="lead" style="margin-left:auto;margin-right:auto">
+      Tell us what you sell and how you sell it — by the metre, by the bag, on
+      account, across two tills — and we will show you the till working against
+      your own products.
+    </p>
+    <div class="btns">
+      <a href="mailto:hello@innovaearth.com?subject=InnovaPOS%20demo" class="btn btn-solid">Book a demo</a>
+      <a href="https://innovaearth.com/contact/" class="btn btn-quiet">Contact InnovaEarth</a>
     </div>
   </div>
 </section>
 
 <footer class="site-footer">
-  <div class="container">
-    <div class="footer-grid">
+  <div class="wrap">
+    <div class="foot-grid">
       <div>
-        <div class="brand" style="color:#fff;margin-bottom:.75rem">InnovaEarth <span class="pos">POS</span></div>
-        <p style="max-width:34ch">
-          Point-of-sale built for how shops in Southern Africa actually trade —
+        <div class="lockup" style="margin-bottom:13.8px">
+          <svg width="22" height="22" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+            <path d="M30 12H12v18M66 12h18v18M84 66v18H66M30 84H12V66" stroke="#b68235" stroke-width="5.5" stroke-linecap="round"/>
+            <path d="M34 34v28M46 34v28M62 34v28" stroke="#7d5411" stroke-width="5.5" stroke-linecap="round"/>
+          </svg>
+          <span class="wordmark" style="font-size:20px">Innova<span>POS</span></span>
+        </div>
+        <p style="max-width:36ch">
+          Point of sale built for how shops in Southern Africa actually trade —
           including when the line drops.
         </p>
       </div>
       <div>
         <h5>Product</h5>
-        <a href="#offline">Works offline</a>
-        <a href="#verticals">For your trade</a>
-        <a href="#search">Finding stock</a>
-        <a href="#features">What's included</a>
+        <a href="#counter">The counter</a>
+        <a href="#offline">Offline</a>
+        <a href="#finding">Finding stock</a>
+        <a href="#included">What's included</a>
       </div>
       <div>
         <h5>InnovaEarth</h5>
@@ -410,9 +444,9 @@
         <a href="https://innovaearth.com/contact/">Contact</a>
       </div>
     </div>
-    <div class="footer-bottom">
+    <div class="foot-end">
       <span>&copy; 2026 InnovaEarth. All rights reserved.</span>
-      <span>Southern Africa</span>
+      <span>InnovaPOS is a product of InnovaEarth.</span>
     </div>
   </div>
 </footer>

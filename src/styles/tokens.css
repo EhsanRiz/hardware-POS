@@ -6,13 +6,12 @@
  * several of these were arrived at by a contrast audit during the design work,
  * and a "close enough" hex undoes it.
  *
- * FONTS ARE NOT LOADED HERE, DELIBERATELY.
- * The handoff says to self-host Cormorant Garamond and Lora, and it is right:
- * a till that must complete sales during a fibre cut cannot fetch a stylesheet
- * from fonts.googleapis.com. A @import would work in the showroom and fall back
- * to a system serif in the shop — the one place it matters. The @font-face
- * blocks below expect the files in /public/fonts; see README for what to add.
- */
+ * FONTS ARE SELF-HOSTED, DELIBERATELY.
+ * A till that must complete sales through a fibre cut cannot fetch a stylesheet
+ * from fonts.googleapis.com. A CDN @import works in a demo and falls back to a
+ * system serif in the shop — the one place it matters. The woff2 files in
+ * public/fonts are the latin subsets, 258 KB in total, precached by the service
+ * worker along with the rest of the app. */
 
 :root {
   /* Ground and ink ------------------------------------------------------ */
@@ -74,20 +73,54 @@
   --state-selected: rgba(182, 130, 53, 0.10);
 }
 
-/* Self-hosted faces. Woff2 files go in public/fonts/ — see README. Until they
-   are added the stack falls back to Georgia, which is a reasonable serif and
-   keeps the till readable rather than dropping to a system sans. */
+/* Self-hosted faces: latin subsets from Google Fonts, served from our own
+   origin so the till types correctly with no network. */
 @font-face {
   font-family: "Cormorant Garamond";
-  src: url("/fonts/cormorant-garamond-variable.woff2") format("woff2-variations");
-  font-weight: 300 700;
+  src: url("/fonts/cormorant-garamond-300.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("/fonts/cormorant-garamond-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("/fonts/cormorant-garamond-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("/fonts/cormorant-garamond-600.woff2") format("woff2");
+  font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Lora";
-  src: url("/fonts/lora-variable.woff2") format("woff2-variations");
-  font-weight: 400 700;
+  src: url("/fonts/lora-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("/fonts/lora-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("/fonts/lora-600.woff2") format("woff2");
+  font-weight: 600;
   font-style: normal;
   font-display: swap;
 }

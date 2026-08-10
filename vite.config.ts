@@ -15,6 +15,9 @@ export default defineConfig({
         VitePWA({
       registerType: "autoUpdate",
       workbox: {
+        // Fonts are part of the app shell: a till that loses the line before
+        // they are cached would fall back to a system serif.
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         // Cache product images (Supabase Storage) so the product grid still
         // shows pictures while offline. Images are immutable (UUID filenames), so
         // CacheFirst is safe and fast.
