@@ -1,0 +1,57 @@
+{
+  "ground": {
+    "green": "#0e3a2d",
+    "greenDeep": "#092a20",
+    "cream": "#f5f2ea",
+    "creamSunk": "#eae5d8"
+  },
+  "accent": {
+    "amber": "#c8912f",
+    "amberLight": "#e0b45c",
+    "amberDeep": "#8a5f14"
+  },
+  "text": {
+    "ink": "#1b2a24",
+    "inkMuted": "#3d4b44",
+    "mutedOnCream": "#55625b",
+    "mutedOnGreen": "#a9bbb1"
+  },
+  "semantic": {
+    "owing": "#b03a2b"
+  },
+  "line": {
+    "dividerCream": "rgba(27,42,36,0.16)",
+    "rowCream": "rgba(27,42,36,0.09)",
+    "dividerGreen": "rgba(245,242,234,0.20)"
+  },
+  "state": {
+    "hover": "rgba(200,145,47,0.12)",
+    "pressed": "rgba(200,145,47,0.22)",
+    "selected": "rgba(200,145,47,0.10)",
+    "flash": "rgba(200,145,47,0.14)"
+  },
+  "font": {
+    "heading": "Cormorant Garamond, serif",
+    "body": "Lora, serif"
+  },
+  "radius": {
+    "sm": 2,
+    "md": 4,
+    "lg": 7
+  },
+  "contrastFloors": {
+    "onCream": {
+      "secondaryText": "#55625b",
+      "bodyText": "#1b2a24",
+      "accentText": "#8a5f14",
+      "note": "nothing lighter than #55625b for text; bare amber #c8912f is ~3:1 — strokes and large type only"
+    },
+    "onGreen": {
+      "secondaryText": "#a9bbb1",
+      "bodyText": "#f5f2ea",
+      "accentText": "#e0b45c"
+    },
+    "minimumFontSizePx": 10
+  },
+  "source": "Sampled from a screenshot of letlotlo.co.za — close but not authoritative. Replace with the real token sheet if one exists."
+}

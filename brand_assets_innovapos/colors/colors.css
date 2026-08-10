@@ -1,0 +1,50 @@
+:root {
+  /* Grounds */
+  --ie-green:            #0e3a2d;   /* primary ground: app chrome, icon tiles, hero panels */
+  --ie-green-deep:       #092a20;   /* recessed panels on green */
+  --ie-cream:            #f5f2ea;   /* the reading surface */
+  --ie-cream-sunk:       #eae5d8;   /* input wells, recessed surfaces, image mats */
+
+  /* Accent — stroke only, never a fill */
+  --ie-amber:            #c8912f;   /* strokes, rules, borders, active underlines */
+  --ie-amber-light:      #e0b45c;   /* the accent ON GREEN */
+  --ie-amber-deep:       #8a5f14;   /* accent TEXT at paragraph size, on cream */
+
+  /* Text */
+  --ie-ink:              #1b2a24;   /* body text and figures on cream */
+  --ie-ink-muted:        #3d4b44;   /* long-form body copy */
+  --ie-muted-on-cream:   #55625b;   /* secondary text on cream — the readable floor */
+  --ie-muted-on-green:   #a9bbb1;   /* secondary text on green — the readable floor */
+
+  /* Semantic */
+  --ie-owing:            #b03a2b;   /* money owed, overdue, declined. Nothing else */
+
+  /* Lines */
+  --ie-divider-cream:    rgba(27,42,36,0.16);
+  --ie-row-cream:        rgba(27,42,36,0.09);
+  --ie-divider-green:    rgba(245,242,234,0.20);
+
+  /* States */
+  --ie-hover:            rgba(200,145,47,0.12);
+  --ie-pressed:          rgba(200,145,47,0.22);
+  --ie-selected:         rgba(200,145,47,0.10);
+  --ie-flash:            rgba(200,145,47,0.14);   /* just-scanned row tint */
+
+  /* Type */
+  --ie-font-heading:     "Cormorant Garamond", serif;
+  --ie-font-body:        "Lora", serif;
+
+  /* Radius */
+  --ie-radius-sm: 2px;
+  --ie-radius-md: 4px;
+  --ie-radius-lg: 7px;
+
+  /* Elevation */
+  --ie-shadow-sm: 0 1px 2px rgba(9,42,32,0.14);
+  --ie-shadow-md: 0 3px 10px rgba(9,42,32,0.16);
+  --ie-shadow-lg: 0 12px 32px rgba(9,42,32,0.22);
+}
+
+/* Focus is themed, never the browser default */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--ie-amber); outline-offset: 2px; }
