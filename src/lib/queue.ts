@@ -1,42 +1,44 @@
-// Durable on-device queue of payments taken while offline (or when a payment
-// request failed mid-flight). Items are replayed to the server by sync.ts.
-// Stored in localStorage so they survive refreshes and reboots.
+// Durable on-device queue of sales taken while offline (or when a request
+// failed mid-flight). Items are replayed to the server by sync.ts. Stored in
+// localStorage so they survive refreshes and reboots.
+//
+// Note what is *not* stored: no PIN, ever. A queued sale carries the register's
+// token implicitly (it belongs to this device) and the cashier's id, which is
+// all the server needs to replay it.
 import { cacheGet, cacheSet } from "./localCache";
 import type { CartLine, PaymentMethod } from "./types";
 
-export interface QueuedPaymentPayload {
-  clientUuid: string; // idempotency key — also the local sale id
+export interface QueuedSalePayload {
+  /** Idempotency key — also the local sale id until the server assigns one. */
+  clientUuid: string;
   cashierId: string;
   cashierName: string;
-  orderId: string | null;
   lines: CartLine[];
   discountAmount: number;
   discountReason: string | null;
-  tipAmount: number;
   paymentMethod: PaymentMethod;
   amountTendered: number | null;
   changeDue: number | null;
   subtotal: number;
   total: number;
-  // For discounts approved offline: the approver's id/name (verified against
-  // the device credential cache). We deliberately do NOT store the PIN.
+  /** Verified against the device credential cache at the time of sale. */
   approvedBy: string | null;
   approvedByName: string | null;
-  // Set when the sale is charged to a customer account.
-  accountId: string | null;
-  accountName: string | null;
-  // Set for split payments (part cash, part card).
+  customerId: string | null;
+  customerName: string | null;
+  tradePricing: boolean;
   paidCash: number | null;
   paidCard: number | null;
-  createdAt: string; // ISO time the sale was taken
+  /** ISO time the sale was actually taken, not when it syncs. */
+  createdAt: string;
 }
 
-export interface QueuedPayment extends QueuedPaymentPayload {
+export interface QueuedSale extends QueuedSalePayload {
   attempts: number;
   lastError?: string;
 }
 
-const Q_KEY = "queue.payments";
+const Q_KEY = "queue.sales";
 const DEAD_KEY = "queue.failed";
 
 type Listener = () => void;
@@ -49,20 +51,20 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
-export function listQueue(): QueuedPayment[] {
-  return cacheGet<QueuedPayment[]>(Q_KEY, []);
+export function listQueue(): QueuedSale[] {
+  return cacheGet<QueuedSale[]>(Q_KEY, []);
 }
 export function queueCount(): number {
   return listQueue().length;
 }
-export function listFailed(): QueuedPayment[] {
-  return cacheGet<QueuedPayment[]>(DEAD_KEY, []);
+export function listFailed(): QueuedSale[] {
+  return cacheGet<QueuedSale[]>(DEAD_KEY, []);
 }
 export function failedCount(): number {
   return listFailed().length;
 }
 
-export function enqueue(payload: QueuedPaymentPayload): void {
+export function enqueue(payload: QueuedSalePayload): void {
   const q = listQueue();
   // Guard against a double-enqueue of the same sale.
   if (q.some((i) => i.clientUuid === payload.clientUuid)) return;
@@ -91,10 +93,10 @@ export function bumpAttempt(clientUuid: string, error?: string): void {
   notify();
 }
 
-// Move a permanently-rejected item (server validation error, not a network
+// Move a permanently-rejected item (a server validation error, not a network
 // blip) out of the active queue so it stops blocking the rest, but keep it so a
-// manager can see/re-key it.
-export function moveToFailed(item: QueuedPayment, error: string): void {
+// manager can see and re-key it.
+export function moveToFailed(item: QueuedSale, error: string): void {
   const dead = listFailed();
   dead.push({ ...item, lastError: error });
   cacheSet(DEAD_KEY, dead);
@@ -106,7 +108,7 @@ export function clearFailed(): void {
   notify();
 }
 
-// Discard a single failed item.
+/** Discard a single failed item. */
 export function removeFailed(clientUuid: string): void {
   cacheSet(
     DEAD_KEY,
@@ -115,7 +117,7 @@ export function removeFailed(clientUuid: string): void {
   notify();
 }
 
-// Move a failed item back into the active queue to try syncing it again.
+/** Move a failed item back into the active queue to try syncing it again. */
 export function requeueFailed(clientUuid: string): void {
   const item = listFailed().find((i) => i.clientUuid === clientUuid);
   if (!item) return;

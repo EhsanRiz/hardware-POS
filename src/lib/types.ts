@@ -1,29 +1,93 @@
 export type Role = "admin" | "manager" | "employee";
 
-export type SaleStatus = "completed" | "pending_approval" | "voided" | "open";
+export type SaleStatus = "completed" | "pending_approval" | "voided";
 
 export type PaymentMethod = "cash" | "card" | "account" | "split";
 
-// Customer house account (accounts receivable).
-export interface AccountListItem {
+export interface User {
   id: string;
   name: string;
-  phone: string | null;
-  credit_limit: number | null;
-  balance: number;
+  role: Role;
+  phone?: string | null;
+  email?: string | null;
+  permissions?: string[] | null;
 }
 
-export interface Account {
+/**
+ * A line in the catalogue.
+ *
+ * Two fields carry most of the hardware-specific weight:
+ *   - `unit_code` / `unit_name` — what one unit *is* ("m", "kg", "bag"). The
+ *     till shows it next to the quantity and prints it on the invoice, because
+ *     "2.5 Chain" is meaningless and "2.5 m Chain" is not.
+ *   - `allows_fraction` — whether a fraction is legitimate at all. Chain is cut
+ *     to length; padlocks are not. The server enforces this too, so a bad
+ *     quantity is a rejected sale rather than a silently rounded one.
+ */
+export interface Product {
+  id: string;
+  sku: string;
+  barcode: string | null;
+  name: string;
+  description: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  unit_code: string;
+  unit_name: string;
+  allows_fraction: boolean;
+  price_retail: number;
+  /** Contractor price. Null means trade customers pay retail for this line. */
+  price_trade: number | null;
+  tax_code: string;
+  /** null = stock is not tracked for this line. */
+  stock_qty: number | null;
+  reorder_level: number | null;
+  image_url: string | null;
+  sort_order: number;
+}
+
+export interface Category {
   id: string;
   name: string;
+  sort_order: number;
+}
+
+export interface UnitOfMeasure {
+  code: string;
+  name: string;
+  allows_fraction: boolean;
+  sort_order: number;
+}
+
+/**
+ * A cart line. `qty` is a number with up to three decimals — 2.5 m of chain,
+ * 0.75 kg of loose nails — not an integer count.
+ */
+export interface CartLine {
+  product: Product;
+  qty: number;
+}
+
+/** A customer account. Trade customers price off `price_trade` automatically. */
+export interface Customer {
+  id: string;
+  code: string | null;
+  name: string;
   phone: string | null;
-  email: string | null;
+  is_trade: boolean;
   credit_limit: number | null;
-  opening_balance: number;
-  active: boolean;
-  notes: string | null;
   balance: number;
-  created_at: string;
+  /** Headroom left on the account. Null when the limit is unlimited. */
+  available: number | null;
+}
+
+export interface CustomerDetail extends Customer {
+  email: string | null;
+  address: string | null;
+  vat_number: string | null;
+  opening_balance: number;
+  notes: string | null;
+  active: boolean;
 }
 
 export interface LedgerEntry {
@@ -36,65 +100,23 @@ export interface LedgerEntry {
   ref: string;
 }
 
-export interface AccountLedger {
-  id: string;
-  name: string;
-  phone: string | null;
-  email: string | null;
-  credit_limit: number | null;
-  opening_balance: number;
-  balance: number;
-  entries: LedgerEntry[];
-}
-
-export interface User {
-  id: string;
-  name: string;
-  role: Role;
-  phone?: string | null;
-  email?: string | null;
-  permissions?: string[] | null;
-}
-
-export interface Product {
-  id: string;
-  name: string;
-  category: string;
-  price: number;
-  cost?: number | null; // optional cost price (for markup)
-  active: boolean;
-  sort_order: number;
-  image_url: string | null;
-  stock_qty: number | null; // null = not tracked
-  variants?: ProductVariant[];
-}
-
-// A size / option of a product, with its own price and (optional) stock.
-export interface ProductVariant {
-  id: string;
-  name: string | null; // optional descriptor, e.g. "With Milk"
-  size: string | null; // optional, e.g. "Large"
-  price: number;
-  cost?: number | null; // optional cost price (for markup)
-  stock_qty: number | null; // null = not tracked
-  active: boolean;
-  sort_order: number;
-}
-
-export interface CartLine {
-  product: Product;
-  qty: number;
-  variant?: ProductVariant; // the chosen size/option, when the product has them
-}
-
 export interface Sale {
   id: string;
+  /** Sequential tax invoice number, e.g. INV-000123. Null until completed. */
+  doc_number: string | null;
   cashier_id: string;
   cashier_name: string;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  /** Whether this sale was rung up on the trade price list. */
+  trade_pricing: boolean;
+  /** VAT-inclusive, before discount. */
   subtotal: number;
   discount_amount: number;
   discount_reason: string | null;
-  tip_amount: number;
+  /** The VAT contained within `total`, as charged at the time of sale. */
+  tax_amount: number;
+  /** VAT-inclusive, after discount. */
   total: number;
   status: SaleStatus;
   approved_by: string | null;
@@ -102,95 +124,59 @@ export interface Sale {
   payment_method: PaymentMethod | null;
   amount_tendered: number | null;
   change_due: number | null;
-  label: string | null;
-  account_id?: string | null;
-  paid_cash?: number | null; // cash portion of a split payment
-  paid_card?: number | null; // card portion of a split payment
+  paid_cash: number | null;
+  paid_card: number | null;
+  note?: string | null;
   created_at: string;
-}
-
-export interface OpenOrder {
-  id: string;
-  label: string | null;
-  cashier_name: string;
-  total: number;
-  item_count: number;
-  created_at: string;
-  // Set for orders parked on this device while offline (not yet on the server).
-  localId?: string;
-  pending?: boolean;
-}
-
-export interface OpenOrderItem {
-  product_id: string;
-  variant_id: string | null;
-  name: string;
-  unit_price: number;
-  qty: number;
-}
-
-// A server open order together with its line items, cached on the device so it
-// stays visible and reopenable while offline.
-export interface OpenOrderFull extends OpenOrder {
-  items: OpenOrderItem[];
-}
-
-export interface CashMovement {
-  id: string;
-  type: "pay_in" | "pay_out";
-  amount: number;
-  reason: string | null;
-  by_name: string | null;
-  at: string;
-}
-
-// Live view of the currently open shift.
-export interface OpenSession {
-  id: string;
-  opened_by_name: string | null;
-  opened_at: string;
-  opening_float: number;
-  cash_sales: number;
-  card_sales: number;
-  pay_ins: number;
-  pay_outs: number;
-  expected_cash: number;
-  expected_card: number;
-  movements: CashMovement[];
-}
-
-export interface CashSession {
-  id: string;
-  opened_by_name: string | null;
-  opened_at: string;
-  opening_float: number;
-  status: "open" | "closed";
-  closed_by_name: string | null;
-  closed_at: string | null;
-  cash_sales: number | null;
-  card_sales: number | null;
-  pay_ins: number | null;
-  pay_outs: number | null;
-  expected_cash: number | null;
-  counted_cash: number | null;
-  cash_variance: number | null;
-  expected_card: number | null;
-  settled_card: number | null;
-  card_variance: number | null;
-  notes: string | null;
 }
 
 export interface SaleItem {
-  id: string;
   name: string;
-  unit_price: number;
+  sku: string | null;
+  unit_code: string;
   qty: number;
+  unit_price: number;
   line_total: number;
+  tax_amount: number;
 }
 
-// Minimal shape the receipt builder needs (works for live carts and past sales).
+export interface RecentSale {
+  id: string;
+  doc_number: string | null;
+  cashier_name: string;
+  customer_name: string | null;
+  total: number;
+  tax_amount: number;
+  status: SaleStatus;
+  payment_method: PaymentMethod | null;
+  created_at: string;
+}
+
+/** A paired till. The token is held on the device and never leaves it. */
+export interface Register {
+  id: string;
+  name: string;
+  active: boolean;
+  last_seen_at: string | null;
+  created_at: string;
+}
+
+/** Shop details for the invoice header, read from the database. */
+export interface ShopSettings {
+  shop_name: string;
+  address_line1: string;
+  address_line2: string;
+  phone: string;
+  vat_number: string;
+  currency: string;
+  registration_number: string;
+}
+
+/** Minimal shape the receipt builder needs (live carts and past sales alike). */
 export interface ReceiptItem {
   name: string;
-  price: number;
+  unit_code: string;
   qty: number;
+  unit_price: number;
+  line_total: number;
 }

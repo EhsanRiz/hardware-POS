@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { signIn } from "../lib/auth";
 import { useAuth } from "../context/AuthContext";
-import { SHOP_NAME } from "../lib/config";
+import { shopSettings } from "../lib/settings";
 import PinPad from "./PinPad";
 import BrandMark from "./BrandMark";
 import ShopLogo from "./ShopLogo";
@@ -34,7 +34,7 @@ export default function Login() {
       {/* Shop logo */}
       <div className="pt-10 pb-2 flex flex-col items-center animate-fade-in">
         <ShopLogo className="h-24 w-auto" />
-        <span className="sr-only">{SHOP_NAME}</span>
+        <span className="sr-only">{shopSettings().shop_name}</span>
         <p className="text-taupe mt-3">Enter your PIN to sign in</p>
       </div>
 

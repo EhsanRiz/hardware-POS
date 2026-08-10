@@ -4,18 +4,18 @@ import {
   onQueueChange,
   removeFailed,
   requeueFailed,
-  type QueuedPayment,
+  type QueuedSale,
 } from "../lib/queue";
 import { syncNow } from "../lib/sync";
 import { useOnline } from "../lib/offline";
 import { money } from "../lib/format";
-import { lineName } from "../lib/variants";
+import { itemLabel } from "../lib/receipt";
 
 // Manager view of sales that were taken offline on this device but the server
 // rejected on sync. Lets them read the reason and retry or discard each one.
 export default function FailedSales({ onClose }: { onClose: () => void }) {
   const online = useOnline();
-  const [items, setItems] = useState<QueuedPayment[]>(listFailed());
+  const [items, setItems] = useState<QueuedSale[]>(listFailed());
 
   useEffect(() => onQueueChange(() => setItems(listFailed())), []);
   // Nothing left to show → close automatically.
@@ -23,9 +23,9 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
     if (items.length === 0) onClose();
   }, [items.length, onClose]);
 
-  const summary = (it: QueuedPayment) =>
+  const summary = (it: QueuedSale) =>
     it.lines
-      .map((l) => `${l.qty}× ${lineName(l)}`)
+      .map((l) => itemLabel(l.qty, l.product.unit_code, l.product.name))
       .join(", ") || "—";
 
   return (

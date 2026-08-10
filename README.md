@@ -5,13 +5,14 @@ Android tablet behind the counter. It's a **PWA** (installable web app) that
 talks to a **Supabase** (Postgres) backend and hands receipt printing off to
 the **RawBT** Android app over Bluetooth.
 
-> **Status: hardware schema built and verified; the app UI has not caught up yet.**
+> **Status: the till works end to end. The back office does not exist yet.**
 >
-> The database is a clean hardware-first design — not the cafe's schema with
-> patches. It is deployed and tested (see *Schema* below). The React client is
-> still the cafe's and calls RPCs that no longer exist, so **the app will not
-> run against this backend yet.** Reworking the client is the next phase.
-> See [`docs/PLAN.md`](docs/PLAN.md).
+> A cashier can pair the tablet, sign in, scan or search, sell fractional
+> quantities, take cash/card/account/split payment and print a tax invoice —
+> online or through an outage. What is missing is everything a manager does:
+> product and price admin, staff, goods receiving, reports and cash-up. Those
+> screens were inherited from the cafe, targeted the old data model, and were
+> removed rather than patched. See *Still to build*.
 
 ## What is carried over
 
@@ -54,12 +55,20 @@ returns stock with a logged reason.
 
 ## Still to build
 
-- **Client rework** — the UI still speaks the cafe's RPC vocabulary
-- **Goods receiving** — suppliers exist; purchase orders and GRVs do not
-- **Quotes** — builders expect a price on paper
-- **Cash-up** — tables reserved (`session_id`), logic not yet ported
-- **Reports** — sales, margin, reorder
+Removed from the cafe build because they targeted the old data model, and to be
+rebuilt against this schema:
+
+- **Catalogue admin** — products, SKUs, barcodes, prices, units, categories
+- **Staff admin** — users, roles, permissions, PINs
+- **Goods receiving** — suppliers exist in the schema; purchase orders and GRVs do not
+- **Reports** — sales, margin (the data is there: `cost_at_sale`), reorder
+- **Cash-up** — `session_id` is reserved on `sales`; the logic is not ported
+- **Quotes as documents** — the till prints a quote, but it is not stored or
+  convertible to an invoice
 - **Login rate limiting** — see *Known security tradeoffs*
+
+Until catalogue admin exists, products are managed by editing
+`0005_seed.sql` or by SQL against the database.
 
 ## Architecture
 
@@ -70,9 +79,21 @@ Android tablet ──► PWA (React/Vite) ──► Supabase Postgres
 ```
 
 Sensitive operations go through Postgres `SECURITY DEFINER` functions, so PIN
-hashes and totals never travel over the public anon key. Only `products` is
-directly readable with the anon key; `app_users`, `sales` and `sale_items` have
-RLS enabled with no policies and are reachable only through those functions.
+hashes and totals never travel over the public anon key.
+
+### Two credentials, on purpose
+
+- A **register token** authenticates the till. A manager pairs the tablet once
+  and it holds a random token (`src/lib/device.ts`). This is what makes the
+  offline queue safe: a sale taken during an outage is replayed hours later
+  with nobody present, so it cannot depend on anyone's PIN — and the device
+  never stores a PIN it could replay one with.
+- A **PIN** authenticates a person, and is required for approving a discount,
+  voiding a sale, and pairing or revoking a till.
+
+The cafe build had no equivalent: it accepted a client-supplied `cashier_id`
+with no credential, so the anon key alone was enough to post a sale as anyone.
+Losing a tablet here means revoking one token, not rotating every staff PIN.
 
 ## Setup
 
@@ -103,6 +124,10 @@ Seeded by `0005_seed.sql`: Manager `1234`, Employee `5678`.
 
 Connect the repo to Cloudflare Pages with build command `npm run build` and
 output directory `dist`. `public/_redirects` provides the SPA fallback.
+
+The intended home is **`pos.innovaearth.com`** — the `innovaearth.com` zone is
+already in the same Cloudflare account, so the custom domain resolves without
+touching DNS by hand, and the marketing site keeps the apex.
 
 Unlike the cafe build, **this repo does not commit `.env.production`** — set
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and the shop details as

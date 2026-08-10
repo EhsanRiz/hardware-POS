@@ -1,171 +1,146 @@
-import type { CartLine } from "../lib/types";
+import { useState } from "react";
 import { money } from "../lib/format";
-import { lineKey, lineName, linePrice } from "../lib/variants";
+import { fmtQty } from "../lib/receipt";
+import type { CartLine } from "../lib/types";
 
-interface Props {
-  lines: CartLine[];
-  subtotal: number;
-  discount: number;
-  total: number;
-  busy: boolean;
-  canDiscount: boolean;
-  editingLabel?: string | null;
-  onInc: (lineKey: string) => void;
-  onDec: (lineKey: string) => void;
-  onClear: () => void;
-  onDiscount: () => void;
-  onBill: () => void;
-  onSave: () => void;
-  onPay: () => void;
-}
-
+/**
+ * The cart.
+ *
+ * The +/- stepper that suits a cafe is wrong for goods sold by the metre, so
+ * every line also has a directly editable quantity. Whether a fraction is
+ * allowed comes from the product's unit: 2.5 m of chain is a sale, 2.5 padlocks
+ * is a typo. The same rule is enforced server-side — this is the courteous
+ * version that stops the cashier before the customer is standing there.
+ */
 export default function Cart({
   lines,
-  subtotal,
-  discount,
-  total,
-  busy,
-  canDiscount,
-  editingLabel,
-  onInc,
-  onDec,
-  onClear,
-  onDiscount,
-  onBill,
-  onSave,
-  onPay,
-}: Props) {
-  const empty = lines.length === 0;
+  trade,
+  onSetQty,
+  onRemove,
+}: {
+  lines: CartLine[];
+  trade: boolean;
+  onSetQty: (productId: string, qty: number) => void;
+  onRemove: (productId: string) => void;
+}) {
+  if (lines.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-stone-400 text-sm">
+        Scan or search to start a sale
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-stone-200">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 shrink-0">
-        <h2 className="font-semibold text-stone-800 flex items-center gap-2">
-          Order
-          {!empty &&
-            (() => {
-              const count = lines.reduce((n, l) => n + l.qty, 0);
-              // key on count so the badge re-pops whenever the quantity changes
-              return (
-                <span
-                  key={count}
-                  className="inline-flex items-center justify-center min-w-6 h-6 px-1.5 rounded-full bg-brand text-white text-xs font-bold animate-pop"
-                >
-                  {count}
-                </span>
-              );
-            })()}
-        </h2>
-        {!empty && (
-          <button
-            onClick={onClear}
-            className={
-              editingLabel
-                ? "h-8 px-4 rounded-full bg-emerald-400 text-white text-sm font-semibold shadow-sm active:bg-emerald-500"
-                : "text-sm text-stone-400 active:text-stone-600"
-            }
-          >
-            {editingLabel ? "Back" : "Clear"}
-          </button>
-        )}
+    <ul className="flex-1 overflow-y-auto divide-y divide-stone-100">
+      {lines.map((l) => (
+        <CartRow
+          key={l.product.id}
+          line={l}
+          trade={trade}
+          onSetQty={onSetQty}
+          onRemove={onRemove}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function CartRow({
+  line,
+  trade,
+  onSetQty,
+  onRemove,
+}: {
+  line: CartLine;
+  trade: boolean;
+  onSetQty: (productId: string, qty: number) => void;
+  onRemove: (productId: string) => void;
+}) {
+  const p = line.product;
+  const [draft, setDraft] = useState<string | null>(null);
+  const unitPrice = trade && p.price_trade != null ? p.price_trade : p.price_retail;
+
+  // Whole units step by 1; cut goods step by 0.5, which is what a counter
+  // actually asks for ("two and a half metres").
+  const step = p.allows_fraction ? 0.5 : 1;
+
+  function commit(raw: string) {
+    setDraft(null);
+    const n = Number(raw.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return;
+    onSetQty(p.id, clampQty(n, p.allows_fraction));
+  }
+
+  return (
+    <li className="p-3">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-stone-900 leading-tight">{p.name}</div>
+          <div className="text-xs text-stone-500">
+            {money(unitPrice)} / {p.unit_code}
+            {trade && p.price_trade != null && (
+              <span className="text-emerald-700"> · trade</span>
+            )}
+          </div>
+        </div>
+        <div className="font-semibold tabular-nums shrink-0">
+          {money(unitPrice * line.qty)}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {empty ? (
-          <p className="text-stone-400 text-center mt-10">Tap a product to start</p>
-        ) : (
-          lines.map((l) => {
-            const key = lineKey(l);
-            const price = linePrice(l);
-            return (
-              <div
-                key={key}
-                className="flex items-center gap-2 px-4 py-3 border-b border-stone-100"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-stone-800 truncate">
-                    {lineName(l)}
-                  </p>
-                  <p className="text-sm text-stone-500">{money(price)}</p>
-                </div>
-                <button
-                  onClick={() => onDec(key)}
-                  className="w-9 h-9 rounded-lg bg-stone-100 text-xl text-stone-700 active:bg-stone-200"
-                >
-                  −
-                </button>
-                <span className="w-6 text-center font-semibold">{l.qty}</span>
-                <button
-                  onClick={() => onInc(key)}
-                  className="w-9 h-9 rounded-lg bg-stone-100 text-xl text-stone-700 active:bg-stone-200"
-                >
-                  +
-                </button>
-                <span className="w-16 text-right font-semibold text-stone-800">
-                  {money(price * l.qty)}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      <div className="border-t border-stone-200 p-4 shrink-0 space-y-1">
-        {editingLabel && (
-          <div className="mb-2 text-xs font-medium text-brand-dark bg-brand-light rounded-lg px-3 py-1.5">
-            Editing open order · {editingLabel}
-          </div>
-        )}
-        <div className="flex justify-between text-stone-600">
-          <span>Subtotal</span>
-          <span>{money(subtotal)}</span>
-        </div>
-        {discount > 0 && (
-          <div className="flex justify-between text-emerald-700">
-            <span>Discount</span>
-            <span>−{money(discount)}</span>
-          </div>
-        )}
-        <div className="flex justify-between text-xl font-bold text-stone-900 pt-1">
-          <span>Total</span>
-          <span>{money(total)}</span>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 pt-3">
-          {canDiscount && (
-            <button
-              onClick={onDiscount}
-              disabled={empty || busy}
-              className="h-12 rounded-xl bg-stone-100 font-medium text-stone-700 active:bg-stone-200 disabled:opacity-40"
-            >
-              Discount
-            </button>
-          )}
-          <button
-            onClick={onBill}
-            disabled={empty || busy}
-            className="h-12 rounded-xl bg-stone-100 font-medium text-stone-700 active:bg-stone-200 disabled:opacity-40"
-          >
-            Bill
-          </button>
-          <button
-            onClick={onSave}
-            disabled={empty || busy}
-            className={`h-12 rounded-xl bg-stone-100 font-medium text-stone-700 active:bg-stone-200 disabled:opacity-40 ${
-              canDiscount ? "" : "col-span-1"
-            }`}
-          >
-            {editingLabel ? "Update" : "Save"}
-          </button>
-        </div>
+      <div className="flex items-center gap-2 mt-2">
         <button
-          onClick={onPay}
-          disabled={empty || busy}
-          className="w-full h-14 mt-2 rounded-xl bg-gradient-to-b from-brand to-brand-dark font-semibold text-white shadow-md active:shadow-sm disabled:opacity-40 disabled:shadow-none"
+          onClick={() => onSetQty(p.id, clampQty(line.qty - step, p.allows_fraction))}
+          className="w-9 h-9 rounded-lg bg-stone-100 text-stone-700 text-lg leading-none"
+          aria-label="Less"
         >
-          {busy ? "…" : `Pay ${money(total)}`}
+          −
+        </button>
+
+        <div className="relative">
+          <input
+            // decimal for cut goods so the tablet shows a point; numeric
+            // otherwise so it cannot be typed at all.
+            inputMode={p.allows_fraction ? "decimal" : "numeric"}
+            value={draft ?? fmtQty(line.qty)}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={(e) => commit(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            className="w-20 h-9 text-center rounded-lg border border-stone-300
+                       tabular-nums focus:outline-none focus:ring-2
+                       focus:ring-emerald-500"
+          />
+          <span className="absolute -bottom-4 left-0 right-0 text-center text-[10px] text-stone-400">
+            {p.unit_name.toLowerCase()}
+          </span>
+        </div>
+
+        <button
+          onClick={() => onSetQty(p.id, clampQty(line.qty + step, p.allows_fraction))}
+          className="w-9 h-9 rounded-lg bg-stone-100 text-stone-700 text-lg leading-none"
+          aria-label="More"
+        >
+          +
+        </button>
+
+        <button
+          onClick={() => onRemove(p.id)}
+          className="ml-auto text-xs text-red-600 px-2 py-1"
+        >
+          Remove
         </button>
       </div>
-    </div>
+    </li>
   );
+}
+
+/** Keep quantities sane: positive, and whole for units that can't be split. */
+function clampQty(n: number, allowsFraction: boolean): number {
+  if (!Number.isFinite(n) || n <= 0) return allowsFraction ? 0.5 : 1;
+  const rounded = allowsFraction ? Math.round(n * 1000) / 1000 : Math.round(n);
+  return Math.max(allowsFraction ? 0.001 : 1, rounded);
 }
