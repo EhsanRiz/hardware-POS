@@ -1,0 +1,21 @@
+# InnovaEarth POS — the till app, served at app.innovaearth.com.
+#
+# Its own Worker, separate from the landing page (landing/wrangler.toml) and
+# from the innovaearth.com site. A public marketing page and a till that shops
+# depend on should not share a deploy or a failure mode.
+#
+#   npm run build
+#   npx wrangler deploy
+#
+# Then: Workers & Pages > innovaearth-pos-app > Settings > Domains & Routes >
+# Add custom domain > app.innovaearth.com.
+name = "innovaearth-pos-app"
+compatibility_date = "2024-09-23"
+account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
+
+[assets]
+directory = "./dist"
+# The till IS a single-page app, so unknown paths must serve index.html and let
+# the client router handle them. (The landing page deliberately does the
+# opposite — see landing/wrangler.toml.)
+not_found_handling = "single-page-application"

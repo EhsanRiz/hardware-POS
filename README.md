@@ -156,20 +156,36 @@ static HTML/CSS/JS, no build step, deployed separately from the till. Its search
 demo runs the same rules as `src/lib/search.ts`, so a visitor can verify the
 claim by typing into it. See [`landing/README.md`](landing/README.md).
 
-## Deploying (Cloudflare Pages)
+## Deploying (Cloudflare Workers)
 
-Connect the repo to Cloudflare Pages with build command `npm run build` and
-output directory `dist`. `public/_redirects` provides the SPA fallback.
+The till deploys as its own Worker, `innovaearth-pos-app`, served at
+**app.innovaearth.com**:
 
-The intended home is **`pos.innovaearth.com`** — the `innovaearth.com` zone is
-already in the same Cloudflare account, so the custom domain resolves without
-touching DNS by hand, and the marketing site keeps the apex.
+```bash
+npm run build
+npx wrangler deploy
+```
+
+Then attach the hostname: **Workers & Pages → innovaearth-pos-app → Settings →
+Domains & Routes → Add custom domain → app.innovaearth.com**. The
+`innovaearth.com` zone is already in the account, so DNS and the certificate are
+handled for you.
+
+`public/_headers` carries the cache rules. The important one is `sw.js`, which
+must never be cached: the service worker is what decides when a tablet takes an
+update, so a cached copy can leave a till running an old build indefinitely —
+including one with a bug you have already fixed.
+
+SPA fallback comes from `not_found_handling` in `wrangler.toml`, so the
+Pages-era `public/_redirects` is gone.
 
 Unlike the cafe build, **this repo does not commit `.env.production`** — set
-`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and the shop details as
-environment variables in the Cloudflare dashboard instead. (If you prefer the
-cafe's simpler committed-config approach, re-add `!.env.production` to
-`.gitignore`.)
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and the printer settings as Worker
+environment variables (or a `.env` at build time) instead.
+
+The public marketing page is a *separate* Worker at **pos.innovaearth.com** —
+see [`landing/`](landing/). A page that sells the product and a till that shops
+depend on should not share a deploy.
 
 ## Branding
 
