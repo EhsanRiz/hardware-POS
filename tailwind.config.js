@@ -28,8 +28,8 @@ export default {
         },
       },
       fontFamily: {
-        heading: ["Cormorant Garamond", "Georgia", "serif"],
-        body: ["Lora", "Georgia", "serif"],
+        heading: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        body: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       borderColor: {
         hairline: "var(--divider)",

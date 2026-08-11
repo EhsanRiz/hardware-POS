@@ -11,9 +11,9 @@
  * FONTS ARE SELF-HOSTED, DELIBERATELY.
  * A till that must complete sales through a fibre cut cannot fetch a stylesheet
  * from fonts.googleapis.com. A CDN @import works in a demo and falls back to a
- * system serif in the shop — the one place it matters. The woff2 files in
- * public/fonts are the latin subsets, 258 KB in total, precached by the service
- * worker along with the rest of the app. */
+ * system font in the shop — the one place it matters. public/fonts holds one
+ * variable woff2 (latin subset, 48 KB) covering every weight we use, precached
+ * by the service worker along with the rest of the app. */
 
 :root {
   /* Ground and ink ------------------------------------------------------ */
@@ -46,11 +46,19 @@
   --divider-dark: rgba(245, 242, 234, 0.20); /* rules on green */
 
   /* Type ---------------------------------------------------------------- */
-  --font-heading: "Cormorant Garamond", Georgia, "Times New Roman", serif;
-  --font-body: "Lora", Georgia, "Times New Roman", serif;
-  /* Bold is retired from this system. 600 is the interface ceiling, and
-     display sizes go LIGHTER as they grow, not heavier. */
-  --font-heading-weight: 600;
+  /* One family, every weight. Inter is drawn for screens at small sizes —
+     which is what a till is: a dense table of numbers read at arm's length by
+     someone in a hurry. Its tabular figures are the reason it wins here. */
+  --font-heading: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", sans-serif;
+  /* Display sizes go HEAVIER and TIGHTER as they grow — the opposite of the
+     serif system this replaced. Tracking must come off as size goes up, or
+     large headings look gappy. */
+  --font-heading-weight: 700;
+  --tracking-display: -0.035em;
+  --tracking-heading: -0.02em;
 
   /* Spacing: a 1.15x density scale. Airy by design — cut content rather than
      tightening this to fit more in. */
@@ -78,54 +86,13 @@
   --color-owing: #b03a2b;
 }
 
-/* Self-hosted faces: latin subsets from Google Fonts, served from our own
-   origin so the till types correctly with no network. */
+/* Self-hosted face: the latin subset of Inter as a variable font, served from
+   our own origin so the till types correctly with no network. One file, every
+   weight from 100 to 900. */
 @font-face {
-  font-family: "Cormorant Garamond";
-  src: url("/fonts/cormorant-garamond-300.woff2") format("woff2");
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Cormorant Garamond";
-  src: url("/fonts/cormorant-garamond-400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Cormorant Garamond";
-  src: url("/fonts/cormorant-garamond-500.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Cormorant Garamond";
-  src: url("/fonts/cormorant-garamond-600.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Lora";
-  src: url("/fonts/lora-400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Lora";
-  src: url("/fonts/lora-500.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Lora";
-  src: url("/fonts/lora-600.woff2") format("woff2");
-  font-weight: 600;
+  font-family: "Inter";
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -142,12 +109,13 @@ body {
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading);
   font-weight: var(--font-heading-weight);
-  letter-spacing: -0.015em;
-  line-height: 1.08;
+  letter-spacing: var(--tracking-heading);
+  line-height: 1.12;
 }
 
-/* Numbers that stand as figures or columns are tabular; running prose is not,
-   because Lora's tabular figures widen word-spaces and loosen paragraphs. */
+/* Numbers that stand as figures or columns are tabular, so a price column
+   lines up digit under digit. Running prose is not: tabular figures widen the
+   spaces around numerals and loosen a paragraph. */
 .tabular {
   font-variant-numeric: tabular-nums;
 }
@@ -156,6 +124,7 @@ h1, h2, h3, h4, h5, h6 {
 .kicker {
   font-family: var(--font-heading);
   font-size: 12px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--color-neutral-700);
