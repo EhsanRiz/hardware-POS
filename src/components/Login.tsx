@@ -6,6 +6,7 @@ import { registerName } from "../lib/device";
 import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
+import { errorMessage } from "../lib/errors";
 
 /**
  * Daily sign-in.
@@ -32,7 +33,7 @@ export default function Login() {
         setUser(user);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign-in failed");
+      setError(errorMessage(e, "Sign-in failed"));
     } finally {
       setBusy(false);
     }

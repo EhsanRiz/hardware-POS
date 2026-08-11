@@ -1,5 +1,6 @@
 import { useState } from "react";
 import PinPad from "./PinPad";
+import { errorMessage } from "../lib/errors";
 
 interface Props {
   title: string;
@@ -24,7 +25,7 @@ export default function ManagerPinModal({
     try {
       await onApprove(pin);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Approval failed");
+      setError(errorMessage(e, "Approval failed"));
     } finally {
       setBusy(false);
     }

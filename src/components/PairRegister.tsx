@@ -2,6 +2,7 @@ import { useState } from "react";
 import { pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
 import InnovaMark from "./InnovaMark";
+import { errorMessage } from "../lib/errors";
 
 /**
  * First-run screen: pair this tablet as a till.
@@ -30,11 +31,10 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
       savePairing(register_id, token, name);
       onPaired();
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Pairing failed — check the phone number and PIN."
-      );
+      // supabase-js errors are plain objects, so instanceof Error misses them
+      // and the real reason — a refused method, a wrong PIN, a blocked
+      // request — would be replaced by a generic line that helps nobody.
+      setError(errorMessage(err, "Pairing failed — check the phone number and PIN."));
       setBusy(false);
     }
   }

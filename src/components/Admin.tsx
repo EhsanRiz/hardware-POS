@@ -9,6 +9,7 @@ import {
   type ImportResult,
   type ProductInput,
 } from "../lib/adminApi";
+import { errorMessage } from "../lib/errors";
 import { money } from "../lib/format";
 import { can } from "../lib/permissions";
 import { fmtQty } from "../lib/receipt";
@@ -55,7 +56,7 @@ export default function Admin({
       setUnits(u);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the catalogue");
+      setError(errorMessage(e, "Could not load the catalogue"));
     } finally {
       setLoading(false);
     }
@@ -280,7 +281,7 @@ function ImportPanel({ pin, onDone }: { pin: string; onDone: () => void }) {
       setResults(await adminImportProducts(pin, rows));
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      setError(errorMessage(e, "Import failed"));
     } finally {
       setBusy(false);
     }
