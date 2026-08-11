@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { searchProducts } from "../../lib/api";
 import { money, quantity } from "../../lib/money";
 import { isNetworkError, useOnline } from "../../lib/offline";
+import { imageSrc } from "../../lib/images";
 import { exactMatch, searchProductsLocal } from "../../lib/search";
 import type { Customer, Product } from "../../lib/types";
 import { ScanIcon, UserIcon } from "./Icons";
@@ -161,6 +162,13 @@ export default function ScanBar({
                 onMouseEnter={() => setActive(i)}
                 className={`result-row${i === active ? " is-active" : ""}`}
               >
+                {/* Eight hose sets differing only by length and colour are
+                    chosen from this list. A picture settles it in a glance. */}
+                {imageSrc(p.image_url) ? (
+                  <img className="result-thumb" src={imageSrc(p.image_url)!} alt="" loading="lazy" />
+                ) : (
+                  <span className="result-thumb is-empty" aria-hidden="true" />
+                )}
                 <span>
                   <span className="result-name">{p.name}</span>
                   <span className="result-meta">

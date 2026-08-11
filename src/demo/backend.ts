@@ -28,9 +28,23 @@ interface DemoProduct {
   tax_code: string;
   stock_qty: number | null;
   reorder_level: number | null;
-  image_url: null;
+  image_url: string | null;
   sort_order: number;
   bin: string | null;
+}
+
+/**
+ * A stand-in photograph, drawn rather than fetched: the demo has no network by
+ * design, and a broken image icon would teach the wrong thing about a till
+ * whose whole point is working without one.
+ */
+function swatch(label: string, tint: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="88" height="88">` +
+    `<rect width="88" height="88" fill="${tint}"/>` +
+    `<text x="44" y="50" font-family="sans-serif" font-size="13" font-weight="700"` +
+    ` fill="#f5f2ea" text-anchor="middle">${label}</text></svg>`;
+  return "data:image/svg+xml;base64," + btoa(svg);
 }
 
 function p(
@@ -43,7 +57,8 @@ function p(
     category_id: cat, category_name: cat === "c1" ? "Building" : cat === "c2" ? "Fasteners" : "Plumbing",
     unit_code: unit, unit_name: unitName, allows_fraction: frac,
     price_retail: retail, price_trade: trade, tax_code: "standard",
-    stock_qty: stock, reorder_level: reorder, image_url: null, sort_order: 0,
+    stock_qty: stock, reorder_level: reorder, sort_order: 0,
+    image_url: swatch(sku.slice(0, 3), cat === "c1" ? "#0e3a2d" : cat === "c2" ? "#55625b" : "#8a5f14"),
     // A believable shelf location, so the demo shows what the till shows.
     bin: cat === "c1" ? "A" + ((id.charCodeAt(1) % 4) + 1)
        : cat === "c2" ? "F" + ((id.charCodeAt(1) % 3) + 1)

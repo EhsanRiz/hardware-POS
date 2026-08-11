@@ -64,6 +64,8 @@ export interface Product {
   sort_order: number;
   /** Shelf or bin location — where in the shop the thing physically is. */
   bin?: string | null;
+  /** How many photographs exist; image_url is the first of them. */
+  image_count?: number | null;
 }
 
 export interface Category {

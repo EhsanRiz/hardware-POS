@@ -7,7 +7,7 @@
 // much as an address: it tells the server WHICH shop's staff list to check the
 // PIN against, because a PIN alone identifies nobody in a multi-tenant system.
 import { requireToken } from "./api";
-import { supabase } from "./supabase";
+import { API_BASE, supabase } from "./supabase";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "./types";
 
 export async function adminListProducts(pin: string): Promise<AdminProduct[]> {
@@ -246,4 +246,72 @@ export async function fetchAllCategories(): Promise<Category[]> {
   });
   if (error) throw error;
   return data as Category[];
+}
+
+// --- Product photographs ----------------------------------------------------
+
+export interface ProductImage {
+  id: string;
+  /** A storage path; run it through imageSrc() to display it. */
+  url: string;
+  sort_order: number;
+}
+
+/** Every photograph on a product, primary first. */
+export async function listProductImages(productId: string): Promise<ProductImage[]> {
+  const { data, error } = await supabase.rpc("pos_product_images", {
+    p_register_token: requireToken(),
+    p_product_id: productId,
+  });
+  if (error) throw error;
+  return data as ProductImage[];
+}
+
+/**
+ * Upload a photograph.
+ *
+ * Goes to an edge function rather than straight to storage: the browser holds
+ * only the anon key, and a bucket writable with the anon key is a bucket anyone
+ * can fill. The function checks the till's token and this PIN with the service
+ * role before it writes anything.
+ */
+export async function uploadProductImage(
+  pin: string,
+  productId: string,
+  dataUrl: string
+): Promise<{ id: string; path: string }> {
+  const res = await fetch(`${API_BASE}/functions/v1/product-image`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({
+      register_token: requireToken(),
+      pin,
+      product_id: productId,
+      image: dataUrl,
+    }),
+  });
+
+  let body: { ok?: boolean; id?: string; path?: string; message?: string } = {};
+  try {
+    body = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.message ?? "The photo could not be uploaded.");
+  }
+  return { id: body.id!, path: body.path! };
+}
+
+export async function removeProductImage(pin: string, imageId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_admin_remove_product_image", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_image_id: imageId,
+  });
+  if (error) throw error;
 }

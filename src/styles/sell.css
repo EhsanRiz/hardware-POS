@@ -593,7 +593,7 @@
 }
 .result-row {
   display: grid;
-  grid-template-columns: 1fr 120px;
+  grid-template-columns: 44px 1fr 120px;
   gap: 16px;
   align-items: center;
   width: 100%;
@@ -606,6 +606,19 @@
 .result-row:hover:not(:disabled), .result-row.is-active { background: var(--color-neutral-100); }
 .result-row:disabled { opacity: 0.45; cursor: not-allowed; }
 .result-name { display: block; font-size: 15px; color: var(--color-text); }
+
+/* The photograph in a search result. Fixed box so the rows stay on a grid
+   whether or not a product has been photographed yet. */
+.result-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--divider);
+  background: var(--color-surface);
+  display: block;
+}
+.result-thumb.is-empty { border-style: dashed; }
 .result-meta {
   font-size: 12px;
   color: var(--color-neutral-700);

@@ -3,6 +3,7 @@ import { adminAdjustStock, adminStockHistory, type ProductInput } from "../lib/a
 import { CURRENCY } from "../lib/config";
 import { money } from "../lib/format";
 import { fmtQty } from "../lib/receipt";
+import ProductPhotos from "./ProductPhotos";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "../lib/types";
 
 /**
@@ -267,6 +268,12 @@ export default function ProductEditor({
               onChange={(e) => set("bin", e.target.value || null)}
               className={inputCls}
             />
+          </Field>
+
+          {/* Photographs, taken at the shelf. A near-identical item is chosen
+              correctly far more often from a picture than a description. */}
+          <Field label="Photos" hint="Shown in the till's search results.">
+            <ProductPhotos productId={product?.id ?? null} pin={pin} />
           </Field>
 
           <label className="flex items-center gap-2 text-sm">

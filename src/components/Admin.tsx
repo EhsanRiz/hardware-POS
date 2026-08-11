@@ -10,6 +10,7 @@ import {
   type ProductInput,
 } from "../lib/adminApi";
 import { errorMessage } from "../lib/errors";
+import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
 import { can } from "../lib/permissions";
 import { fmtQty } from "../lib/receipt";
@@ -148,6 +149,7 @@ export default function Admin({
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-stone-100 text-stone-600 text-left">
                   <tr>
+                    <th className="p-2 font-medium sr-only">Photo</th>
                     <th className="p-2 font-medium">SKU</th>
                     <th className="p-2 font-medium">Name</th>
                     <th className="p-2 font-medium">Dept</th>
@@ -174,6 +176,19 @@ export default function Admin({
                           p.active ? "" : "opacity-45"
                         }`}
                       >
+                        {/* The catalogue shows what the till will show. */}
+                        <td className="p-2">
+                          {imageSrc(p.image_url) ? (
+                            <img
+                              src={imageSrc(p.image_url)!}
+                              alt=""
+                              loading="lazy"
+                              className="w-10 h-10 object-cover rounded border border-stone-200"
+                            />
+                          ) : (
+                            <span className="block w-10 h-10 rounded border border-dashed border-stone-200" />
+                          )}
+                        </td>
                         <td className="p-2 font-mono text-xs">{p.sku}</td>
                         <td className="p-2">
                           {p.name}
