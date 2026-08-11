@@ -10,15 +10,24 @@
 # The route below attaches app.innovaearth.com on deploy — the zone is already
 # in this account, so wrangler creates the DNS record itself. No dashboard step.
 name = "innovaearth-pos-app"
+main = "worker/index.ts"
 compatibility_date = "2024-09-23"
 account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
 routes = [
   { pattern = "app.innovaearth.com", custom_domain = true }
 ]
 
+# The Supabase project this till talks to. Public information — it is the same
+# hostname the browser used to call directly — and it lives here rather than in
+# a secret so a deploy needs no dashboard configuration to work.
+[vars]
+SUPABASE_URL = "https://krkatpesfwqnjitcxkco.supabase.co"
+
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 # The till IS a single-page app, so unknown paths must serve index.html and let
 # the client router handle them. (The landing page deliberately does the
-# opposite — see landing/wrangler.toml.)
+# opposite — see landing/wrangler.toml.) Requests under /api/ never reach this:
+# worker/index.ts forwards them to Supabase first.
 not_found_handling = "single-page-application"

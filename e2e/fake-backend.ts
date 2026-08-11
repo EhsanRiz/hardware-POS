@@ -212,7 +212,10 @@ export async function installBackend(page: Page): Promise<Backend> {
 
   await page.route("**/rest/v1/**", async (route: Route) => {
     const url = new URL(route.request().url());
-    const path = url.pathname.replace(/^\/rest\/v1\//, "");
+    // The till now calls its own origin and a Worker forwards /api to Supabase,
+    // so the path arrives as /api/rest/v1/... in production and /rest/v1/...
+    // in any older build. Strip whatever precedes the API prefix.
+    const path = url.pathname.replace(/^.*\/rest\/v1\//, "");
     be.calls.push(path);
 
     if (be.offline) {

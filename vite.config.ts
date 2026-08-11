@@ -3,6 +3,14 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { viteSingleFile } from "vite-plugin-singlefile";
 
+/** The upstream Supabase project, proxied at /api to match production. */
+const API_PROXY = {
+  target:
+    process.env.VITE_SUPABASE_URL ?? "https://krkatpesfwqnjitcxkco.supabase.co",
+  changeOrigin: true,
+  rewrite: (path: string) => path.replace(/^\/api/, ""),
+};
+
 // SINGLEFILE=1 builds one self-contained index.html (used for the hosted trial
 // link served from a Supabase Edge Function). The normal build keeps the PWA.
 const singleFile = process.env.SINGLEFILE === "1";
@@ -75,8 +83,15 @@ export default defineConfig({
           },
         }),
       ],
+  // Local development and `vite preview` mirror what the Cloudflare Worker does
+  // in production (worker/index.ts): /api is the backend, on this same origin.
+  // Without this, `npm run dev` would call a path nothing serves.
   server: {
     host: true,
     port: 5173,
+    proxy: { "/api": API_PROXY },
+  },
+  preview: {
+    proxy: { "/api": API_PROXY },
   },
 });

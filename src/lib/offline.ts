@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { errorMessage, errorName } from "./errors";
+import { API_BASE } from "./supabase";
 
 // Network status. navigator.onLine is a coarse and often UNRELIABLE signal on
 // tablets — it can get stuck at "offline" after sleep/wake or a brief Wi-Fi
@@ -9,7 +10,9 @@ import { errorMessage, errorName } from "./errors";
 // server at all (any HTTP response) counts as online; only a real network
 // failure counts as offline.
 
-const PROBE_URL = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`;
+// Same origin as every other call, so the probe measures the path the till
+// actually uses rather than a second one that could fail differently.
+const PROBE_URL = `${API_BASE}/auth/v1/health`;
 const PROBE_INTERVAL_MS = 15000;
 const PROBE_TIMEOUT_MS = 6000;
 

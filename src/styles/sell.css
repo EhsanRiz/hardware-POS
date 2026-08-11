@@ -765,3 +765,28 @@
 }
 .pin-key-ok:hover { background: rgba(200, 145, 47, 0.22); }
 .pin-key-ok:disabled { opacity: 0.5; }
+
+/* The two ways off the sign-in screen. Quiet by design — a cashier signing in
+   normally should not notice them, and a cashier who is stuck must be able to
+   find them without asking anybody. */
+.login-outs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: var(--color-neutral-700);
+}
+.login-outs a,
+.login-outs button {
+  color: var(--color-accent-700);
+  background: none;
+  border: 0;
+  padding: 4px 2px;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.login-outs a:hover,
+.login-outs button:hover { color: var(--color-accent); }
