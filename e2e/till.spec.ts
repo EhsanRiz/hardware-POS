@@ -87,13 +87,18 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
+  // The customer hands over R200 for a R115 sale: the tender is 200, the
+  // payment applied is 115, and the difference is change. Recording 200 as the
+  // payment would overpay the invoice.
   await page.getByLabel("Cash received").fill("200");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
   await expect(page.getByText(/Change due/i)).toBeVisible();
   await page.getByRole("button", { name: /Tender & print/i }).click();
 
   await expect(banner(page)).toContainText(/INV-\d+/);
   expect(be.storedSales).toHaveLength(1);
   expect(be.storedSales[0].total).toBe(115);
+  expect(be.storedSales[0].payments).toEqual([{ method: "cash", amount: 115 }]);
 
   // A tax invoice without the supplier's name, address and VAT number on its
   // face is not a valid tax invoice. This used to be carried by a printed logo
@@ -115,7 +120,7 @@ test("the server's refusal reaches the cashier, and nothing is charged", async (
   await qty.fill("5");
   await qty.press("Enter");
 
-  await page.getByLabel("Cash received").fill("10000");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
 
   // The server's reason must reach the cashier, not a generic refusal.
@@ -133,7 +138,7 @@ test("a sale taken offline still prints, then syncs exactly once", async ({ page
   be.offline = true;
   await page.context().setOffline(true);
 
-  await page.getByLabel("Cash received").fill("200");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
 
   // The customer is served: the sale completes on the device and says so.

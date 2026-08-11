@@ -52,6 +52,10 @@ for (const device of DEVICES) {
         await bar.click();
       }
       await expect(tender).toBeVisible();
+
+      // A sale settles by taking a tender, so the cash button has to be
+      // reachable too — it is the one a counter presses most.
+      await page.getByRole("button", { name: /^Cash$/ }).click();
       await expect(tender).toBeEnabled();
     });
   });

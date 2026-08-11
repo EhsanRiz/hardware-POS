@@ -6,7 +6,7 @@
 // token implicitly (it belongs to this device) and the cashier's id, which is
 // all the server needs to replay it.
 import { cacheGet, cacheSet } from "./localCache";
-import type { CartLine, PaymentMethod } from "./types";
+import type { CartLine, Payment, PaymentMethod } from "./types";
 
 export interface QueuedSalePayload {
   /** Idempotency key — also the local sale id until the server assigns one. */
@@ -29,6 +29,10 @@ export interface QueuedSalePayload {
   tradePricing: boolean;
   paidCash: number | null;
   paidCard: number | null;
+  /** Every tender taken. Replayed verbatim so the server rebuilds the same sale. */
+  payments?: Payment[] | null;
+  poNumber?: string | null;
+  customerVatNumber?: string | null;
   /** ISO time the sale was actually taken, not when it syncs. */
   createdAt: string;
 }

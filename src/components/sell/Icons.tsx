@@ -107,3 +107,24 @@ export function BackspaceIcon({ size = 20 }: { size?: number }) {
     </svg>
   );
 }
+
+export function EftIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...base} width={size} height={size}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9h6M7 13h10M7 17h4" />
+    </svg>
+  );
+}
+
+/** Scan-to-pay: Zapper, SnapScan, and every other QR wallet. */
+export function QrIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg {...base} width={size} height={size}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" />
+    </svg>
+  );
+}

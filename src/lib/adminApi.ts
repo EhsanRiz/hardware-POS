@@ -34,6 +34,8 @@ export interface ProductInput {
   stock_qty: number | null;
   reorder_level: number | null;
   active: boolean;
+  /** Shelf or bin location — where in the shop the thing physically is. */
+  bin?: string | null;
 }
 
 export async function adminSaveProduct(
@@ -57,6 +59,7 @@ export async function adminSaveProduct(
     p_stock_qty: p.stock_qty,
     p_reorder_level: p.reorder_level,
     p_active: p.active,
+    p_bin: p.bin ?? null,
   });
   if (error) throw error;
 }

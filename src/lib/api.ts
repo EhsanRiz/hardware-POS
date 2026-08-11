@@ -14,6 +14,7 @@ import { supabase } from "./supabase";
 import type {
   Category,
   Customer,
+  Payment,
   Product,
   RecentSale,
   Register,
@@ -156,9 +157,16 @@ export interface CreateSaleInput {
   discountReason: string | null;
   /** Manager's user id when a discount was approved. Re-checked server-side. */
   approvedBy: string | null;
+  /** Cash physically handed over, for working out the change. */
   amountTendered: number | null;
   paidCash: number | null;
   paidCard: number | null;
+  /** Every tender on this sale. The server checks they settle the total. */
+  payments?: Payment[] | null;
+  /** The buyer's purchase-order number. */
+  poNumber?: string | null;
+  /** The buyer's VAT number, when it is not already on their account. */
+  customerVatNumber?: string | null;
   /** Idempotency key. The same key always resolves to the same sale. */
   clientRef: string;
   /** When the sale was actually taken — matters for queued offline sales. */
@@ -186,6 +194,9 @@ export async function createSale(input: CreateSaleInput): Promise<Sale> {
     p_client_ref: input.clientRef,
     p_created_at: input.createdAt,
     p_note: input.note,
+    p_payments: input.payments ?? null,
+    p_po_number: input.poNumber ?? null,
+    p_customer_vat_number: input.customerVatNumber ?? null,
   });
   if (error) throw error;
   return data as Sale;
@@ -265,6 +276,16 @@ export async function recentSales(limit = 20): Promise<RecentSale[]> {
   });
   if (error) throw error;
   return data as RecentSale[];
+}
+
+/** What was actually tendered against a sale — for a reprint or a dispute. */
+export async function salePayments(saleId: string): Promise<Payment[]> {
+  const { data, error } = await supabase.rpc("pos_sale_payments", {
+    p_register_token: requireToken(),
+    p_sale_id: saleId,
+  });
+  if (error) throw error;
+  return data as Payment[];
 }
 
 export async function saleItems(saleId: string): Promise<SaleItem[]> {

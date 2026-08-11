@@ -21,7 +21,7 @@ import {
   queueCount,
   removeFromQueue,
 } from "./queue";
-import type { CartLine, PaymentMethod, Sale } from "./types";
+import type { CartLine, Payment, PaymentMethod, Sale } from "./types";
 
 export interface SaleInput {
   cashierId: string;
@@ -40,6 +40,12 @@ export interface SaleInput {
   tradePricing: boolean;
   paidCash: number | null;
   paidCard: number | null;
+  /** Every tender taken at the counter. */
+  payments?: Payment[] | null;
+  poNumber?: string | null;
+  customerVatNumber?: string | null;
+  /** Cash rounding applied at settlement; the invoice total stays exact. */
+  rounding?: number | null;
   note: string | null;
 }
 
@@ -78,9 +84,14 @@ async function resolveApprover(
 export async function submitSale(p: SaleInput): Promise<SaleResult> {
   const clientUuid = crypto.randomUUID();
   const createdAt = new Date().toISOString();
+  // Change is measured against the CASH actually applied, not the invoice
+  // total: with a mixed tender the customer's notes only cover the cash part.
+  const cashApplied = (p.payments ?? [])
+    .filter((x) => x.method === "cash")
+    .reduce((sum, x) => sum + x.amount, 0);
   const changeDue =
-    p.paymentMethod === "cash" && p.amountTendered != null
-      ? Math.max(0, p.amountTendered - p.total)
+    p.amountTendered != null
+      ? Math.max(0, p.amountTendered - (cashApplied || p.total))
       : null;
 
   const approver =
@@ -99,6 +110,9 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
         amountTendered: p.amountTendered,
         paidCash: p.paidCash,
         paidCard: p.paidCard,
+        payments: p.payments ?? null,
+        poNumber: p.poNumber ?? null,
+        customerVatNumber: p.customerVatNumber ?? null,
         clientRef: clientUuid,
         createdAt: null, // online: let the server stamp it
         note: p.note,
@@ -131,6 +145,9 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
     tradePricing: p.tradePricing,
     paidCash: p.paidCash,
     paidCard: p.paidCard,
+    payments: p.payments ?? null,
+    poNumber: p.poNumber ?? null,
+    customerVatNumber: p.customerVatNumber ?? null,
     createdAt,
   });
 
@@ -160,6 +177,9 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
     change_due: changeDue,
     paid_cash: p.paidCash,
     paid_card: p.paidCard,
+    rounding: p.rounding ?? 0,
+    po_number: p.poNumber ?? null,
+    customer_vat_number: p.customerVatNumber ?? null,
     note: p.note,
     created_at: createdAt,
   };
@@ -189,6 +209,9 @@ export async function syncNow(): Promise<void> {
           amountTendered: item.amountTendered,
           paidCash: item.paidCash,
           paidCard: item.paidCard,
+          payments: item.payments ?? null,
+          poNumber: item.poNumber ?? null,
+          customerVatNumber: item.customerVatNumber ?? null,
           clientRef: item.clientUuid,
           // Offline sales keep the time they were actually taken.
           createdAt: item.createdAt,

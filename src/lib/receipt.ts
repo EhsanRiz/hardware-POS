@@ -1,6 +1,6 @@
 import { CURRENCY, RECEIPT_WIDTH } from "./config";
 import { shopSettings } from "./settings";
-import type { CartLine, ReceiptItem, Sale } from "./types";
+import type { CartLine, Payment, PaymentMethod, ReceiptItem, Sale } from "./types";
 
 // Plain-text receipt builder. Width-parameterised (RECEIPT_WIDTH columns) so it
 // adapts to the paper + font scale. The print layer wraps this with ESC/POS.
@@ -95,6 +95,17 @@ export function itemLabel(qty: number, unitCode: string, name: string): string {
     : `${fmtQty(qty)} ${unitCode} ${name}`;
 }
 
+/** What each tender is called on the slip. */
+const PAYMENT_LABEL: Record<PaymentMethod, string> = {
+  cash: "Cash",
+  card: "Card",
+  eft: "EFT",
+  zapper: "Zapper",
+  account: "On account",
+  mixed: "Mixed",
+  split: "Cash + card",
+};
+
 /** Unit price shown under a cut-to-length line, e.g. "@ R35.00/m". */
 function unitRate(unitPrice: number, unitCode: string): string {
   return `  @ ${amount(unitPrice)}/${unitCode}`;
@@ -130,7 +141,8 @@ function shopHeader(out: string[], title: string): void {
 export function buildReceiptText(
   sale: Sale,
   items: ReceiptItem[],
-  customer?: { name: string; balance: number } | null
+  customer?: { name: string; balance: number } | null,
+  payments?: Payment[] | null
 ): string {
   const out: string[] = [];
   shopHeader(out, "TAX INVOICE");
@@ -145,7 +157,18 @@ export function buildReceiptText(
   }
   out.push(fmtDateTime(new Date(sale.created_at)));
   out.push(`Served by: ${sale.cashier_name}`);
+  // The RECIPIENT block. SARS requires the buyer's name, address and VAT
+  // registration number on a full tax invoice — mandatory above R5 000, which
+  // an ordinary pump or a pallet of cement clears. Printed whenever we have it.
   if (sale.customer_name) out.push(`Customer: ${sale.customer_name}`);
+  if (sale.customer_address) {
+    for (const line of sale.customer_address.split("\n")) {
+      if (line.trim()) out.push(`  ${line.trim()}`);
+    }
+  }
+  if (sale.customer_vat_number) out.push(`Customer VAT No: ${sale.customer_vat_number}`);
+  // The buyer's own order number: their bookkeeper rejects an invoice without it.
+  if (sale.po_number) out.push(`Order No: ${sale.po_number}`);
   if (sale.trade_pricing) out.push("Trade pricing");
   out.push(solid());
 
@@ -169,27 +192,43 @@ export function buildReceiptText(
   if (sale.tax_amount > 0) {
     out.push(lineItem("VAT included", amount(sale.tax_amount)));
   }
+
+  // Cash rounding is shown as its own line, never folded into the total: the
+  // invoice total is the taxable amount and must stay exactly what was billed,
+  // while the cash actually handed over settles to the nearest 10c.
+  const rounding = sale.rounding ?? 0;
+  if (rounding !== 0) {
+    out.push(lineItem("Cash rounding", `${rounding > 0 ? "" : "-"}${amount(Math.abs(rounding))}`));
+    out.push(bold(lineItem("TO PAY", amount(sale.total + rounding))));
+  }
   out.push(solid());
 
-  if (sale.payment_method === "account") {
-    out.push("");
-    out.push(lineItem("ON ACCOUNT", ""));
-    if (customer) {
-      out.push(customer.name);
-      out.push(lineItem("Account balance", amount(customer.balance)));
+  // Every tender, in the order it was taken. A sale can be settled by several.
+  const taken = payments ?? [];
+  if (taken.length > 0) {
+    for (const p of taken) {
+      out.push(lineItem(PAYMENT_LABEL[p.method] ?? p.method, amount(p.amount)));
+      if (p.reference) out.push(`  ref ${p.reference}`);
     }
+    if (sale.amount_tendered != null && sale.change_due != null && sale.change_due > 0) {
+      out.push(lineItem("Cash received", amount(sale.amount_tendered)));
+      out.push(lineItem("Change", amount(sale.change_due)));
+    }
+  } else if (sale.payment_method === "account") {
+    out.push(lineItem("ON ACCOUNT", ""));
   } else if (sale.payment_method === "split") {
     out.push(lineItem("Cash", amount(sale.paid_cash ?? 0)));
     out.push(lineItem("Card", amount(sale.paid_card ?? 0)));
   } else if (sale.payment_method === "cash") {
-    if (sale.amount_tendered != null) {
-      out.push(lineItem("Cash", amount(sale.amount_tendered)));
-    }
-    if (sale.change_due != null) {
-      out.push(lineItem("Change", amount(sale.change_due)));
-    }
-  } else if (sale.payment_method === "card") {
-    out.push(lineItem("Card", amount(sale.total)));
+    if (sale.amount_tendered != null) out.push(lineItem("Cash", amount(sale.amount_tendered)));
+    if (sale.change_due != null) out.push(lineItem("Change", amount(sale.change_due)));
+  } else if (sale.payment_method) {
+    out.push(lineItem(PAYMENT_LABEL[sale.payment_method] ?? sale.payment_method, amount(sale.total)));
+  }
+
+  if (customer && (sale.payment_method === "account" || taken.some((p) => p.method === "account"))) {
+    out.push(customer.name);
+    out.push(lineItem("Account balance", amount(customer.balance)));
   }
 
   out.push("");

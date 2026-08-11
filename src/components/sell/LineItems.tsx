@@ -81,23 +81,22 @@ export default function LineItems({
                   <span className="line-rate">
                     @ {money(priceOf(l), { currency: false })}/{p.unit_code} ·{" "}
                   </span>
-                  {fresh
-                    ? `just scanned${
-                        stockAfter != null
-                          ? ` · stock ${quantity(p.stock_qty!, "")} → ${quantity(
-                              stockAfter,
-                              ""
-                            )}`
-                          : ""
-                      }`
-                    : `${p.sku}${
-                        stockAfter != null
-                          ? ` · stock ${quantity(p.stock_qty!, "")} → ${quantity(
-                              stockAfter,
-                              ""
-                            )}`
-                          : ""
-                      }`}
+                  {fresh ? "just scanned · " : `${p.sku} · `}
+                  {p.bin ? `bin ${p.bin} · ` : ""}
+                  {stockAfter != null ? (
+                    // The stock this line CONSUMES, shown as it happens. The
+                    // handoff is explicit that stock is a consequence, never a
+                    // task: the cashier watches the shelf count fall as they
+                    // change the quantity, and is never handed a second job.
+                    <span
+                      className={`line-stock${stockAfter < 0 ? " is-short" : ""}`}
+                    >
+                      stock {quantity(p.stock_qty!, "")} →{" "}
+                      {quantity(stockAfter, "")}
+                    </span>
+                  ) : (
+                    "not stock-tracked"
+                  )}
                 </span>
               </span>
 

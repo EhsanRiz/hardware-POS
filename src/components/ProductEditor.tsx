@@ -47,6 +47,7 @@ export default function ProductEditor({
     tax_code: product?.tax_code ?? "standard",
     stock_qty: product?.stock_qty ?? null,
     reorder_level: product?.reorder_level ?? null,
+    bin: product?.bin ?? null,
     active: product?.active ?? true,
   }));
   const [busy, setBusy] = useState(false);
@@ -257,6 +258,16 @@ export default function ProductEditor({
               />
             </Field>
           </div>
+
+          {/* Where the thing physically is. In a shop with thousands of SKUs
+              this is how a cashier tells a customer which aisle to walk to. */}
+          <Field label="Bin / shelf" hint="Shown on the till, e.g. H1 or Garden.">
+            <input
+              value={f.bin ?? ""}
+              onChange={(e) => set("bin", e.target.value || null)}
+              className={inputCls}
+            />
+          </Field>
 
           <label className="flex items-center gap-2 text-sm">
             <input

@@ -37,6 +37,7 @@ export interface FakeProduct {
   reorder_level: number | null;
   image_url: string | null;
   sort_order: number;
+  bin: string | null;
 }
 
 export const PRODUCTS: FakeProduct[] = [
@@ -59,7 +60,7 @@ function mk(
     category_id: "c1", category_name: "Building",
     unit_code, unit_name, allows_fraction,
     price_retail, price_trade, tax_code: "standard",
-    stock_qty, reorder_level, image_url: null, sort_order: 0,
+    stock_qty, reorder_level, image_url: null, sort_order: 0, bin: "A1",
   };
 }
 
@@ -80,6 +81,11 @@ export interface RecordedSale {
   approved_by: string | null;
   created_at: string | null;
   total: number;
+  /** Every tender the client sent, so a test can assert on the settlement. */
+  payments: { method: string; amount: number }[];
+  po_number: string | null;
+  customer_vat_number: string | null;
+  rounding: number;
 }
 
 /** Everything the fake server saw, so tests can assert on it. */
@@ -130,6 +136,23 @@ export class Backend {
     const discount = (body.p_discount_amount as number) ?? 0;
     const total = Math.round((subtotal - discount) * 100) / 100;
 
+    const payments =
+      (body.p_payments as { method: string; amount: number }[]) ?? [];
+    // Mirrors public.cash_rounding: nearest 10c, halves down, cash only.
+    const nonCash = payments
+      .filter((x) => x.method !== "cash")
+      .reduce((s, x) => s + x.amount, 0);
+    const rounding = payments.some((x) => x.method === "cash")
+      ? (Math.ceil(Math.round((total - nonCash) * 100) / 10 - 0.5) * 10 -
+          Math.round((total - nonCash) * 100)) / 100
+      : 0;
+    const paid = payments.reduce((s, x) => s + x.amount, 0);
+    if (payments.length > 0 && Math.abs(paid - (total + rounding)) > 0.005) {
+      throw new Error(
+        `Payments of ${paid.toFixed(2)} do not settle ${total.toFixed(2)}`
+      );
+    }
+
     const sale: RecordedSale = {
       client_ref: ref,
       cashier_id: body.p_cashier_id as string,
@@ -139,6 +162,10 @@ export class Backend {
       approved_by: (body.p_approved_by as string) ?? null,
       created_at: (body.p_created_at as string) ?? null,
       total,
+      payments,
+      po_number: (body.p_po_number as string) ?? null,
+      customer_vat_number: (body.p_customer_vat_number as string) ?? null,
+      rounding,
     };
     this.sales.push(sale);
     return this.saleRow(sale, true);
@@ -168,6 +195,9 @@ export class Backend {
       change_due: null,
       paid_cash: null,
       paid_card: null,
+      rounding: sale.rounding,
+      po_number: sale.po_number,
+      customer_vat_number: sale.customer_vat_number,
       created_at: sale.created_at ?? new Date().toISOString(),
     };
   }
@@ -257,6 +287,9 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_list_customers":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
+      case "rpc/pos_sale_payments":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(be.sales.at(-1)?.payments ?? []);
       case "rpc/pos_search_products":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(searchProducts(String(body.p_query ?? "")));

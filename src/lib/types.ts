@@ -2,7 +2,25 @@ export type Role = "admin" | "manager" | "employee";
 
 export type SaleStatus = "completed" | "pending_approval" | "voided";
 
-export type PaymentMethod = "cash" | "card" | "account" | "split";
+export type PaymentMethod =
+  | "cash"
+  | "card"
+  | "eft"
+  | "zapper"
+  | "account"
+  /** More than one tender on the same sale. */
+  | "mixed"
+  /** Legacy: the old cash+card special case, kept so old queued sales replay. */
+  | "split";
+
+/** One tender against a sale. A sale settles when these cover its total. */
+export interface Payment {
+  method: PaymentMethod;
+  /** The amount APPLIED to the sale, not the cash handed over. */
+  amount: number;
+  /** Terminal slip, EFT reference, Zapper id — what a dispute needs. */
+  reference?: string | null;
+}
 
 export interface User {
   id: string;
@@ -44,6 +62,8 @@ export interface Product {
   reorder_level: number | null;
   image_url: string | null;
   sort_order: number;
+  /** Shelf or bin location — where in the shop the thing physically is. */
+  bin?: string | null;
 }
 
 export interface Category {
@@ -74,6 +94,9 @@ export interface Customer {
   code: string | null;
   name: string;
   phone: string | null;
+  /** The buyer's VAT registration number, for a full tax invoice. */
+  vat_number?: string | null;
+  address?: string | null;
   is_trade: boolean;
   credit_limit: number | null;
   balance: number;
@@ -126,6 +149,13 @@ export interface Sale {
   change_due: number | null;
   paid_cash: number | null;
   paid_card: number | null;
+  /** Cash-rounding adjustment: cash settles to the nearest 10c, the invoice does not. */
+  rounding?: number | null;
+  /** The buyer's purchase-order number, printed on the invoice. */
+  po_number?: string | null;
+  /** The buyer's VAT registration number, required on a full tax invoice. */
+  customer_vat_number?: string | null;
+  customer_address?: string | null;
   note?: string | null;
   created_at: string;
 }
@@ -205,6 +235,8 @@ export interface AdminProduct {
   image_url: string | null;
   active: boolean;
   sort_order: number;
+  /** Shelf or bin location — where in the shop the thing physically is. */
+  bin?: string | null;
 }
 
 export interface StockMovement {

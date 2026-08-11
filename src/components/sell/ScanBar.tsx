@@ -165,13 +165,17 @@ export default function ScanBar({
                   <span className="result-name">{p.name}</span>
                   <span className="result-meta">
                     <span>{p.sku}</span>
+                    {p.bin && <span>bin {p.bin}</span>}
                     <span>per {p.unit_code}</span>
-                    {out && <span className="out">out of stock</span>}
-                    {low && (
-                      <span className="low">
-                        low · {quantity(p.stock_qty!, p.unit_code)} left
+                    {/* On-hand stock on every row. Knowing there are six left
+                        before ringing up eight is the difference between a
+                        conversation and a refund. */}
+                    {p.stock_qty != null && !out && (
+                      <span className={low ? "low" : undefined}>
+                        {quantity(p.stock_qty, p.unit_code)} on hand
                       </span>
                     )}
+                    {out && <span className="out">out of stock</span>}
                   </span>
                 </span>
                 <span className="result-price">{money(price(p))}</span>

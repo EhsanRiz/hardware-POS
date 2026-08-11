@@ -30,6 +30,7 @@ interface DemoProduct {
   reorder_level: number | null;
   image_url: null;
   sort_order: number;
+  bin: string | null;
 }
 
 function p(
@@ -43,6 +44,10 @@ function p(
     unit_code: unit, unit_name: unitName, allows_fraction: frac,
     price_retail: retail, price_trade: trade, tax_code: "standard",
     stock_qty: stock, reorder_level: reorder, image_url: null, sort_order: 0,
+    // A believable shelf location, so the demo shows what the till shows.
+    bin: cat === "c1" ? "A" + ((id.charCodeAt(1) % 4) + 1)
+       : cat === "c2" ? "F" + ((id.charCodeAt(1) % 3) + 1)
+       : "P" + ((id.charCodeAt(1) % 2) + 1),
   };
 }
 
@@ -164,6 +169,13 @@ function createSale(b: Record<string, unknown>) {
 
   const discount = (b.p_discount_amount as number) ?? 0;
   const total = Math.round((subtotal - discount) * 100) / 100;
+  const payments = (b.p_payments as { method: string; amount: number }[]) ?? [];
+  const nonCash = payments.filter((x) => x.method !== "cash")
+    .reduce((s, x) => s + x.amount, 0);
+  const rounding = payments.some((x) => x.method === "cash")
+    ? (Math.ceil(Math.round((total - nonCash) * 100) / 10 - 0.5) * 10 -
+        Math.round((total - nonCash) * 100)) / 100
+    : 0;
   const approver = b.p_approved_by as string | null;
   const pending = discount > 0 && !approver;
 
@@ -203,6 +215,9 @@ function createSale(b: Record<string, unknown>) {
     amount_tendered: tendered,
     change_due: tendered != null ? Math.max(0, Math.round((tendered - total) * 100) / 100) : null,
     paid_cash: b.p_paid_cash ?? null, paid_card: b.p_paid_card ?? null,
+    rounding,
+    po_number: (b.p_po_number as string) ?? null,
+    customer_vat_number: (b.p_customer_vat_number as string) ?? null,
     created_at: (b.p_created_at as string) ?? new Date().toISOString(),
   };
   sales.push({ client_ref: ref, doc: row.doc_number ?? "", row });
@@ -258,6 +273,8 @@ export function installDemoBackend(): void {
         if (!user || user.role !== "admin") return bad("Not permitted: manage_catalogue");
         return ok(PRODUCTS.map((x) => ({ ...x, cost: Math.round(x.price_retail * 0.72 * 100) / 100,
                                          description: null, active: true })));
+      case "rpc/pos_sale_payments":
+        return ok((body.p_payments as unknown[]) ?? []);
       case "rpc/pos_recent_sales":
         return ok(sales.slice(-20).reverse().map((s) => s.row));
       case "rpc/pos_catalogue":

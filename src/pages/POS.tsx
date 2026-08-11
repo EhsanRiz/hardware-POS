@@ -22,7 +22,7 @@ import { submitSale, usePendingSync } from "../lib/sync";
 import type {
   CartLine,
   Customer,
-  PaymentMethod,
+  Payment,
   Product,
   ReceiptItem,
   Sale,
@@ -274,10 +274,11 @@ export default function POS() {
   }
 
   async function confirmPayment(p: {
-    method: PaymentMethod;
+    payments: Payment[];
     amountTendered: number | null;
-    paidCash: number | null;
-    paidCard: number | null;
+    rounding: number;
+    poNumber: string | null;
+    customerVatNumber: string | null;
   }) {
     if (!user) return;
     setBusy(true);
@@ -290,19 +291,31 @@ export default function POS() {
         discountAmount: discount,
         discountReason,
         total,
-        paymentMethod: p.method,
+        // The summary method: one tender keeps its name, several are "mixed".
+        paymentMethod:
+          p.payments.length === 1 ? p.payments[0].method : "mixed",
+        payments: p.payments,
         amountTendered: p.amountTendered,
+        rounding: p.rounding,
+        poNumber: p.poNumber,
+        customerVatNumber: p.customerVatNumber,
         approverPin,
         customerId: customer?.id ?? null,
         customerName: customer?.name ?? null,
         tradePricing: trade,
-        paidCash: p.paidCash,
-        paidCard: p.paidCard,
+        paidCash:
+          p.payments.filter((x) => x.method === "cash")
+            .reduce((sum, x) => sum + x.amount, 0) || null,
+        paidCard:
+          p.payments.filter((x) => x.method !== "cash")
+            .reduce((sum, x) => sum + x.amount, 0) || null,
         note: null,
       });
 
       printReceipt(
-        buildReceiptText(sale, receiptItems(), customer),
+        // The tenders go on the slip: a customer disputing a card charge needs
+        // to see which card, for how much, against which invoice.
+        buildReceiptText(sale, receiptItems(), customer, p.payments),
         "Tax Invoice"
       );
 

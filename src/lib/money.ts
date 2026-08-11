@@ -76,3 +76,24 @@ export function quantity(value: number, unitCode?: string, weighed = false): str
 export function vatWithin(inclusive: number, rate: number): number {
   return Math.round((inclusive - inclusive / (1 + rate)) * 100) / 100;
 }
+
+/**
+ * The cash-rounding adjustment for an amount that must be paid in coins.
+ *
+ * South Africa stopped minting 1c, 2c and 5c coins, so R187.05 cannot be handed
+ * over. Cash settles to the nearest 10c, and an exact half rounds DOWN — in the
+ * customer's favour, which is the convention South African retail adopted and
+ * the one a customer can check in their head without feeling cheated.
+ *
+ * The invoice total is NOT rounded: VAT is computed on it, and only the cash
+ * portion of a settlement is paid in coins. Mirrors public.cash_rounding() in
+ * migration 0019 — the server recomputes and is the authority.
+ */
+export function cashRounding(amount: number): number {
+  const cents = Math.round(amount * 100);
+  const settled = Math.ceil(cents / 10 - 0.5) * 10;
+  const adjustment = (settled - cents) / 100;
+  // Normalise negative zero: it compares equal to 0 but formats as "-0.00",
+  // and a receipt line reading "Cash rounding -0.00" is a support call.
+  return adjustment === 0 ? 0 : adjustment;
+}
