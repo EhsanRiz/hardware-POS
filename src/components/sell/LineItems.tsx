@@ -75,6 +75,12 @@ export default function LineItems({
                       {p.unit_code === "kg" ? "Weighed" : "Cut"}
                     </span>
                   )}
+                  {/* The unit price rides along here because the Unit column
+                      is dropped on a narrow tablet; on a wide screen this span
+                      is hidden and the column carries it. */}
+                  <span className="line-rate">
+                    @ {money(priceOf(l), { currency: false })}/{p.unit_code} ·{" "}
+                  </span>
                   {fresh
                     ? `just scanned${
                         stockAfter != null

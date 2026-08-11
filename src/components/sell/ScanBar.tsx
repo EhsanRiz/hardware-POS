@@ -114,7 +114,7 @@ export default function ScanBar({
   }
 
   return (
-    <>
+    <div className="scan-zone">
       <div className="scan-bar">
         <form className="scan-field" onSubmit={submit} role="search">
           <ScanIcon />
@@ -186,6 +186,6 @@ export default function ScanBar({
           <span className="result-meta">Nothing matches “{term}”.</span>
         </div>
       )}
-    </>
+    </div>
   );
 }

@@ -26,6 +26,8 @@ export default function PaymentColumn({
   customer,
   busy,
   canPay,
+  open,
+  onClose,
   onComplete,
 }: {
   lines: CartLine[];
@@ -36,6 +38,9 @@ export default function PaymentColumn({
   customer: Customer | null;
   busy: boolean;
   canPay: boolean;
+  /** On a tablet this column is a sheet; on a wide screen it is always docked. */
+  open: boolean;
+  onClose: () => void;
   onComplete: (p: {
     method: PaymentMethod;
     amountTendered: number | null;
@@ -103,7 +108,15 @@ export default function PaymentColumn({
   }
 
   return (
-    <aside className="pay" aria-label="Payment">
+    <aside className={`pay${open ? " is-open" : ""}`} aria-label="Payment">
+      {/* Visible only when this column is a sheet; CSS hides it when docked. */}
+      <div className="pay-close">
+        <span className="kicker-sm">Payment</span>
+        <button type="button" onClick={onClose}>
+          Back to the sale
+        </button>
+      </div>
+
       <div className="totals">
         <div className="totals-row">
           <span>
@@ -230,6 +243,12 @@ export default function PaymentColumn({
           </div>
         )}
 
+      </div>
+
+      {/* Pinned, never scrolled away. On a 768-tall tablet the keypad alone
+          fills the column, and a till whose "take the money" button is below
+          the fold is a till that loses sales at a queue. */}
+      <div className="pay-foot">
         <button className="btn-tender" disabled={!ready} onClick={complete}>
           <PrinterIcon />
           {busy ? "Working…" : `Tender & print ${money(total)}`}

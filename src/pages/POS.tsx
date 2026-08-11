@@ -102,6 +102,9 @@ export default function POS() {
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
 
+  // On a tablet the payment column is a sheet raised from the bar; on a wide
+  // screen it is always docked and this flag is ignored by the stylesheet.
+  const [payOpen, setPayOpen] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
@@ -204,6 +207,7 @@ export default function POS() {
   }
 
   function clearSale() {
+    setPayOpen(false);
     setLines([]);
     setCustomer(null);
     setDiscount(0);
@@ -417,8 +421,26 @@ export default function POS() {
           customer={customer}
           busy={busy}
           canPay={can(user, "take_payments")}
+          open={payOpen}
+          onClose={() => setPayOpen(false)}
           onComplete={confirmPayment}
         />
+      </div>
+
+      {/* Only rendered as a bar on narrow screens (CSS); it is the one control
+          that raises the payment sheet, and it always shows what is owed. */}
+      <div className="pay-bar">
+        <span>
+          <span className="lbl">Total</span>
+          <span className="fig">{money(total)}</span>
+        </span>
+        <button
+          className="btn-tender"
+          disabled={lines.length === 0 || !can(user, "take_payments")}
+          onClick={() => setPayOpen(true)}
+        >
+          Take payment
+        </button>
       </div>
 
       <footer className="sell-foot">

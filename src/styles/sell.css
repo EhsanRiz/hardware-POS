@@ -27,12 +27,27 @@
   height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
-  /* The handoff fixes this at 1360px and forbids compression, because the
-     line-item grid collapses below it. 1180 is the real floor for these tracks
-     (the description column still clears 210px), and it keeps a 1280×800
-     counter tablet — which is what shops are actually given — off a horizontal
-     scrollbar. Below 1180 the page scrolls rather than cramming. */
-  min-width: 1180px;
+
+  /* The line-item grid, as variables, because the header row and every data
+     row must change together at a breakpoint or the columns drift apart.
+     The handoff's tracks are the widest set; the breakpoints below narrow
+     them and eventually drop the unit-price column.
+
+     The handoff fixes the frame at 1360px and forbids compression. That is
+     right for a desktop till and wrong for the hardware actually being
+     shipped: an iPad is 1194 or 1180 CSS px in landscape and 820 or 768 in
+     portrait, so a hard minimum guarantees the one thing a counter cannot
+     use — a screen that scrolls sideways while someone is being served. */
+  --line-cols: 44px 1fr 130px 120px 130px 44px;
+  --line-gap: 16px;
+  --sell-pad: 26px;
+  --pay-w: 420px;
+}
+
+/* iOS shrinks the visual viewport when its toolbars appear; dvh follows that,
+   so the payment bar stays reachable instead of sitting under the browser UI. */
+@supports (height: 100dvh) {
+  .sell { height: 100dvh; }
 }
 
 .sell-body {
@@ -56,7 +71,7 @@
   display: flex;
   align-items: center;
   gap: 22px;
-  padding: 14px 26px;
+  padding: 14px var(--sell-pad);
   border-bottom: 1px solid var(--divider);
   flex: none;
 }
@@ -149,8 +164,9 @@
 
 .scan-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
-  padding: 20px 26px;
+  padding: 20px var(--sell-pad);
   border-bottom: 1px solid var(--divider);
   flex: none;
 }
@@ -228,14 +244,14 @@
 .lines-head,
 .line-row {
   display: grid;
-  grid-template-columns: 44px 1fr 130px 120px 130px 44px;
-  gap: 0 16px;
-  padding: 15px 26px;
+  grid-template-columns: var(--line-cols);
+  gap: 0 var(--line-gap);
+  padding: 15px var(--sell-pad);
   align-items: baseline;
 }
 
 .lines-head {
-  padding: 12px 26px;
+  padding: 12px var(--sell-pad);
   border-bottom: 1px solid var(--divider);
   font-size: 11.5px;
   font-weight: 600;
@@ -268,6 +284,7 @@
 .line-n { font-size: 13px; font-weight: 500; color: var(--color-neutral-700); }
 .line-desc { display: block; font-size: 15px; color: var(--color-text); line-height: 1.35; }
 .line-meta { display: block; font-size: 12px; color: var(--color-neutral-700); margin-top: 3px; }
+.line-rate { display: none; }
 .line-tag {
   font-size: 10.5px;
   font-weight: 600;
@@ -330,9 +347,10 @@
 .sell-actions {
   margin-top: auto;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
-  padding: 18px 26px;
+  padding: 18px var(--sell-pad);
   border-top: 1px solid var(--divider);
   flex: none;
 }
@@ -363,14 +381,25 @@
 /* ---- Payment column ---------------------------------------------------- */
 
 .pay {
-  flex: 0 0 420px;
+  flex: 0 0 var(--pay-w);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.totals { padding: 22px 26px; border-bottom: 1px solid var(--divider); flex: none; }
+.totals { padding: 22px var(--sell-pad); border-bottom: 1px solid var(--divider); flex: none; }
+
+/* The middle scrolls; the totals above and the tender button below do not. */
+.pay-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px var(--sell-pad) calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--divider);
+  background: var(--color-bg);
+}
 .totals-row {
   display: flex;
   justify-content: space-between;
@@ -415,7 +444,15 @@
   white-space: nowrap;
 }
 
-.tender { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }
+.tender {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px var(--sell-pad);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 
 .kicker-sm {
   font-size: 11.5px;
@@ -540,11 +577,12 @@
 /* Results overlay the line items rather than pushing them down: the cashier is
    looking at the scan field, and a table that jumps while they type is how a
    wrong line gets clicked. */
+.scan-zone { position: relative; flex: none; }
 .results {
   position: absolute;
-  left: 26px;
-  right: 26px;
-  top: 92px;
+  left: var(--sell-pad);
+  right: var(--sell-pad);
+  top: 100%;
   z-index: 20;
   max-height: 60%;
   overflow-y: auto;
@@ -588,7 +626,7 @@
 /* ---- Banner and footer ------------------------------------------------- */
 
 .sell-banner {
-  padding: 11px 26px;
+  padding: 11px var(--sell-pad);
   background: var(--color-colophon);
   color: var(--color-bg);
   font-size: 14px;
@@ -606,9 +644,10 @@
 
 .sell-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 8px 26px;
+  padding: 8px var(--sell-pad);
   border-top: 1px solid var(--divider);
   font-size: 11.5px;
   color: var(--color-neutral-700);
@@ -790,3 +829,142 @@
 }
 .login-outs a:hover,
 .login-outs button:hover { color: var(--color-accent); }
+
+/* ---- Tablets ------------------------------------------------------------
+ *
+ * The counter runs on a tablet — an iPad or a large Android one — so these are
+ * the real sizes, not a courtesy for small screens:
+ *
+ *   1194 / 1180 / 1133  iPad landscape
+ *   1024                older iPad and most 10" Android landscape
+ *    834 /  820 /  768  the same devices in portrait
+ *
+ * Two moves, in order. First the columns tighten and the payment column
+ * narrows, which carries everything down to about 900px. Below that there is
+ * no honest way to show a line-item table and a payment column side by side,
+ * so payment becomes a sheet over the lines, raised by a bar that always shows
+ * the total. The lines stay visible until the moment money is taken, which is
+ * the part a cashier actually needs.
+ */
+
+/* The bar that raises the sheet. Hidden on anything wide enough to show the
+   payment column beside the lines. */
+.pay-bar {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  padding: 10px var(--sell-pad) calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--divider);
+  background: var(--color-neutral-100);
+  flex: none;
+}
+.pay-bar .lbl {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-neutral-700);
+  display: block;
+}
+.pay-bar .fig {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  line-height: 1.1;
+}
+.pay-bar .btn-tender { width: auto; margin-left: auto; padding: 0 22px; min-height: 54px; }
+
+/* The sheet's own close control, hidden when the column is docked. */
+.pay-close {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px var(--sell-pad);
+  border-bottom: 1px solid var(--divider);
+}
+.pay-close button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-neutral-700);
+}
+
+/* The full-width layout needs about 1330px to lay out without compressing —
+   measured, not guessed — so the compact tier starts below the handoff's own
+   1360px frame. Every tablet in landscape lands here. */
+@media (max-width: 1359px) {
+  .sell {
+    --line-cols: 34px 1fr 96px 96px 112px 40px;
+    --line-gap: 12px;
+    --sell-pad: 18px;
+    --pay-w: 344px;
+  }
+  .sell-head { gap: 14px; }
+  .sell-nav button { padding: 10px 11px; }
+  .sell-till { display: none; }          /* the shop name is on the invoice */
+  .total-row .fig { font-size: 38px; }
+  .tender-btn { min-height: 64px; }
+  .keypad button { min-height: 48px; }
+  .customer-pick { min-width: 180px; }
+  .scan-field { min-height: 56px; }
+}
+
+@media (max-width: 899px) {
+  .sell {
+    /* The unit price leaves the table here and moves under the description:
+       of the two numbers, the cashier is reading the amount. */
+    --line-cols: 30px 1fr 84px 108px 38px;
+    --sell-pad: 14px;
+  }
+  .line-unit { display: none; }
+  .line-rate { display: inline; }
+
+  .sell-nav { display: none; }
+  .sell-head { gap: 12px; padding-top: 10px; padding-bottom: 10px; }
+  .sell-cashier { display: none; }
+  .sell-divider-v { display: none; }
+  .sell-edition { display: none; }
+
+  .scan-field { flex: 1 1 100%; }
+  .customer-pick { flex: 1 1 100%; min-height: 52px; }
+
+  .sell-body { flex-direction: column; }
+  .sell-left { border-right: 0; }
+
+  /* Payment becomes a sheet. It is a real panel, not a modal: the lines behind
+     it stay on screen, and the same markup serves both layouts. */
+  .pay {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 86dvh;
+    max-height: 86%;
+    z-index: 55;
+    flex: none;
+    background: var(--color-bg);
+    border-top: 1px solid var(--color-accent);
+    box-shadow: var(--shadow-lg);
+    transform: translateY(101%);
+    visibility: hidden;
+  }
+  .pay.is-open { transform: translateY(0); visibility: visible; }
+  @media (prefers-reduced-motion: no-preference) {
+    .pay { transition: transform 0.22s ease, visibility 0.22s; }
+  }
+
+  .pay-close { display: flex; }
+  .pay-bar { display: flex; }
+  /* Room for the bar, so the last line is never hidden under it. */
+  .sell-actions { padding-bottom: 14px; }
+  .sell-foot { display: none; }
+  .total-row .fig { font-size: 34px; }
+}
