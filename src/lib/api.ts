@@ -14,6 +14,7 @@ import { supabase } from "./supabase";
 import type {
   Category,
   Customer,
+  CustomerVisit,
   Payment,
   Product,
   RecentSale,
@@ -240,6 +241,63 @@ export async function listCustomers(): Promise<Customer[]> {
   });
   if (error) throw error;
   return data as Customer[];
+}
+
+/**
+ * The buyer behind a phone number, or null.
+ *
+ * The server normalises before it looks, so it does not matter whether the
+ * cashier typed 082…, +2782… or 2782….
+ */
+export async function findCustomerByPhone(
+  phone: string
+): Promise<Customer | null> {
+  const { data, error } = await supabase.rpc("pos_customer_by_phone", {
+    p_register_token: requireToken(),
+    p_phone: phone,
+  });
+  if (error) throw error;
+  return (data as Customer[])[0] ?? null;
+}
+
+/**
+ * Record a buyer at the counter, or fetch the one already on file.
+ *
+ * Authorised by the cashier's own right to take payments — a flow that needed a
+ * manager's PIN would never survive a queue. It cannot grant credit: what comes
+ * back is always a retail-priced contact with no limit.
+ */
+export async function quickCustomer(
+  cashierId: string,
+  phone: string,
+  name?: string | null,
+  vatNumber?: string | null,
+  address?: string | null
+): Promise<Customer> {
+  const { data, error } = await supabase.rpc("pos_quick_customer", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_phone: phone,
+    p_name: name ?? null,
+    p_vat_number: vatNumber ?? null,
+    p_address: address ?? null,
+  });
+  if (error) throw error;
+  return (data as Customer[])[0];
+}
+
+/** What this buyer has bought before. Completed sales only. */
+export async function customerHistory(
+  customerId: string,
+  limit = 20
+): Promise<CustomerVisit[]> {
+  const { data, error } = await supabase.rpc("pos_customer_history", {
+    p_register_token: requireToken(),
+    p_customer_id: customerId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return data as CustomerVisit[];
 }
 
 // --- Search -----------------------------------------------------------------

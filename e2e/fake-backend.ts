@@ -88,10 +88,42 @@ export interface RecordedSale {
   rounding: number;
 }
 
+/** A buyer on file, in the shape pos_list_customers returns. */
+export interface FakeCustomer {
+  id: string;
+  code: string | null;
+  name: string;
+  phone: string | null;
+  is_trade: boolean;
+  credit_limit: number | null;
+  balance: number;
+  available: number | null;
+}
+
+/**
+ * Phone numbers reduced the way the server does, so the fake backend matches a
+ * repeat buyer on the same rule the real one uses. Deliberately the shortest
+ * possible version of `normalize_phone`: the full rules are tested against the
+ * real function in test/phone.test.mjs.
+ */
+function e164(raw: string | null): string | null {
+  const typed = (raw ?? "").trim();
+  const digits = typed.replace(/\D/g, "");
+  if (!digits) return null;
+  let out: string;
+  if (typed.startsWith("+")) out = `+${digits}`;
+  else if (digits.startsWith("00")) out = `+${digits.slice(2)}`;
+  else if (digits.startsWith("0")) out = `+27${digits.slice(1)}`;
+  else if (digits.startsWith("27") && digits.length > 9) out = `+${digits}`;
+  else out = `+27${digits}`;
+  return /^\+\d{9,15}$/.test(out) ? out : null;
+}
+
 /** Everything the fake server saw, so tests can assert on it. */
 export class Backend {
   sales: RecordedSale[] = [];
   calls: string[] = [];
+  customers: FakeCustomer[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
   private seq = 0;
@@ -99,6 +131,7 @@ export class Backend {
   reset() {
     this.sales = [];
     this.calls = [];
+    this.customers = [];
     this.offline = false;
     this.seq = 0;
   }
@@ -285,6 +318,35 @@ export async function installBackend(page: Page): Promise<Backend> {
         return json(hit ? [hit.row] : []);
       }
       case "rpc/pos_list_customers":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(be.customers);
+      case "rpc/pos_customer_by_phone": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const want = e164(String(body.p_phone ?? ""));
+        if (!want) return json([]);
+        return json(be.customers.filter((c) => e164(c.phone) === want));
+      }
+      case "rpc/pos_quick_customer": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const want = e164(String(body.p_phone ?? ""));
+        if (!want) return fail("That does not look like a phone number");
+        const existing = be.customers.find((c) => e164(c.phone) === want);
+        if (existing) return json([existing]);
+        // No credit, retail price — the server will not let a cashier do more.
+        const made: FakeCustomer = {
+          id: `k${be.customers.length + 1}`,
+          code: null,
+          name: String(body.p_name ?? "").trim() || want,
+          phone: String(body.p_phone ?? "").trim(),
+          is_trade: false,
+          credit_limit: 0,
+          balance: 0,
+          available: 0,
+        };
+        be.customers.push(made);
+        return json([made]);
+      }
+      case "rpc/pos_customer_history":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
       case "rpc/pos_sale_payments":

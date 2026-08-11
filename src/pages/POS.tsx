@@ -464,13 +464,27 @@ export default function POS() {
         </span>
       </footer>
 
-      {showCustomers && (
+      {/* Recording a buyer is authorised by the cashier's own permission, so
+          there is no picker without one signed in. */}
+      {showCustomers && user && (
         <CustomerPicker
           customers={customers}
+          cashierId={user.id}
           onPick={(c) => {
             setCustomer(c);
             setShowCustomers(false);
             scanRef.current?.focus();
+          }}
+          onAdded={(c) => {
+            // Into the cache as well as the list: the next time this buyer
+            // comes in, their number must still be findable with the line down.
+            setCustomers((prev) => {
+              const next = [...prev.filter((p) => p.id !== c.id), c].sort((a, b) =>
+                a.name.localeCompare(b.name)
+              );
+              cacheSet(CUSTOMERS_KEY, next);
+              return next;
+            });
           }}
           onClose={() => setShowCustomers(false)}
         />

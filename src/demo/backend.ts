@@ -12,6 +12,7 @@
  * replays — is enforced again in Postgres, because a demo that is more
  * permissive than the product teaches the wrong thing.
  */
+import { normalizePhone } from "../lib/phone";
 
 interface DemoProduct {
   id: string;
@@ -101,6 +102,10 @@ const CUSTOMERS = [
     is_trade: true, credit_limit: 25000, balance: 4310.5, available: 20689.5 },
   { id: "k2", code: "TRD-002", name: "Free State Plumbing CC", phone: "051 924 0001",
     is_trade: true, credit_limit: 10000, balance: 9450, available: 550 },
+  // A repeat cash buyer, recorded at the counter rather than opened as an
+  // account: no credit, retail price. This is what quick capture produces.
+  { id: "k3", code: null as string | null, name: "T. Dlamini", phone: "082 555 0143",
+    is_trade: false, credit_limit: 0, balance: 0, available: 0 },
 ];
 
 const sales: { client_ref: string | null; doc: string; row: unknown }[] = [];
@@ -281,6 +286,44 @@ export function installDemoBackend(): void {
         return ok(search(String(body.p_query ?? "")));
       case "rpc/pos_list_customers":
         return ok(CUSTOMERS);
+      case "rpc/pos_customer_by_phone": {
+        const want = normalizePhone(String(body.p_phone ?? ""));
+        if (!want) return ok([]);
+        const hit = CUSTOMERS.find((c) => normalizePhone(c.phone) === want);
+        return ok(hit ? [hit] : []);
+      }
+      case "rpc/pos_quick_customer": {
+        const want = normalizePhone(String(body.p_phone ?? ""));
+        if (!want) return bad("That does not look like a phone number");
+        const existing = CUSTOMERS.find((c) => normalizePhone(c.phone) === want);
+        if (existing) return ok([existing]);
+        // No credit, retail price — the demo mirrors what the server enforces.
+        const made = {
+          id: `k${CUSTOMERS.length + 1}`,
+          code: null as string | null,
+          name: String(body.p_name ?? "").trim() || want,
+          phone: String(body.p_phone ?? "").trim(),
+          is_trade: false, credit_limit: 0, balance: 0, available: 0,
+        };
+        CUSTOMERS.push(made);
+        return ok([made]);
+      }
+      case "rpc/pos_customer_history":
+        return ok(
+          sales
+            .filter((s) => (s.row as { customer_id?: string }).customer_id === body.p_customer_id)
+            .slice(-20)
+            .reverse()
+            .map((s) => {
+              const row = s.row as { id: string; doc_number: string; created_at: string;
+                                     total: number; payment_method: string };
+              return {
+                sale_id: row.id, doc_number: row.doc_number, created_at: row.created_at,
+                total: row.total, payment_method: row.payment_method,
+                item_count: 1, summary: null,
+              };
+            })
+        );
       case "rpc/pos_create_sale":
         try { return ok(createSale(body)); }
         catch (e) { return bad(e instanceof Error ? e.message : "Rejected"); }

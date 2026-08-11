@@ -115,6 +115,18 @@ export interface CustomerDetail extends Customer {
   active: boolean;
 }
 
+/** One past purchase, for the "I bought it here in March" conversation. */
+export interface CustomerVisit {
+  sale_id: string;
+  doc_number: string | null;
+  created_at: string;
+  total: number;
+  payment_method: string | null;
+  item_count: number;
+  /** The item names, truncated — enough to recognise the purchase. */
+  summary: string | null;
+}
+
 export interface LedgerEntry {
   kind: "charge" | "payment";
   at: string;
@@ -158,6 +170,8 @@ export interface Sale {
   /** The buyer's VAT registration number, required on a full tax invoice. */
   customer_vat_number?: string | null;
   customer_address?: string | null;
+  /** Snapshotted E.164 number, so a later edit to the customer cannot rewrite history. */
+  customer_phone?: string | null;
   note?: string | null;
   created_at: string;
 }

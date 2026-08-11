@@ -378,6 +378,25 @@
 .btn-line.quiet { border-color: transparent; color: var(--color-neutral-700); }
 .btn-line.quiet:hover:not(:disabled) { color: var(--color-owing); background: rgba(176, 58, 43, 0.08); border-color: transparent; }
 
+/* The committing button inside a modal. Solid, so that in a two-button row the
+   eye lands on the action rather than on Cancel. */
+.btn-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid var(--color-colophon);
+  border-radius: var(--radius-md);
+  background: var(--color-colophon);
+  color: var(--color-bg);
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 600;
+}
+.btn-fill:hover:not(:disabled) { background: var(--color-neutral-900); border-color: var(--color-neutral-900); }
+.btn-fill:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* ---- Payment column ---------------------------------------------------- */
 
 .pay {
@@ -724,6 +743,39 @@
   background: none;
 }
 .modal-row:hover { background: var(--color-neutral-100); }
+
+/* A customer row does two things: choosing them, and looking at what they have
+   bought. Two targets, so they cannot be hit by mistake — at a returns counter
+   the wrong one silently re-prices the sale. */
+.modal-row-pair {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-bottom: 1px solid var(--divider-row);
+}
+.modal-row-pair .modal-row { flex: 1; border-bottom: none; }
+.modal-row-go {
+  flex: 0 0 auto;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-neutral-700);
+}
+.modal-row-go:hover:not(:disabled) {
+  color: var(--color-accent-700);
+  border-color: var(--divider);
+  background: var(--state-hover);
+}
+.modal-row-go:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.modal-field { padding: 12px 4px 4px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions .btn-line,
+.modal-actions .btn-fill { flex: 0 0 auto; }
 .modal-row-name { display: block; font-size: 15px; color: var(--color-text); }
 .modal-row-meta {
   display: block;

@@ -210,3 +210,54 @@ test("a manager can open the catalogue", async ({ page }) => {
   await expect(page.getByRole("button", { name: /New product/i })).toBeVisible();
   await expect(page.getByRole("cell", { name: "CEM-425-50" })).toBeVisible();
 });
+
+/**
+ * The repeat buyer.
+ *
+ * The value of a phone number is not that it is stored — it is that the SAME
+ * person is recognised next time, however they happen to say their number. A
+ * feature that silently creates a second record on the second visit looks like
+ * it works and is worthless, so that is what this test pins down.
+ */
+test("a buyer's number is captured once and recognised however it is typed", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  // First visit: nobody on file, so the till offers to record the number.
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  await picker.getByPlaceholder(/Name, account code or phone/i).fill("082 555 0143");
+  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByLabel(/Their name/i).fill("T. Dlamini");
+  await picker.getByRole("button", { name: /^Save/ }).click();
+
+  // The sale is now theirs, and a cashier's capture never grants credit.
+  await expect(page.getByText("T. Dlamini")).toBeVisible();
+  await expect(page.getByText(/Trade price/i)).toHaveCount(0);
+  expect(be.customers).toHaveLength(1);
+  expect(be.customers[0].is_trade).toBe(false);
+  expect(be.customers[0].credit_limit).toBe(0);
+
+  // Second visit, and this time they rattle it off in international form.
+  await page.getByRole("button", { name: /T. Dlamini/ }).click();
+  await picker.getByPlaceholder(/Name, account code or phone/i).fill("+27 82 555 0143");
+  // Found, not offered as new — the whole point.
+  await expect(picker.getByText(/Record .* as a new buyer/i)).toHaveCount(0);
+  // The row itself, not the "Purchases by…" button sitting beside it.
+  await picker.locator(".modal-row", { hasText: "T. Dlamini" }).click();
+
+  expect(be.customers).toHaveLength(1);
+});
+
+test("a mistyped number is refused rather than stored as a buyer", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  // Six digits reads as a phone number to the UI, but it is too short to be one.
+  await picker.getByPlaceholder(/Name, account code or phone/i).fill("123456");
+  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByRole("button", { name: /^Save/ }).click();
+
+  await expect(picker.getByText(/does not look like a phone number/i)).toBeVisible();
+  expect(be.customers).toHaveLength(0);
+});

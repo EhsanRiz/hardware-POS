@@ -1,4 +1,5 @@
 import { CURRENCY, RECEIPT_WIDTH } from "./config";
+import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
 import type { CartLine, Payment, PaymentMethod, ReceiptItem, Sale } from "./types";
 
@@ -166,6 +167,9 @@ export function buildReceiptText(
       if (line.trim()) out.push(`  ${line.trim()}`);
     }
   }
+  // Not required by SARS, but it is what the buyer quotes at the returns
+  // counter, so printing it tells them the number we hold is the right one.
+  if (sale.customer_phone) out.push(`  ${formatPhone(sale.customer_phone)}`);
   if (sale.customer_vat_number) out.push(`Customer VAT No: ${sale.customer_vat_number}`);
   // The buyer's own order number: their bookkeeper rejects an invoice without it.
   if (sale.po_number) out.push(`Order No: ${sale.po_number}`);
