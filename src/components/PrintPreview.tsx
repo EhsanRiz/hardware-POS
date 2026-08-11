@@ -75,7 +75,6 @@ export default function PrintPreview() {
     <>
       {/* Off-screen copy that is the only thing printed. */}
       <div id="print-area" aria-hidden="true">
-        <img src="/logo.png" alt="" />
         <pre>{renderMarkup(text)}</pre>
       </div>
 
@@ -99,7 +98,6 @@ export default function PrintPreview() {
           </div>
 
           <div className="overflow-y-auto p-4 bg-stone-50">
-            <img src="/logo.png" alt="logo" className="w-32 mx-auto mb-3" />
             <pre className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-stone-900">
               {renderMarkup(text)}
             </pre>

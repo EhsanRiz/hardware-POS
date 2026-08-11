@@ -100,15 +100,22 @@ function unitRate(unitPrice: number, unitCode: string): string {
   return `  @ ${amount(unitPrice)}/${unitCode}`;
 }
 
-// Shop address + VAT number + slip title, printed under the logo. The shop name
-// is intentionally omitted — the printed logo carries the branding.
+// Shop name, address, VAT number and slip title.
+//
+// The name used to be omitted because a printed logo image carried it. There
+// is no logo image any more, and a tax invoice without the supplier's name on
+// it is not a valid tax invoice — SARS requires the supplier's name, address
+// and VAT registration number on the face of the document. So the name is
+// printed, in bold, as the first thing on the slip.
 function shopHeader(out: string[], title: string): void {
   const s = shopSettings();
+  if (s.shop_name) out.push(bold(center(s.shop_name)));
   for (const line of [s.address_line1, s.address_line2].filter(Boolean)) {
     out.push(center(line));
   }
   if (s.phone) out.push(center(`Tel: ${s.phone}`));
   if (s.vat_number) out.push(center(`VAT No: ${s.vat_number}`));
+  if (s.registration_number) out.push(center(`Reg No: ${s.registration_number}`));
   out.push(center(title));
 }
 

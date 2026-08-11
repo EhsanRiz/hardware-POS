@@ -94,6 +94,15 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
   await expect(banner(page)).toContainText(/INV-\d+/);
   expect(be.storedSales).toHaveLength(1);
   expect(be.storedSales[0].total).toBe(115);
+
+  // A tax invoice without the supplier's name, address and VAT number on its
+  // face is not a valid tax invoice. This used to be carried by a printed logo
+  // image; it is text now, and this is what stops it going missing again.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Ladybrand Hardware");
+  await expect(slip).toContainText("12 Church St");
+  await expect(slip).toContainText("VAT No: 4001234567");
+  await expect(slip).toContainText(/tax invoice/i);
 });
 
 test("the server's refusal reaches the cashier, and nothing is charged", async ({ page }) => {
