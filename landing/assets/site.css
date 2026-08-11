@@ -301,3 +301,51 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
 .site-footer a { display: block; padding: 3px 0; color: var(--n700); }
 .site-footer a:hover { color: var(--gold-700); }
 .foot-end { border-top: 1px solid var(--rule); padding-top: 22px; display: flex; flex-wrap: wrap; gap: 9.2px 27.6px; justify-content: space-between; font-size: 13px; }
+
+/* ---- Green-led identity ------------------------------------------------- */
+/* The brand sheet leads with the deep green; cream is the reading surface
+   inside it. Header, hero and footer take the green ground; long-form reading
+   sections stay cream. Amber on green is always the lifted #e0b45c. */
+
+.site-header {
+  background: rgba(14, 58, 45, 0.97);
+  border-bottom-color: transparent;
+}
+.site-header.scrolled { border-bottom-color: var(--rule-dark); }
+.site-header .wordmark { color: var(--paper); }
+.site-header .wordmark span { color: var(--gold-400); }
+.site-header .edition { color: var(--gold-400); }
+.site-header .lockup .bar { background: var(--gold-400); }
+.nav-links a { color: var(--n400); }
+.nav-links a:hover { color: var(--gold-400); }
+.site-header .btn { border-color: var(--gold-400); color: var(--gold-400); }
+.site-header .btn:hover { background: rgba(224, 180, 92, 0.14); color: var(--gold-400); }
+.site-header .btn-quiet { border-color: var(--rule-dark); color: var(--n400); }
+.site-header .btn-quiet:hover { color: var(--gold-400); }
+.site-header .btn-solid { background: rgba(224, 180, 92, 0.16); }
+.site-header .btn-solid:hover { background: rgba(224, 180, 92, 0.26); }
+
+.hero { background: var(--colophon); }
+.hero h1 { color: var(--paper); }
+.hero .kicker { color: var(--gold-400); }
+.hero .lead { color: #ccd7d0; }
+.hero-points { color: var(--n400); }
+.hero-points .tick { color: var(--gold-400); }
+.hero .btn { border-color: var(--gold-400); color: var(--gold-400); }
+.hero .btn:hover { background: rgba(224, 180, 92, 0.14); color: var(--gold-400); }
+.hero .btn-quiet { border-color: var(--rule-dark); color: var(--n400); }
+.hero .btn-quiet:hover { color: var(--gold-400); }
+.hero .btn-solid { background: rgba(224, 180, 92, 0.16); }
+.hero .btn-solid:hover { background: rgba(224, 180, 92, 0.26); }
+
+.site-footer {
+  background: var(--colophon);
+  border-top: 0;
+  color: var(--n400);
+}
+.site-footer .wordmark { color: var(--paper); }
+.site-footer .wordmark span { color: var(--gold-400); }
+.site-footer h5 { color: var(--gold-400); }
+.site-footer a { color: var(--n400); }
+.site-footer a:hover { color: var(--gold-400); }
+.site-footer .foot-end { border-top-color: var(--rule-dark); }
