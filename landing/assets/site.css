@@ -352,3 +352,47 @@ section { padding: clamp(48px, 8vw, 92px) 0; }
 .site-footer a { color: var(--n400); }
 .site-footer a:hover { color: var(--gold-400); }
 .site-footer .foot-end { border-top-color: var(--rule-dark); }
+
+/* ---- Phones -------------------------------------------------------------
+ *
+ * The header was laid out for a desktop and never re-measured: at 390px the
+ * lockup alone is 270px wide, so "Request InnovaPOS" ended at x=488 — a
+ * hundred pixels past the screen, invisibly cut off by the overflow-x: clip
+ * on <html>. The page reported no horizontal scroll and the only call to
+ * action on it was unreachable.
+ *
+ * So: the lockup sheds its edition word, the wordmark comes down a step, and
+ * the button tightens until the row genuinely fits the narrowest phone in
+ * common use (360px).
+ */
+@media (max-width: 700px) {
+  .nav { gap: 12px; padding: 14px 18px; }
+  .wordmark { font-size: 22px; }
+  .lockup { gap: 9px; }
+  .lockup .bar, .edition { display: none; }
+  .nav-actions .btn { min-height: 40px; padding: 0 14px; font-size: 13.5px; }
+  .lockup svg { width: 23px; height: 23px; }
+
+  .wrap, .narrow { padding: 0 20px; }
+  section { padding: clamp(38px, 7vw, 64px) 0; }
+  .lead { font-size: 1rem; line-height: 1.6; }
+  .hero-ctas .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* The demo till is an illustration on a phone: the line number and the
+     F2 hint are desktop affordances, and the description needs the room. */
+  .line-head, .line { grid-template-columns: 1fr 58px 84px; gap: 0 10px; padding: 10px 16px; }
+  .line-head .n, .line .n { display: none; }
+  .till-head, .till-scan, .till-total { padding-left: 16px; padding-right: 16px; }
+  .scanfield { min-height: 52px; padding: 0 13px; gap: 10px; }
+  .scanfield input { font-size: 16px; }   /* 16px or iOS zooms on focus */
+  .scanfield .hint { display: none; }
+  .chip { font-size: 10.5px; padding: 5px 8px; }
+  .till-head .who { font-size: 11px; }
+}
+
+@media (max-width: 400px) {
+  .wordmark { font-size: 20px; }
+  .nav-actions .btn { padding: 0 11px; font-size: 13px; }
+  .line-head, .line { grid-template-columns: 1fr 50px 76px; }
+  .total-row .lbl { letter-spacing: 0.1em; }
+}
