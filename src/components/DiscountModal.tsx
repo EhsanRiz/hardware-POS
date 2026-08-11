@@ -16,7 +16,12 @@ export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm animate-scale-in">
+      <div
+        className="bg-white rounded-2xl p-6 w-full max-w-sm animate-scale-in"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Apply discount"
+      >
         <h2 className="text-xl font-bold text-stone-800 mb-1">Apply discount</h2>
         <p className="text-stone-500 mb-4">Subtotal {money(subtotal)}</p>
 
@@ -26,6 +31,7 @@ export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
         <input
           type="number"
           inputMode="decimal"
+          aria-label="Discount amount"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           autoFocus

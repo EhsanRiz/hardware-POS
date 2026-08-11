@@ -2,11 +2,20 @@ import { useState } from "react";
 import { signIn } from "../lib/auth";
 import { useAuth } from "../context/AuthContext";
 import { shopSettings } from "../lib/settings";
+import { registerName } from "../lib/device";
 import PinPad from "./PinPad";
-import BrandMark from "./BrandMark";
-import ShopLogo from "./ShopLogo";
 import InstallButton from "./InstallButton";
+import InnovaMark from "./InnovaMark";
 
+/**
+ * Daily sign-in.
+ *
+ * A PIN and nothing else. The till already knows which shop it belongs to — it
+ * was paired once with a manager's phone and PIN — so the org is implied by the
+ * device and the cashier never types a phone number to start their shift. It
+ * works with the line down, because the credential is verified against a cached
+ * hash when the server cannot be reached.
+ */
 export default function Login() {
   const { setUser } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -18,44 +27,45 @@ export default function Login() {
     try {
       const user = await signIn(pin);
       if (!user) {
-        setError("Incorrect PIN");
+        setError("That PIN was not recognised.");
       } else {
         setUser(user);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Login failed");
+      setError(e instanceof Error ? e.message : "Sign-in failed");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="min-h-full flex flex-col bg-gradient-to-b from-brand-light to-white">
-      {/* Shop logo */}
-      <div className="pt-10 pb-2 flex flex-col items-center animate-fade-in">
-        <ShopLogo className="h-24 w-auto" />
-        <span className="sr-only">{shopSettings().shop_name}</span>
-        <p className="text-taupe mt-3">Enter your PIN to sign in</p>
-      </div>
-
-      {/* Keypad */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <div className="animate-slide-up w-full flex flex-col items-center">
-          <PinPad onSubmit={handle} busy={busy} />
-          {error && (
-            <p className="mt-4 text-red-600 font-medium animate-fade-in" role="alert">
-              {error}
-            </p>
-          )}
+    <div className="login">
+      <div className="login-head">
+        <div className="sell-lockup">
+          <InnovaMark size={30} onGreen />
+          <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+            Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+          </span>
         </div>
+        <h1 className="login-shop">{shopSettings().shop_name}</h1>
+        <p className="login-till">{registerName()}</p>
       </div>
 
-      {/* Branding footer */}
-      <footer className="pb-6 pt-4 flex flex-col items-center gap-1.5">
+      <div className="login-body">
+        <p className="login-prompt">Enter your PIN to sign in</p>
+        <PinPad onSubmit={handle} busy={busy} />
+        {error && (
+          <p className="login-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+
+      <footer className="login-foot">
         <InstallButton className="mb-4" />
-        <BrandMark className="h-6 opacity-90" />
-        <p className="text-[11px] text-taupe-light text-center">
-          © {new Date().getFullYear()} 4D Climate Solutions · All rights reserved
+        <p>
+          InnovaPOS · a product of InnovaEarth
+          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
         </p>
       </footer>
     </div>

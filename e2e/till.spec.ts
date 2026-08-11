@@ -3,7 +3,7 @@ import { Backend, installBackend, pairAndSignIn, USERS } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
 const banner = (page: import("@playwright/test").Page) =>
-  page.locator("div.bg-stone-800").first();
+  page.locator(".sell-banner").first();
 
 /**
  * End-to-end journeys through the till.
@@ -41,8 +41,7 @@ test("scanning a barcode rings the item straight through", async ({ page }) => {
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
 
-  const cart = page.locator("aside");
-  await expect(cart.getByText("Cement 42.5N 50kg")).toBeVisible();
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
   // A scan should not leave the query behind to pollute the next one.
   await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveValue("");
 });
@@ -60,13 +59,12 @@ test("cut goods take a decimal quantity and price correctly", async ({ page }) =
   await page.getByPlaceholder(/Scan barcode/i).fill("chain");
   await page.getByText("Chain 6mm Galvanised").first().click();
 
-  const qty = page.locator('input[inputmode="decimal"]').first();
+  const qty = page.getByLabel("Quantity of Chain 6mm Galvanised");
   await qty.fill("2.5");
   await qty.press("Enter");
 
   // 2.5 m x R35.00 = R87.50
-  await expect(page.locator("aside")).toContainText("R87.50");
-  await expect(page.getByRole("button", { name: /Charge R87\.50/ })).toBeVisible();
+  await expect(page.locator(".total-row .fig")).toContainText("87.50");
 });
 
 test("whole-unit goods refuse a fraction", async ({ page }) => {
@@ -75,11 +73,9 @@ test("whole-unit goods refuse a fraction", async ({ page }) => {
   await page.getByPlaceholder(/Scan barcode/i).fill("padlock");
   await page.getByText("Padlock 50mm Brass").first().click();
 
+  const qty = page.getByLabel("Quantity of Padlock 50mm Brass");
   // Sold "each": the field must not even offer decimal entry.
-  await expect(page.locator('input[inputmode="numeric"]')).toHaveCount(1);
-  await expect(page.locator('input[inputmode="decimal"]')).toHaveCount(0);
-
-  const qty = page.locator('input[inputmode="numeric"]').first();
+  await expect(qty).toHaveAttribute("inputmode", "numeric");
   await qty.fill("2.5");
   await qty.press("Enter");
   // Rounded to a whole padlock rather than silently sold as 2.5.
@@ -91,11 +87,9 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: /^Charge R/ }).click();
-
-  await page.getByPlaceholder(/Cash received/i).fill("200");
-  await expect(page.getByText(/Change/)).toBeVisible();
-  await page.getByRole("button", { name: /Complete sale/i }).click();
+  await page.getByLabel("Cash received").fill("200");
+  await expect(page.getByText(/Change due/i)).toBeVisible();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
 
   await expect(banner(page)).toContainText(/INV-\d+/);
   expect(be.storedSales).toHaveLength(1);
@@ -108,13 +102,12 @@ test("the server's refusal reaches the cashier, and nothing is charged", async (
   // Only 2 rolls on hand; ask for 5.
   await page.getByPlaceholder(/Scan barcode/i).fill("twin");
   await page.getByText("Twin & Earth 2.5mm 100m").first().click();
-  const qty = page.locator('input[inputmode="numeric"]').first();
+  const qty = page.getByLabel("Quantity of Twin & Earth 2.5mm 100m");
   await qty.fill("5");
   await qty.press("Enter");
 
-  await page.getByRole("button", { name: /^Charge R/ }).click();
-  await page.getByPlaceholder(/Cash received/i).fill("10000");
-  await page.getByRole("button", { name: /Complete sale/i }).click();
+  await page.getByLabel("Cash received").fill("10000");
+  await page.getByRole("button", { name: /Tender & print/i }).click();
 
   // The server's reason must reach the cashier, not a generic refusal.
   await expect(banner(page)).toContainText(/Not enough stock/i);
@@ -131,13 +124,12 @@ test("a sale taken offline still prints, then syncs exactly once", async ({ page
   be.offline = true;
   await page.context().setOffline(true);
 
-  await page.getByRole("button", { name: /^Charge R/ }).click();
-  await page.getByPlaceholder(/Cash received/i).fill("200");
-  await page.getByRole("button", { name: /Complete sale/i }).click();
+  await page.getByLabel("Cash received").fill("200");
+  await page.getByRole("button", { name: /Tender & print/i }).click();
 
   // The customer is served: the sale completes on the device and says so.
   await expect(banner(page)).toContainText(/will sync when the connection returns/i);
-  await expect(page.locator("header").getByText(/to sync/)).toBeVisible();
+  await expect(page.locator("header").getByText(/queued/i)).toBeVisible();
   expect(be.storedSales).toHaveLength(0);
 
   // The line comes back.
@@ -162,7 +154,7 @@ test("an employee's discount parks until a manager releases it", async ({ page }
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: /^Discount$/ }).click();
 
-  await page.locator('input[type="number"], input[inputmode="decimal"]').first().fill("20");
+  await page.getByLabel("Discount amount").fill("20");
   await page.getByRole("button", { name: /Apply/i }).click();
 
   // Sam cannot approve his own discount, so the till asks for a manager.
@@ -175,15 +167,15 @@ test("backing out of manager approval drops the discount", async ({ page }) => {
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: /^Discount$/ }).click();
-  await page.locator('input[type="number"], input[inputmode="decimal"]').first().fill("20");
+  await page.getByLabel("Discount amount").fill("20");
   await page.getByRole("button", { name: /Apply/i }).click();
 
   await page.getByRole("button", { name: /^Cancel$/ }).last().click();
 
   // An unauthorised discount must not survive the cancel. Assert on the money,
-  // not the word — the cart also holds a button labelled "Discount".
-  await expect(page.getByRole("button", { name: /Charge R115\.00/ })).toBeVisible();
-  await expect(page.locator("aside")).not.toContainText("−R");
+  // not the word — the left column also holds a button labelled "Discount".
+  await expect(page.locator(".total-row .fig")).toContainText("115.00");
+  await expect(page.locator(".pay")).not.toContainText("−");
 });
 
 test("an employee is not offered the back office", async ({ page }) => {
@@ -195,12 +187,11 @@ test("a manager can open the catalogue", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
 
   await page.getByRole("button", { name: /^Manage$/ }).click();
-  await page.waitForSelector('button:text-is("1")');
+  const dialog = page.getByRole("dialog", { name: "Manage" });
   for (const d of USERS.manager.pin.split("")) {
-    await page.locator(`button:text-is("${d}")`).first().click();
+    await dialog.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
+  await dialog.locator('button:text-is("OK")').click();
 
   await expect(page.getByRole("button", { name: /New product/i })).toBeVisible();
   await expect(page.getByRole("cell", { name: "CEM-425-50" })).toBeVisible();

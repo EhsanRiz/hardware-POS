@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
-import ShopLogo from "./ShopLogo";
+import InnovaMark from "./InnovaMark";
 
 /**
  * First-run screen: pair this tablet as a till.
@@ -40,32 +40,38 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-stone-50">
+    <div className="min-h-screen flex items-center justify-center p-6"
+      style={{ background: "var(--color-bg)" }}>
       <form
         onSubmit={submit}
-        className="w-full max-w-sm bg-white rounded-2xl shadow-sm p-6 space-y-4"
+        className="w-full max-w-sm rounded p-6 space-y-4"
+        style={{ background: "var(--color-neutral-100)", border: "1px solid var(--divider)", boxShadow: "var(--shadow-md)" }}
       >
-        <div className="flex justify-center mb-2">
-          <ShopLogo className="h-16 w-auto" />
+        <div className="flex flex-col items-center gap-2 mb-2">
+          <InnovaMark size={44} />
+          <span className="sell-wordmark">
+            Innova<span>POS</span>
+          </span>
         </div>
         <div>
           <h1 className="text-xl font-semibold text-center">Set up this till</h1>
-          <p className="text-sm text-stone-500 text-center mt-1">
+          <p className="text-sm text-center mt-1"
+            style={{ color: "var(--color-neutral-700)" }}>
             A manager needs to pair this device once before it can sell.
           </p>
         </div>
 
         <label className="block">
-          <span className="text-sm text-stone-600">Name this till</span>
+          <span className="kicker">Name this till</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2"
+            className="modal-input mt-1"
           />
         </label>
 
         <label className="block">
-          <span className="text-sm text-stone-600">Manager phone number</span>
+          <span className="kicker">Manager phone number</span>
           <input
             autoFocus
             type="tel"
@@ -73,28 +79,26 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
             placeholder="082 123 4567"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2"
+            className="modal-input mt-1"
           />
         </label>
 
         <label className="block">
-          <span className="text-sm text-stone-600">Manager PIN</span>
+          <span className="kicker">Manager PIN</span>
           <input
             type="password"
             inputMode="numeric"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2
-                       text-center text-2xl tracking-[0.4em]"
+            className="modal-input mt-1 text-center text-2xl tracking-[0.4em]"
           />
         </label>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm" style={{ color: "var(--color-owing)" }}>{error}</p>}
 
         <button
           disabled={busy || pin.length < 4 || phone.trim().length < 8}
-          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold
-                     disabled:opacity-40"
+          className="btn-tender"
         >
           {busy ? "Pairing…" : "Pair this till"}
         </button>

@@ -27,3 +27,14 @@ export const PRINT_HEIGHT_SCALE = clamp(
 // Columns available for layout, derived from paper width / width scale.
 const BASE_COLS = Number(import.meta.env.VITE_RECEIPT_WIDTH ?? 48);
 export const RECEIPT_WIDTH = Math.max(16, Math.floor(BASE_COLS / PRINT_WIDTH_SCALE));
+
+/**
+ * South African VAT, as a fraction. Shelf prices INCLUDE it, so this is used to
+ * show the portion within a total, never to add to one.
+ *
+ * The rate is a build constant rather than a shop setting because it is set by
+ * the Minister of Finance, not by the shop, and a till that lets a cashier
+ * change it is a till that can print an invalid tax invoice. When it changes,
+ * it changes here and the server's own constant moves in the same release.
+ */
+export const VAT_RATE = 0.15;

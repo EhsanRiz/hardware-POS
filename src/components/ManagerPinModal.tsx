@@ -31,7 +31,12 @@ export default function ManagerPinModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm animate-scale-in">
         <h2 className="text-xl font-bold text-stone-800 text-center">{title}</h2>
         {subtitle && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   approveSale,
@@ -11,7 +11,7 @@ import { adminListProducts } from "../lib/adminApi";
 import { verifyPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
-import { money } from "../lib/format";
+import { money } from "../lib/money";
 import { cacheGet, cacheSet } from "../lib/localCache";
 import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
@@ -21,7 +21,6 @@ import { refreshSettings } from "../lib/settings";
 import { submitSale, usePendingSync } from "../lib/sync";
 import type {
   CartLine,
-  Category,
   Customer,
   PaymentMethod,
   Product,
@@ -30,21 +29,46 @@ import type {
 } from "../lib/types";
 
 import Admin from "../components/Admin";
-import Cart from "../components/Cart";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
 import PairRegister from "../components/PairRegister";
-import PaymentModal from "../components/PaymentModal";
 import ManagerPinModal from "../components/ManagerPinModal";
-import ProductSearch from "../components/ProductSearch";
-import ShopLogo from "../components/ShopLogo";
+import CustomerPicker from "../components/sell/CustomerPicker";
+import LineItems from "../components/sell/LineItems";
+import PaymentColumn from "../components/sell/PaymentColumn";
+import ScanBar from "../components/sell/ScanBar";
+import SellHeader from "../components/sell/SellHeader";
+import InnovaMark from "../components/InnovaMark";
 
 // The catalogue is cached so the till can sell through an outage. It is the one
 // piece of server state the shop genuinely cannot work without.
 const CATALOGUE_KEY = "catalogue.products";
 const CATEGORIES_KEY = "catalogue.categories";
 const CUSTOMERS_KEY = "catalogue.customers";
+const PARKED_KEY = "sell.parked";
 
+/** A sale set aside to serve the next customer while this one fetches a card. */
+interface ParkedSale {
+  id: string;
+  at: string;
+  lines: CartLine[];
+  customer: Customer | null;
+  discount: number;
+  discountReason: string | null;
+}
+
+/**
+ * The Sell screen.
+ *
+ * Four jobs and nothing else: scan, bill, take payment, print. Quotes,
+ * statements, age analysis and stock takes are deliberately absent — the
+ * handoff puts them in the sibling products, and a counter screen that tries to
+ * hold every operational reality at once is precisely why the incumbent
+ * hardware POS software is disliked.
+ *
+ * Layout and every measurement come from design_handoff_innovapos §1; the
+ * styles live in src/styles/sell.css.
+ */
 export default function POS() {
   const { user, logout } = useAuth();
   const online = useOnline();
@@ -53,9 +77,6 @@ export default function POS() {
   const [paired, setPaired] = useState(isPaired());
   const [products, setProducts] = useState<Product[]>(() =>
     cacheGet<Product[]>(CATALOGUE_KEY, [])
-  );
-  const [categories, setCategories] = useState<Category[]>(() =>
-    cacheGet<Category[]>(CATEGORIES_KEY, [])
   );
   const [customers, setCustomers] = useState<Customer[]>(() =>
     cacheGet<Customer[]>(CUSTOMERS_KEY, [])
@@ -71,9 +92,19 @@ export default function POS() {
   const [approverPin, setApproverPin] = useState<string | null>(null);
   const [needsApproval, setNeedsApproval] = useState(false);
 
-  const [showPayment, setShowPayment] = useState(false);
+  const [term, setTerm] = useState("");
+  const scanRef = useRef<HTMLInputElement>(null);
+  // Drives the just-scanned row tint, cleared on a timer.
+  const [freshId, setFreshId] = useState<string | null>(null);
+  const freshTimer = useRef<number>();
+
+  const [parked, setParked] = useState<ParkedSale[]>(() =>
+    cacheGet<ParkedSale[]>(PARKED_KEY, [])
+  );
+
   const [showDiscount, setShowDiscount] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
+  const [showCustomers, setShowCustomers] = useState(false);
   // The back office asks for the PIN once and keeps it in memory only: every
   // admin RPC re-verifies it server-side, so it has to travel with each call.
   const [adminPin, setAdminPin] = useState<string | null>(null);
@@ -90,7 +121,8 @@ export default function POS() {
       const [p, c] = await Promise.all([fetchCatalogue(), fetchCategories()]);
       setProducts(p);
       cacheSet(CATALOGUE_KEY, p);
-      setCategories(c);
+      // Categories are not shown on this screen, but the back office reads them
+      // from the same cache and may be opened with the line down.
       cacheSet(CATEGORIES_KEY, c);
       void refreshSettings();
       try {
@@ -111,6 +143,24 @@ export default function POS() {
     if (paired) void refresh();
   }, [paired, refresh]);
 
+  // F2 opens search from anywhere, as the handoff requires. The scan field also
+  // takes focus back after every completed action, because a scanner types
+  // wherever the caret happens to be and a barcode that lands in a quantity
+  // field is a silent mis-sale.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        scanRef.current?.focus();
+        scanRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(freshTimer.current), []);
+
   const priceOf = useCallback(
     (p: Product) =>
       trade && p.price_trade != null ? p.price_trade : p.price_retail,
@@ -127,13 +177,19 @@ export default function POS() {
     setLines((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
       if (found) {
-        // Scanning the same barcode twice means two of them.
+        // Scanning the same barcode twice means two of them, not two lines.
         return prev.map((l) =>
           l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l
         );
       }
       return [...prev, { product: p, qty: 1 }];
     });
+
+    // The tint decays after ~1.2s: long enough to pull the eye to the new line,
+    // short enough that it is gone before the next scan.
+    setFreshId(p.id);
+    window.clearTimeout(freshTimer.current);
+    freshTimer.current = window.setTimeout(() => setFreshId(null), 1200);
   }
 
   function setQty(productId: string, qty: number) {
@@ -144,6 +200,7 @@ export default function POS() {
 
   function removeLine(productId: string) {
     setLines((prev) => prev.filter((l) => l.product.id !== productId));
+    scanRef.current?.focus();
   }
 
   function clearSale() {
@@ -152,6 +209,48 @@ export default function POS() {
     setDiscount(0);
     setDiscountReason(null);
     setApproverPin(null);
+    setFreshId(null);
+    setTerm("");
+    scanRef.current?.focus();
+  }
+
+  /** Set the sale aside so the next customer can be served. */
+  function park() {
+    if (lines.length === 0) return;
+    const next = [
+      ...parked,
+      {
+        id: String(Date.now()),
+        at: new Date().toISOString(),
+        lines,
+        customer,
+        discount,
+        discountReason,
+      },
+    ];
+    setParked(next);
+    cacheSet(PARKED_KEY, next);
+    clearSale();
+    setBanner("Sale parked. Resume it from the button below.");
+  }
+
+  function resumeParked() {
+    const last = parked[parked.length - 1];
+    if (!last) return;
+    // Parking the current sale first would be surprising; refusing to lose it
+    // is not. The cashier parks or clears deliberately.
+    if (lines.length > 0) {
+      setBanner("Finish or park this sale before resuming another.");
+      return;
+    }
+    const rest = parked.slice(0, -1);
+    setParked(rest);
+    cacheSet(PARKED_KEY, rest);
+    setLines(last.lines);
+    setCustomer(last.customer);
+    setDiscount(last.discount);
+    setDiscountReason(last.discountReason);
+    scanRef.current?.focus();
   }
 
   function receiptItems(): ReceiptItem[] {
@@ -203,7 +302,6 @@ export default function POS() {
         "Tax Invoice"
       );
 
-      setShowPayment(false);
       clearSale();
       setBanner(
         queued
@@ -224,155 +322,122 @@ export default function POS() {
   if (!paired) return <PairRegister onPaired={() => setPaired(true)} />;
 
   return (
-    <div className="h-screen flex flex-col bg-stone-50">
-      <header className="flex items-center gap-3 px-3 py-2 bg-white border-b border-stone-200 shrink-0">
-        <ShopLogo className="h-8 w-auto" />
-        <div className="ml-auto flex items-center gap-2 text-sm">
-          {!online && (
-            <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-800 text-xs">
-              Offline
-            </span>
-          )}
-          {pending > 0 && (
-            <span className="px-2 py-1 rounded-full bg-sky-100 text-sky-800 text-xs">
-              {pending} to sync
-            </span>
-          )}
-          {failed > 0 && (
-            <button
-              onClick={() => setShowFailed(true)}
-              className="px-2 py-1 rounded-full bg-red-100 text-red-800 text-xs"
-            >
-              {failed} failed
-            </button>
-          )}
-          {canAny(user, ["manage_catalogue", "manage_inventory"]) && (
-            <button
-              onClick={() => setAskAdminPin(true)}
-              className="px-3 py-1 rounded-lg bg-stone-100 text-stone-700"
-            >
-              Manage
-            </button>
-          )}
-          <span className="text-stone-600">{user?.name}</span>
-          <button onClick={logout} className="text-stone-500 px-2">
-            Sign out
-          </button>
-        </div>
-      </header>
+    <div className="sell">
+      <SellHeader
+        user={user}
+        online={online}
+        pending={pending}
+        failed={failed}
+        canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
+        onShowFailed={() => setShowFailed(true)}
+        onManage={() => setAskAdminPin(true)}
+        onSignOut={logout}
+      />
 
       {banner && (
-        <div
-          onClick={() => setBanner(null)}
-          className="px-4 py-2 bg-stone-800 text-white text-sm cursor-pointer shrink-0"
-        >
+        <div className="sell-banner" onClick={() => setBanner(null)} role="status">
           {banner}
+          <span className="dismiss">dismiss</span>
         </div>
       )}
 
-      <div className="flex-1 flex min-h-0">
-        <section className="flex-1 min-w-0 border-r border-stone-200 bg-white">
-          <ProductSearch
+      <div className="sell-body">
+        <section className="sell-left">
+          <ScanBar
+            term={term}
+            onTermChange={setTerm}
             products={products}
-            categories={categories}
             trade={trade}
+            customer={customer}
             onAdd={addProduct}
+            onPickCustomer={() => setShowCustomers(true)}
+            inputRef={scanRef}
           />
-        </section>
 
-        <aside className="w-[22rem] shrink-0 flex flex-col bg-white">
-          {customer && (
-            <div className="px-3 py-2 bg-emerald-50 border-b border-emerald-100 text-sm">
-              <div className="font-medium text-emerald-900">{customer.name}</div>
-              <div className="text-xs text-emerald-700">
-                {trade ? "trade pricing · " : ""}
-                balance {money(customer.balance)}
-              </div>
-            </div>
-          )}
-
-          <Cart
+          <LineItems
             lines={lines}
             trade={trade}
+            freshId={freshId}
             onSetQty={setQty}
             onRemove={removeLine}
           />
 
-          <div className="border-t border-stone-200 p-3 space-y-2 shrink-0">
-            <div className="flex justify-between text-sm text-stone-600">
-              <span>Subtotal</span>
-              <span className="tabular-nums">{money(subtotal)}</span>
-            </div>
-            {discount > 0 && (
-              <div className="flex justify-between text-sm text-emerald-700">
-                <span>Discount</span>
-                <span className="tabular-nums">−{money(discount)}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-xl font-bold">
-              <span>Total</span>
-              <span className="tabular-nums">{money(total)}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                disabled={lines.length === 0}
-                onClick={() =>
-                  printReceipt(
-                    buildQuoteText(lines, {
-                      subtotal,
-                      discount,
-                      total,
-                      trade,
-                    }),
-                    "Quote"
-                  )
-                }
-                className="py-2.5 rounded-xl bg-stone-100 text-stone-700 text-sm
-                           disabled:opacity-40"
-              >
-                Print quote
-              </button>
-              <button
-                disabled={lines.length === 0 || !can(user, "apply_discount")}
-                onClick={() => setShowDiscount(true)}
-                className="py-2.5 rounded-xl bg-stone-100 text-stone-700 text-sm
-                           disabled:opacity-40"
-              >
-                Discount
-              </button>
-            </div>
-
+          <div className="sell-actions">
             <button
-              disabled={lines.length === 0 || !can(user, "take_payments")}
-              onClick={() => setShowPayment(true)}
-              className="w-full py-3.5 rounded-xl bg-emerald-600 text-white
-                         text-lg font-semibold disabled:opacity-40"
+              className="btn-line"
+              disabled={lines.length === 0}
+              onClick={() =>
+                printReceipt(
+                  buildQuoteText(lines, { subtotal, discount, total, trade }),
+                  "Quote"
+                )
+              }
             >
-              Charge {money(total)}
+              Print quote
             </button>
 
-            {lines.length > 0 && (
-              <button
-                onClick={clearSale}
-                className="w-full py-2 text-sm text-stone-500"
-              >
-                Clear sale
+            <button
+              className="btn-line"
+              disabled={lines.length === 0 || !can(user, "apply_discount")}
+              onClick={() => setShowDiscount(true)}
+            >
+              Discount
+            </button>
+
+            <button
+              className="btn-line"
+              disabled={lines.length === 0}
+              onClick={park}
+            >
+              Park sale
+            </button>
+
+            {parked.length > 0 && (
+              <button className="btn-line" onClick={resumeParked}>
+                Resume parked · {parked.length}
               </button>
             )}
+
+            <button
+              className="btn-line quiet push"
+              disabled={lines.length === 0}
+              onClick={clearSale}
+            >
+              Void sale
+            </button>
           </div>
-        </aside>
+        </section>
+
+        <PaymentColumn
+          lines={lines}
+          subtotal={subtotal}
+          discount={discount}
+          total={total}
+          trade={trade}
+          customer={customer}
+          busy={busy}
+          canPay={can(user, "take_payments")}
+          onComplete={confirmPayment}
+        />
       </div>
 
-      {showPayment && (
-        <PaymentModal
-          total={total}
+      <footer className="sell-foot">
+        <InnovaMark size={16} />
+        <span>InnovaPOS · a product of InnovaEarth</span>
+        <span className="push">
+          © {new Date().getFullYear()} InnovaEarth · All rights reserved
+        </span>
+      </footer>
+
+      {showCustomers && (
+        <CustomerPicker
           customers={customers}
-          customer={customer}
-          onPickCustomer={setCustomer}
-          onCancel={() => setShowPayment(false)}
-          onConfirm={confirmPayment}
-          busy={busy}
+          onPick={(c) => {
+            setCustomer(c);
+            setShowCustomers(false);
+            scanRef.current?.focus();
+          }}
+          onClose={() => setShowCustomers(false)}
         />
       )}
 
@@ -431,10 +496,14 @@ export default function POS() {
       )}
 
       {adminPin && (
-        <Admin user={user} pin={adminPin} onClose={() => {
-          setAdminPin(null);
-          void refresh();
-        }} />
+        <Admin
+          user={user}
+          pin={adminPin}
+          onClose={() => {
+            setAdminPin(null);
+            void refresh();
+          }}
+        />
       )}
 
       {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
