@@ -137,6 +137,7 @@ export class Backend {
   calls: string[] = [];
   customers: FakeCustomer[] = [];
   accountPayments: RecordedAccountPayment[] = [];
+  stockMoves: { product_id: string; qty_delta: number; reason: string; note: string | null }[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
   private seq = 0;
@@ -146,6 +147,7 @@ export class Backend {
     this.calls = [];
     this.customers = [];
     this.accountPayments = [];
+    this.stockMoves = [];
     this.offline = false;
     this.seq = 0;
   }
@@ -375,6 +377,50 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_customer_history":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
+      case "rpc/pos_receive_stock": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        const lines = (body.p_lines as { product_id: string; qty: number }[]) ?? [];
+        if (!lines.length) return fail("Nothing to receive");
+        for (const l of lines) {
+          if (!(l.qty > 0)) return fail("Every line needs a quantity above zero");
+          if (!PRODUCTS.find((x) => x.id === l.product_id)) {
+            return fail("Unknown product on the delivery");
+          }
+        }
+        return json(lines.map((l) => {
+          const prod = PRODUCTS.find((x) => x.id === l.product_id)!;
+          if (prod.stock_qty != null) {
+            prod.stock_qty = Math.round((prod.stock_qty + l.qty) * 1000) / 1000;
+          }
+          be.stockMoves.push({ product_id: prod.id, qty_delta: l.qty,
+            reason: "receipt", note: (body.p_reference as string) ?? null });
+          return { product_id: prod.id, name: prod.name, received: l.qty,
+                   stock_qty: prod.stock_qty };
+        }));
+      }
+      case "rpc/pos_stock_movements":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        return json(be.stockMoves.map((m, i) => ({
+          at: new Date().toISOString(), product_id: m.product_id,
+          product_name: PRODUCTS.find((x) => x.id === m.product_id)?.name ?? "?",
+          qty_delta: m.qty_delta,
+          qty_after: PRODUCTS.find((x) => x.id === m.product_id)?.stock_qty ?? 0,
+          reason: m.reason, by_name: "Manager", note: m.note,
+        })).reverse().slice(0, Number(body.p_limit ?? 100)));
+      case "rpc/pos_admin_adjust_stock": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        const prod = PRODUCTS.find((x) => x.id === body.p_product_id);
+        if (!prod || prod.stock_qty == null) return fail("Product not found");
+        const newQty = Number(body.p_new_qty);
+        if (!(newQty >= 0)) return fail("Counted quantity cannot be negative");
+        be.stockMoves.push({ product_id: prod.id, qty_delta: newQty - prod.stock_qty,
+          reason: "adjustment", note: (body.p_note as string) ?? null });
+        prod.stock_qty = newQty;
+        return json(prod);
+      }
       case "rpc/pos_accounts_overview":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(

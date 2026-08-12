@@ -1270,3 +1270,29 @@ tr.is-void td:last-child { text-decoration: none; }
   .acc-summary { gap: 16px; }
   .acc-figure.is-big .acc-figure-value { font-size: 26px; }
 }
+
+/* ---- Stock -------------------------------------------------------------- */
+
+.stock-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.stock-tabs .btn-line.is-on {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100);
+  font-weight: 600;
+}
+.stock-receive-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.stock-qty-input {
+  width: 96px;
+  min-height: 42px;
+  padding: 0 10px;
+  text-align: right;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--color-neutral-100);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.stock-qty-input:focus { border-color: var(--color-accent); }
+.stock-count { display: inline-flex; gap: 6px; align-items: center; }

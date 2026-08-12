@@ -312,3 +312,40 @@ test("an account sale shows in Accounts, and taking a payment reduces the balanc
   await expect(page.locator(".acc-ledger tr", { hasText: "INV" })).toBeVisible();
   await expect(page.locator(".acc-ledger tr", { hasText: "cash" })).toBeVisible();
 });
+
+/**
+ * Stock: booking in a delivery at the back door.
+ *
+ * The property worth pinning: a delivery is all or nothing, it needs the
+ * inventory permission (a cashier's PIN is refused at the door), and the
+ * shelves change by exactly what was received.
+ */
+test("a delivery is booked in against a reference and the shelves update", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  // Entering Stock costs a PIN, even for a manager already signed in.
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await gate.locator('button:text-is("OK")').click();
+
+  await expect(page.getByRole("button", { name: /Running low/ })).toBeVisible();
+
+  // Cement is at 240; a pallet of 100 arrives on GRN A-1042.
+  await page.getByRole("button", { name: /Receive a delivery/ }).click();
+  await page.getByPlaceholder(/Supplier invoice/).fill("GRN A-1042");
+  await page.getByLabel("Quantity received of Cement 42.5N 50kg").fill("100");
+  await page.getByRole("button", { name: /Book in 1 line/ }).click();
+
+  await expect(page.getByText(/1 line booked in against GRN A-1042/)).toBeVisible();
+  // The shelves agree.
+  expect(be.stockMoves).toEqual([
+    { product_id: "p1", qty_delta: 100, reason: "receipt", note: "GRN A-1042" },
+  ]);
+  await expect(
+    page.locator("tr", { hasText: "Cement 42.5N 50kg" }).locator("td").nth(1)
+  ).toContainText("340");
+});

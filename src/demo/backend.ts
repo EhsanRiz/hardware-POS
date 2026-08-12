@@ -139,6 +139,13 @@ function initcap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+interface DemoMove {
+  at: string; product_id: string; product_name: string;
+  qty_delta: number; qty_after: number; reason: string;
+  by_name: string | null; note: string | null;
+}
+const MOVES: DemoMove[] = [];
+
 const sales: { client_ref: string | null; doc: string; row: unknown }[] = [];
 let seq = 0;
 let paired = false;
@@ -338,6 +345,48 @@ export function installDemoBackend(): void {
         };
         CUSTOMERS.push(made);
         return ok([made]);
+      }
+      case "rpc/pos_receive_stock": {
+        if (!user || user.role !== "admin") return bad("Not permitted: manage_inventory");
+        const lines = (body.p_lines as { product_id: string; qty: number }[]) ?? [];
+        if (!lines.length) return bad("Nothing to receive");
+        // Validate whole, then apply whole — mirrors the real all-or-nothing.
+        for (const l of lines) {
+          if (!(l.qty > 0)) return bad("Every line needs a quantity above zero");
+          if (!PRODUCTS.find((p) => p.id === l.product_id)) return bad("Unknown product on the delivery");
+        }
+        const outRows = lines.map((l) => {
+          const prod = PRODUCTS.find((p) => p.id === l.product_id)!;
+          if (prod.stock_qty != null) {
+            prod.stock_qty = Math.round((prod.stock_qty + l.qty) * 1000) / 1000;
+          }
+          MOVES.unshift({ at: new Date().toISOString(), product_id: prod.id,
+            product_name: prod.name, qty_delta: l.qty, qty_after: prod.stock_qty ?? 0,
+            reason: "receipt", by_name: user.name,
+            note: String(body.p_reference ?? "Goods received") });
+          return { product_id: prod.id, name: prod.name, received: l.qty,
+                   stock_qty: prod.stock_qty };
+        });
+        return ok(outRows);
+      }
+      case "rpc/pos_stock_movements":
+        if (!user || user.role !== "admin") return bad("Not permitted: manage_inventory");
+        return ok(MOVES.slice(0, Number(body.p_limit ?? 100)));
+      case "rpc/pos_admin_adjust_stock": {
+        if (!user || user.role !== "admin") return bad("Not permitted: manage_inventory");
+        const prod = PRODUCTS.find((p) => p.id === body.p_product_id);
+        if (!prod || prod.stock_qty == null) return bad("Product not found");
+        const newQty = Number(body.p_new_qty);
+        if (!(newQty >= 0)) return bad("Counted quantity cannot be negative");
+        const delta = Math.round((newQty - prod.stock_qty) * 1000) / 1000;
+        prod.stock_qty = newQty;
+        if (delta !== 0) {
+          MOVES.unshift({ at: new Date().toISOString(), product_id: prod.id,
+            product_name: prod.name, qty_delta: delta, qty_after: newQty,
+            reason: "adjustment", by_name: user.name,
+            note: String(body.p_note ?? "Manual adjustment") });
+        }
+        return ok(prod);
       }
       case "rpc/pos_accounts_overview":
         // The demo has no dated history, so everything owed reads as current.

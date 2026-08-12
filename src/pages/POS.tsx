@@ -7,7 +7,7 @@ import {
   listCustomers,
   NotPairedError,
 } from "../lib/api";
-import { adminListProducts } from "../lib/adminApi";
+import { adminListProducts, stockMovements } from "../lib/adminApi";
 import { verifyPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
@@ -29,6 +29,7 @@ import type {
 } from "../lib/types";
 
 import Accounts from "../components/accounts/Accounts";
+import Stock from "../components/stock/Stock";
 import Admin from "../components/Admin";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
@@ -106,10 +107,14 @@ export default function POS() {
   // On a tablet the payment column is a sheet raised from the bar; on a wide
   // screen it is always docked and this flag is ignored by the stylesheet.
   const [payOpen, setPayOpen] = useState(false);
-  // Which section fills the frame. Sell is home; Accounts is the same screen
-  // with the counter swapped for the debtors book. Deliberately NOT a route:
-  // an in-progress sale must survive a glance at an account.
-  const [section, setSection] = useState<"sell" | "accounts">("sell");
+  // Which section fills the frame. Sell is home; the others swap the counter
+  // for the debtors book or the stock room. Deliberately NOT a route: an
+  // in-progress sale must survive a glance at an account or a shelf.
+  const [section, setSection] = useState<"sell" | "accounts" | "stock">("sell");
+  // Stock changes things, so entering it costs a PIN — verified server-side by
+  // the first inventory call, then held in memory only, like the back office.
+  const [stockPin, setStockPin] = useState<string | null>(null);
+  const [askStockPin, setAskStockPin] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
@@ -352,20 +357,31 @@ export default function POS() {
       canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
       section={section}
       canAccounts={can(user, "take_payments")}
-      onSection={setSection}
+      canStock={can(user, "manage_inventory")}
+      onSection={(s) => {
+        if (s === "stock" && !stockPin) {
+          setAskStockPin(true);
+          return;
+        }
+        setSection(s);
+      }}
       onShowFailed={() => setShowFailed(true)}
       onManage={() => setAskAdminPin(true)}
       onSignOut={logout}
     />
   );
 
-  // Accounts replaces the counter, not the frame: the header keeps the sync
-  // state and the way back, and a parked sale stays parked underneath.
-  if (section === "accounts" && user) {
+  // Accounts and Stock replace the counter, not the frame: the header keeps
+  // the sync state and the way back, and a parked sale stays parked underneath.
+  if ((section === "accounts" || (section === "stock" && stockPin)) && user) {
     return (
       <div className="sell">
         {header}
-        <Accounts user={user} />
+        {section === "accounts" ? (
+          <Accounts user={user} />
+        ) : (
+          <Stock pin={stockPin!} />
+        )}
         <footer className="sell-foot">
           <InnovaMark size={16} />
           <span>InnovaPOS · a product of InnovaEarth</span>
@@ -556,6 +572,22 @@ export default function POS() {
             setDiscountReason(null);
             setNeedsApproval(false);
           }}
+        />
+      )}
+
+      {askStockPin && (
+        <ManagerPinModal
+          title="Stock"
+          subtitle="Enter your PIN to open the stock room"
+          onApprove={async (entered) => {
+            // Proved against the server by the cheapest inventory call; fails
+            // loudly on a wrong PIN or a missing permission.
+            await stockMovements(entered, 1);
+            setStockPin(entered);
+            setAskStockPin(false);
+            setSection("stock");
+          }}
+          onCancel={() => setAskStockPin(false)}
         />
       )}
 

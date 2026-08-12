@@ -108,6 +108,54 @@ export async function adminStockHistory(
   return data as StockMovement[];
 }
 
+/**
+ * Book in a delivery: many lines, one supplier reference, all or nothing.
+ *
+ * One movement per line, each stamped 'receipt' with the reference, so the
+ * ledger can answer "where did these 200 bags come from" months later.
+ */
+export async function receiveStock(
+  pin: string,
+  lines: { product_id: string; qty: number }[],
+  reference: string | null,
+  note: string | null
+): Promise<{ product_id: string; name: string; received: number; stock_qty: number }[]> {
+  const { data, error } = await supabase.rpc("pos_receive_stock", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_lines: lines,
+    p_reference: reference,
+    p_note: note,
+  });
+  if (error) throw error;
+  return data as { product_id: string; name: string; received: number; stock_qty: number }[];
+}
+
+export interface StockMovementRow {
+  at: string;
+  product_id: string;
+  product_name: string;
+  qty_delta: number;
+  qty_after: number;
+  reason: string;
+  by_name: string | null;
+  note: string | null;
+}
+
+/** Everything that moved, shop-wide, newest first. */
+export async function stockMovements(
+  pin: string,
+  limit = 100
+): Promise<StockMovementRow[]> {
+  const { data, error } = await supabase.rpc("pos_stock_movements", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return data as StockMovementRow[];
+}
+
 export async function adminSaveCategory(
   pin: string,
   c: { id?: string | null; name: string; sort_order: number; active: boolean }

@@ -19,6 +19,7 @@ export default function SellHeader({
   canManage,
   section = "sell",
   canAccounts = false,
+  canStock = false,
   onSection,
   onShowFailed,
   onManage,
@@ -30,10 +31,12 @@ export default function SellHeader({
   failed: number;
   canManage: boolean;
   /** Which section is on screen; drives the highlighted tab. */
-  section?: "sell" | "accounts";
+  section?: "sell" | "accounts" | "stock";
   /** Whether this user may open Accounts at all. */
   canAccounts?: boolean;
-  onSection?: (s: "sell" | "accounts") => void;
+  /** Whether this user may open Stock (manage_inventory). */
+  canStock?: boolean;
+  onSection?: (s: "sell" | "accounts" | "stock") => void;
   onShowFailed: () => void;
   onManage: () => void;
   onSignOut: () => void;
@@ -42,10 +45,11 @@ export default function SellHeader({
     <header className="sell-head">
       <InnovaLockup edition="Hardware" />
 
-      {/* Quotes and Stock are still to come — shown disabled rather than
-          hidden so the shape of the product stays honest about what is
-          missing. Accounts is live: a shop selling on credit needs the paying-
-          back half on the same counter as the charging half. */}
+      {/* Quotes is still to come — shown disabled rather than hidden so the
+          shape of the product stays honest about what is missing. Accounts and
+          Stock are live: a shop selling on credit needs the paying-back half on
+          the same counter as the charging half, and the person at the back door
+          checking a delivery is standing at this tablet, not at a desk. */}
       <nav className="sell-nav" aria-label="Sections">
         <button
           aria-current={section === "sell" ? "page" : undefined}
@@ -62,7 +66,14 @@ export default function SellHeader({
         >
           Accounts
         </button>
-        <button disabled title="Stock arrives with InnovaBin">Stock</button>
+        <button
+          aria-current={section === "stock" ? "page" : undefined}
+          disabled={!canStock}
+          title={canStock ? undefined : "Needs the inventory permission"}
+          onClick={() => onSection?.("stock")}
+        >
+          Stock
+        </button>
       </nav>
 
       <div className="sell-head-right">
