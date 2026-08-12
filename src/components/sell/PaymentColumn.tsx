@@ -49,6 +49,7 @@ export default function PaymentColumn({
   canPay,
   open,
   onClose,
+  onPickCustomer,
   onComplete,
 }: {
   lines: CartLine[];
@@ -62,6 +63,11 @@ export default function PaymentColumn({
   /** On a tablet this column is a sheet; on a wide screen it is always docked. */
   open: boolean;
   onClose: () => void;
+  /**
+   * Choose the account this sale goes on. Reached from the Account tender, for
+   * the ordinary case of finding out at the till that the buyer has an account.
+   */
+  onPickCustomer: () => void;
   onComplete: (p: {
     payments: Payment[];
     amountTendered: number | null;
@@ -132,7 +138,11 @@ export default function PaymentColumn({
    */
   function take(method: PaymentMethod) {
     if (lines.length === 0) return;
-    if (method === "account" && !customer) return;
+    // "Put it on my account" is said AT the till, after the goods are rung up,
+    // by a builder the cashier may not have recognised. So Account is a live
+    // button on a walk-in sale: it asks who, and the picker re-prices the lines
+    // to the trade band on the way back.
+    if (method === "account" && !customer) return onPickCustomer();
 
     // Cash settles to the nearest 10c; everything else to the exact cent.
     const remaining =
@@ -146,7 +156,18 @@ export default function PaymentColumn({
 
     // Never apply more than is owed: the surplus on a cash tender is change,
     // and a card is simply capped.
-    const applied = Math.min(offered, remaining);
+    let applied = Math.min(offered, remaining);
+
+    // An account tender is capped at the headroom left on the limit, rather
+    // than refused for exceeding it. A builder with R500 left on a R1 200 sale
+    // puts R500 on the account and settles the rest — which is what actually
+    // happens at the counter, and is what refusing the whole tender prevented.
+    // The server recomputes the limit and is the authority.
+    if (method === "account" && accountHeadroom != null) {
+      applied = Math.min(applied, accountHeadroom);
+    }
+    if (applied <= 0.005) return;
+
     if (method === "cash") setCashTendered((c) => c + offered);
 
     setTaken((prev) => [...prev, { method, amount: Math.round(applied * 100) / 100 }]);
@@ -174,9 +195,18 @@ export default function PaymentColumn({
     });
   }
 
-  const accountBlocked =
-    !customer ||
-    (customer.available != null && outstanding > customer.available + 0.005);
+  // Headroom left on the account, after anything already put on it in this
+  // sale. Null means an unlimited account; no customer means there is nothing
+  // to measure yet, and the Account button asks who instead of standing dead.
+  const accountHeadroom = useMemo(() => {
+    if (!customer || customer.available == null) return null;
+    const already = taken
+      .filter((p) => p.method === "account")
+      .reduce((s, p) => s + p.amount, 0);
+    return Math.round((customer.available - already) * 100) / 100;
+  }, [customer, taken]);
+
+  const accountBlocked = !!customer && accountHeadroom != null && accountHeadroom <= 0.005;
 
   return (
     <aside className={`pay${open ? " is-open" : ""}`} aria-label="Payment">
@@ -277,9 +307,15 @@ export default function PaymentColumn({
                 outstanding <= 0.005
               }
               title={
-                t.method === "account" && !customer
-                  ? "Choose an account customer first"
-                  : undefined
+                t.method !== "account"
+                  ? undefined
+                  : !customer
+                    ? "Put this sale on an account — choose the customer"
+                    : accountBlocked
+                      ? `No credit left on ${customer.name}'s account`
+                      : accountHeadroom != null
+                        ? `${money(accountHeadroom)} left on this account`
+                        : undefined
               }
               onClick={() => take(t.method)}
             >

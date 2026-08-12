@@ -117,8 +117,13 @@ export default function POS() {
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
   const [section, setSection] = useState<"sell" | "accounts" | "stock" | "quotes">("sell");
-  // The product being looked at closely — from a search result or a cart line.
-  const [inspecting, setInspecting] = useState<Product | null>(null);
+  // The product being looked at closely, and what confirming it means. From a
+  // search result it ADDS the quantity chosen; from a line already in the sale
+  // it REPLACES that line's quantity.
+  const [inspecting, setInspecting] = useState<{
+    product: Product;
+    mode: "add" | "edit";
+  } | null>(null);
   // The open quote this cart came from, so completing the sale closes it and
   // the paper trail joins up: QUO-000031 -> INV-000214.
   const [fromQuote, setFromQuote] = useState<{ id: string; doc: string } | null>(null);
@@ -175,6 +180,9 @@ export default function POS() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "F2") {
         e.preventDefault();
+        // F2 means "I want to type another item", so a closer look standing
+        // open is dismissed rather than left with the caret behind it.
+        setInspecting(null);
         scanRef.current?.focus();
         scanRef.current?.select();
       }
@@ -197,16 +205,16 @@ export default function POS() {
   );
   const total = Math.max(0, subtotal - discount);
 
-  function addProduct(p: Product) {
+  function addProduct(p: Product, qty = 1) {
     setLines((prev) => {
       const found = prev.find((l) => l.product.id === p.id);
       if (found) {
         // Scanning the same barcode twice means two of them, not two lines.
         return prev.map((l) =>
-          l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l
+          l.product.id === p.id ? { ...l, qty: l.qty + qty } : l
         );
       }
-      return [...prev, { product: p, qty: 1 }];
+      return [...prev, { product: p, qty }];
     });
 
     // The tint decays after ~1.2s: long enough to pull the eye to the new line,
@@ -522,7 +530,7 @@ export default function POS() {
             trade={trade}
             customer={customer}
             onAdd={addProduct}
-            onInspect={setInspecting}
+            onInspect={(p) => setInspecting({ product: p, mode: "add" })}
             onPickCustomer={() => setShowCustomers(true)}
             inputRef={scanRef}
           />
@@ -533,7 +541,7 @@ export default function POS() {
             freshId={freshId}
             onSetQty={setQty}
             onRemove={removeLine}
-            onInspect={setInspecting}
+            onInspect={(p) => setInspecting({ product: p, mode: "edit" })}
           />
 
           <div className="sell-actions">
@@ -588,6 +596,7 @@ export default function POS() {
           canPay={can(user, "take_payments")}
           open={payOpen}
           onClose={() => setPayOpen(false)}
+          onPickCustomer={() => setShowCustomers(true)}
           onComplete={confirmPayment}
         />
       </div>
@@ -644,13 +653,28 @@ export default function POS() {
 
       {inspecting && (
         <ProductDetail
-          product={inspecting}
+          product={inspecting.product}
           trade={trade}
-          onAdd={(p) => {
-            addProduct(p);
+          mode={inspecting.mode}
+          inSale={
+            lines.find((l) => l.product.id === inspecting.product.id)?.qty ?? 0
+          }
+          onConfirm={(p, qty) => {
+            if (inspecting.mode === "edit") {
+              setQty(p.id, qty);
+            } else {
+              addProduct(p, qty);
+              // The query has done its job; leaving it behind pollutes the next
+              // scan, and the field must be ready for one.
+              setTerm("");
+            }
             setInspecting(null);
+            scanRef.current?.focus();
           }}
-          onClose={() => setInspecting(null)}
+          onClose={() => {
+            setInspecting(null);
+            scanRef.current?.focus();
+          }}
         />
       )}
 
