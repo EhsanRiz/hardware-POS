@@ -85,6 +85,11 @@ export default function PaymentColumn({
   const [poNumber, setPoNumber] = useState("");
   const [vatNumber, setVatNumber] = useState("");
   const [showInvoiceFields, setShowInvoiceFields] = useState(false);
+  // Selling more than the shelf count, acknowledged once for this set of short
+  // lines. Change a quantity and it is asked again — an acknowledgement of
+  // "2 m short" must not silently cover 20.
+  const [shortAck, setShortAck] = useState(false);
+  const [askShort, setAskShort] = useState(false);
 
   // A cleared sale clears the tender with it, or the next customer's change is
   // computed from the last one's cash.
@@ -174,7 +179,44 @@ export default function PaymentColumn({
     setEntry("");
   }
 
+  /**
+   * Lines this sale takes further than the shelf count goes.
+   *
+   * Read off the cached catalogue, which is the only stock figure the till has
+   * when the line is down — and the line being down is exactly when nothing
+   * else is going to catch this. Items with no stock figure are not tracked
+   * and cannot be short.
+   */
+  const shortLines = useMemo(
+    () =>
+      lines
+        .filter((l) => l.product.stock_qty != null && l.qty > l.product.stock_qty!)
+        .map((l) => ({
+          line: l,
+          onHand: l.product.stock_qty!,
+          by: Math.round((l.qty - l.product.stock_qty!) * 1000) / 1000,
+        })),
+    [lines]
+  );
+
+  const shortKey = shortLines.map((s) => `${s.line.product.id}:${s.line.qty}`).join("|");
+  useEffect(() => setShortAck(false), [shortKey]);
+
   function complete() {
+    if (!ready) return;
+    // Selling short is the shop's call, not the till's — a hardware yard really
+    // does hold stock the count has lost track of, and refusing the money would
+    // be worse than asking. But it must be a decision, not a slip, so it is put
+    // in front of the cashier at the one moment they are committing.
+    if (shortLines.length > 0 && !shortAck) {
+      setAskShort(true);
+      return;
+    }
+    finish();
+  }
+
+  /** Take the money. Past every question the till gets to ask. */
+  function finish() {
     if (!ready) return;
     onComplete({
       payments: taken,
@@ -209,6 +251,7 @@ export default function PaymentColumn({
   const accountBlocked = !!customer && accountHeadroom != null && accountHeadroom <= 0.005;
 
   return (
+    <>
     <aside className={`pay${open ? " is-open" : ""}`} aria-label="Payment">
       {/* Visible only when this column is a sheet; CSS hides it when docked. */}
       <div className="pay-close">
@@ -403,6 +446,21 @@ export default function PaymentColumn({
           fills the column, and a till whose "take the money" button is below
           the fold is a till that loses sales at a queue. */}
       <div className="pay-foot">
+        {/* The shortfall said again where the money is taken. It was a red
+            number on a line the cashier has since scrolled past, and this is
+            the last screen before the drawer opens. */}
+        {shortLines.length > 0 && (
+          <p className="pay-short" role="status">
+            <span className="pay-short-head">More than the shelf count</span>
+            {shortLines.map((s) => (
+              <span key={s.line.product.id}>
+                {s.line.product.name} — {quantity(s.onHand, s.line.product.unit_code)} on
+                hand, selling {quantity(s.line.qty)}
+              </span>
+            ))}
+          </p>
+        )}
+
         <button className="btn-tender" disabled={!ready} onClick={complete}>
           <PrinterIcon />
           {busy ? "Working…" : `Tender & print ${money(settles)}`}
@@ -416,6 +474,68 @@ export default function PaymentColumn({
         </p>
       </div>
     </aside>
+
+      {/* Outside the aside deliberately. On a tablet the payment column is a
+          sheet that slides on a transform, and a transformed ancestor becomes
+          the containing block for position:fixed — a dialog rendered inside it
+          would be clipped to the sheet on exactly the devices this till runs
+          on. Its siblings here are in .sell-body, which is untransformed. */}
+      {askShort && (
+        <div className="modal-backdrop" onClick={() => setAskShort(false)}>
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Selling more than the shelf count"
+          >
+            <h2 className="modal-title">Selling more than the shelf count</h2>
+
+            <div className="modal-list">
+              {shortLines.map((s) => (
+                <div className="short-row" key={s.line.product.id}>
+                  <span className="modal-row-name">{s.line.product.name}</span>
+                  <span className="modal-row-meta">
+                    {quantity(s.onHand, s.line.product.unit_code)} on hand · selling{" "}
+                    {quantity(s.line.qty)} ·{" "}
+                    <span className="is-short">{quantity(s.by)} short</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Both halves of what happens next, because the cashier is the one
+                who knows which it is. The count is often simply wrong; when it
+                is not, somebody has promised goods the yard has not got, and
+                the customer needs telling now rather than on collection. */}
+            <p className="short-note">
+              If the stock is really there, book it in afterwards so the count
+              agrees again. If it is not, the customer is waiting on a delivery —
+              tell them before they pay.
+            </p>
+
+            <div className="modal-actions">
+              <button className="btn-line" onClick={() => setAskShort(false)}>
+                Go back
+              </button>
+              {/* This takes the money — the cashier came here by pressing
+                  Tender, and a confirmation that only closes itself would send
+                  them back to press it again wondering what they missed. */}
+              <button
+                className="btn-fill"
+                onClick={() => {
+                  setShortAck(true);
+                  setAskShort(false);
+                  finish();
+                }}
+              >
+                Sell short · {money(settles)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

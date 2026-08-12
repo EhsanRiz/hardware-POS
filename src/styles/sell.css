@@ -591,6 +591,40 @@
   color: var(--color-neutral-700);
 }
 
+/* The shortfall, said again where the money is taken. Stroke and not fill,
+   like every other warning in this system: a red-filled panel above the tender
+   button would read as an error the cashier cannot get past, and this is a
+   sale the shop is allowed to make. */
+.pay-short {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-owing);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--color-owing);
+  font-variant-numeric: tabular-nums;
+}
+.pay-short-head {
+  font-family: var(--font-heading);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* The same lines again inside the confirmation, where there is room to name
+   what is short by how much. */
+.short-row { padding: 9px 4px; border-bottom: 1px solid var(--divider-row); }
+.short-row:last-child { border-bottom: 0; }
+.short-row .is-short { color: var(--color-owing); font-weight: 600; }
+.short-note {
+  margin: 12px 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-neutral-800);
+}
+
 /* ---- Search results ---------------------------------------------------- */
 
 /* Results overlay the line items rather than pushing them down: the cashier is
