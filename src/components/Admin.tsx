@@ -39,6 +39,17 @@ export default function Admin({
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
   const [editing, setEditing] = useState<AdminProduct | null | "new">(null);
   const [term, setTerm] = useState("");
+  // An imported supplier catalogue arrives as thousands of hidden lines. The
+  // job then is to work through them, so the list has to be narrowable by the
+  // two things that actually divide it: whether the till sells it, and which
+  // department it belongs to.
+  const [onSale, setOnSale] = useState<"all" | "live" | "hidden">("all");
+  const [dept, setDept] = useState<string>("all");
+  // A tablet renders ~1,400 rows slowly and nobody reads past the first
+  // screenful anyway. The cap is lifted by narrowing, and the footer always
+  // says what is being withheld — a silent truncation would be a lie.
+  const [showAll, setShowAll] = useState(false);
+  const ROW_CAP = 300;
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -67,7 +78,10 @@ export default function Admin({
     void load();
   }, [load]);
 
-  const shown = products.filter((p) => {
+  const matching = products.filter((p) => {
+    if (onSale === "live" && !p.active) return false;
+    if (onSale === "hidden" && p.active) return false;
+    if (dept !== "all" && (p.category_name ?? "—") !== dept) return false;
     const q = term.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -76,6 +90,13 @@ export default function Admin({
       (p.barcode ?? "").includes(q)
     );
   });
+  const shown = showAll ? matching : matching.slice(0, ROW_CAP);
+  const withheld = matching.length - shown.length;
+
+  const depts = Array.from(
+    new Set(products.map((p) => p.category_name ?? "—"))
+  ).sort();
+  const liveCount = products.filter((p) => p.active).length;
 
   async function save(input: ProductInput) {
     await adminSaveProduct(pin, input);
@@ -142,6 +163,50 @@ export default function Admin({
             </button>
           </div>
 
+          <div className="flex flex-wrap items-center gap-2 px-3 pb-3 bg-white border-b border-stone-200">
+            {(
+              [
+                ["all", `All ${products.length}`],
+                ["live", `On the till ${liveCount}`],
+                ["hidden", `Not priced yet ${products.length - liveCount}`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setOnSale(key);
+                  setShowAll(false);
+                }}
+                className={`px-3 py-1.5 rounded-full text-sm border ${
+                  onSale === key
+                    ? "bg-stone-800 text-white border-stone-800"
+                    : "bg-white text-stone-600 border-stone-300"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+
+            {depts.length > 1 && (
+              <select
+                value={dept}
+                onChange={(e) => {
+                  setDept(e.target.value);
+                  setShowAll(false);
+                }}
+                className="ml-auto rounded-xl border border-stone-300 px-3 py-1.5 text-sm bg-white"
+                aria-label="Department"
+              >
+                <option value="all">Every department</option>
+                {depts.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <div className="flex-1 overflow-y-auto">
             {loading ? (
               <p className="p-6 text-center text-stone-500">Loading…</p>
@@ -172,9 +237,10 @@ export default function Admin({
                       <tr
                         key={p.id}
                         onClick={() => setEditing(p)}
-                        className={`border-b border-stone-100 cursor-pointer hover:bg-stone-50 ${
-                          p.active ? "" : "opacity-45"
-                        }`}
+                        // A whole catalogue awaiting prices should not look
+                        // broken: the row keeps full contrast and says
+                        // "not priced" in words instead of fading out.
+                        className="border-b border-stone-100 cursor-pointer hover:bg-stone-50"
                       >
                         {/* The catalogue shows what the till will show. */}
                         <td className="p-2">
@@ -193,8 +259,9 @@ export default function Admin({
                         <td className="p-2">
                           {p.name}
                           {!p.active && (
-                            <span className="ml-2 text-xs text-stone-500">
-                              (hidden)
+                            <span className="ml-2 align-middle text-[11px] font-medium
+                                             px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                              not priced
                             </span>
                           )}
                         </td>
@@ -228,7 +295,19 @@ export default function Admin({
             )}
           </div>
           <div className="px-4 py-2 bg-white border-t border-stone-200 text-xs text-stone-500">
-            {shown.length} of {products.length} lines
+            {shown.length} of {matching.length} lines
+            {matching.length !== products.length && ` (${products.length} in all)`}
+            {withheld > 0 && (
+              <>
+                {" · "}
+                <button
+                  onClick={() => setShowAll(true)}
+                  className="underline underline-offset-2"
+                >
+                  show the other {withheld}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

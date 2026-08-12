@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { adminAdjustStock, adminStockHistory, type ProductInput } from "../lib/adminApi";
 import { CURRENCY } from "../lib/config";
 import { money } from "../lib/format";
+import { imageSrc } from "../lib/images";
 import { fmtQty } from "../lib/receipt";
 import ProductPhotos from "./ProductPhotos";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "../lib/types";
@@ -273,6 +274,23 @@ export default function ProductEditor({
           {/* Photographs, taken at the shelf. A near-identical item is chosen
               correctly far more often from a picture than a description. */}
           <Field label="Photos" hint="Shown in the till's search results.">
+            {/* A picture that came in with a supplier catalogue lives on the
+                product itself, not in the uploaded set. Without showing it
+                here, a manager sees a thumbnail in the list and "no photos"
+                on the very same product. */}
+            {imageSrc(product?.image_url) && (
+              <div className="flex items-start gap-3 mb-3">
+                <img
+                  src={imageSrc(product!.image_url)!}
+                  alt=""
+                  className="w-24 h-24 object-cover rounded border border-stone-200 bg-stone-50"
+                />
+                <p className="text-xs text-stone-500 max-w-[220px]">
+                  From the supplier catalogue. Take a photo below to add your
+                  own — the first one becomes what the till shows.
+                </p>
+              </div>
+            )}
             <ProductPhotos productId={product?.id ?? null} pin={pin} />
           </Field>
 
@@ -283,6 +301,9 @@ export default function ProductEditor({
               onChange={(e) => set("active", e.target.checked)}
             />
             Available to sell
+            <span className="text-stone-500">
+              — until this is ticked and priced, the till will not show it
+            </span>
           </label>
 
           {/* Stock is only changed through a counted adjustment, so the movement
