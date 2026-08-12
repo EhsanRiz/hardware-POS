@@ -12,9 +12,11 @@
 import { registerToken } from "./device";
 import { supabase } from "./supabase";
 import type {
+  AccountRow,
   Category,
   Customer,
   CustomerVisit,
+  LedgerEntry,
   Payment,
   Product,
   RecentSale,
@@ -284,6 +286,76 @@ export async function quickCustomer(
   });
   if (error) throw error;
   return (data as Customer[])[0];
+}
+
+// --- Accounts ---------------------------------------------------------------
+
+/** Every account, with what is owed and how old it is. */
+export async function accountsOverview(): Promise<AccountRow[]> {
+  const { data, error } = await supabase.rpc("pos_accounts_overview", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  return data as AccountRow[];
+}
+
+/** One customer's charges and payments, newest first, with a running balance. */
+export async function customerLedger(
+  customerId: string,
+  limit = 100
+): Promise<LedgerEntry[]> {
+  const { data, error } = await supabase.rpc("pos_customer_ledger", {
+    p_register_token: requireToken(),
+    p_customer_id: customerId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return data as LedgerEntry[];
+}
+
+/**
+ * A contractor settling their account at the counter.
+ *
+ * `clientRef` is the replay guard: a tablet at a busy counter double-taps, and
+ * without it the shop credits the customer twice for one payment.
+ */
+export async function takeAccountPayment(
+  cashierId: string,
+  customerId: string,
+  amount: number,
+  method: string,
+  reference?: string | null,
+  note?: string | null,
+  clientRef?: string
+): Promise<{ payment_id: string; balance: number; available: number | null }> {
+  const { data, error } = await supabase.rpc("pos_take_account_payment", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_customer_id: customerId,
+    p_amount: amount,
+    p_method: method,
+    p_reference: reference ?? null,
+    p_note: note ?? null,
+    p_client_ref: clientRef ?? null,
+  });
+  if (error) throw error;
+  return (data as { payment_id: string; balance: number; available: number | null }[])[0];
+}
+
+/** Undo a payment taken in error. Manager's PIN; never deletes the entry. */
+export async function voidAccountPayment(
+  managerPin: string,
+  paymentId: string,
+  reason: string
+): Promise<number> {
+  const { data, error } = await supabase.rpc("pos_void_account_payment", {
+    p_register_token: requireToken(),
+    p_pin: managerPin,
+    p_payment_id: paymentId,
+    p_reason: reason,
+  });
+  if (error) throw error;
+  return data as number;
 }
 
 /** What this buyer has bought before. Completed sales only. */

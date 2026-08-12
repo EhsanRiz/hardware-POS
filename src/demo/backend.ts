@@ -108,6 +108,37 @@ const CUSTOMERS = [
     is_trade: false, credit_limit: 0, balance: 0, available: 0 },
 ];
 
+interface DemoLedgerEntry {
+  kind: string; entry_at: string; ref: string; detail: string;
+  charge: number; payment: number; balance: number;
+  entry_id: string; voided: boolean;
+}
+
+// What each account's history looks like when the demo opens: enough story —
+// an old invoice, a payment, a recent invoice — to make the ledger legible.
+const LEDGERS: Record<string, DemoLedgerEntry[]> = {
+  k1: [
+    { kind: "charge", entry_at: daysAgo(9), ref: "INV-000218", detail: "Invoice",
+      charge: 2610.5, payment: 0, balance: 4310.5, entry_id: "l3", voided: false },
+    { kind: "payment", entry_at: daysAgo(20), ref: "EFT 5501", detail: "Eft",
+      charge: 0, payment: 1500, balance: 1700, entry_id: "l2", voided: false },
+    { kind: "charge", entry_at: daysAgo(41), ref: "INV-000174", detail: "Invoice",
+      charge: 3200, payment: 0, balance: 3200, entry_id: "l1", voided: false },
+  ],
+  k2: [
+    { kind: "charge", entry_at: daysAgo(3), ref: "INV-000226", detail: "Invoice",
+      charge: 9450, payment: 0, balance: 9450, entry_id: "l4", voided: false },
+  ],
+};
+
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86400_000).toISOString();
+}
+
+function initcap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 const sales: { client_ref: string | null; doc: string; row: unknown }[] = [];
 let seq = 0;
 let paired = false;
@@ -307,6 +338,50 @@ export function installDemoBackend(): void {
         };
         CUSTOMERS.push(made);
         return ok([made]);
+      }
+      case "rpc/pos_accounts_overview":
+        // The demo has no dated history, so everything owed reads as current.
+        return ok(CUSTOMERS.filter((c) => (c.credit_limit ?? 1) > 0 || c.balance !== 0)
+          .map((c) => ({ ...c, current_due: c.balance, days30: 0, days60: 0,
+                         days90: 0, oldest_unpaid: null, last_payment_at: null })));
+      case "rpc/pos_customer_ledger": {
+        const cust = CUSTOMERS.find((c) => c.id === body.p_customer_id);
+        if (!cust) return bad("Unknown customer");
+        return ok(LEDGERS[cust.id] ?? []);
+      }
+      case "rpc/pos_take_account_payment": {
+        const cust = CUSTOMERS.find((c) => c.id === body.p_customer_id);
+        if (!cust) return bad("Unknown customer");
+        const amt = Math.round(Number(body.p_amount) * 100) / 100;
+        if (!(amt > 0)) return bad("A payment must be more than nothing");
+        cust.balance = Math.round((cust.balance - amt) * 100) / 100;
+        if (cust.credit_limit != null) {
+          cust.available = Math.round((cust.credit_limit - cust.balance) * 100) / 100;
+        }
+        const entry = {
+          kind: "payment", entry_at: new Date().toISOString(),
+          ref: String(body.p_reference ?? ""), detail: initcap(String(body.p_method ?? "cash")),
+          charge: 0, payment: amt, balance: cust.balance,
+          entry_id: "pay" + Math.random().toString(36).slice(2, 8), voided: false,
+        };
+        (LEDGERS[cust.id] ??= []).unshift(entry);
+        return ok([{ payment_id: entry.entry_id, balance: cust.balance,
+                     available: cust.available }]);
+      }
+      case "rpc/pos_void_account_payment": {
+        for (const [custId, rows] of Object.entries(LEDGERS)) {
+          const hit = rows.find((r) => r.entry_id === body.p_payment_id && !r.voided);
+          if (hit) {
+            hit.voided = true;
+            const cust = CUSTOMERS.find((c) => c.id === custId)!;
+            cust.balance = Math.round((cust.balance + hit.payment) * 100) / 100;
+            if (cust.credit_limit != null) {
+              cust.available = Math.round((cust.credit_limit - cust.balance) * 100) / 100;
+            }
+            return ok(cust.balance);
+          }
+        }
+        return bad("No such payment");
       }
       case "rpc/pos_customer_history":
         return ok(

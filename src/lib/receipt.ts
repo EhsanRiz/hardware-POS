@@ -1,7 +1,14 @@
 import { CURRENCY, RECEIPT_WIDTH } from "./config";
 import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
-import type { CartLine, Payment, PaymentMethod, ReceiptItem, Sale } from "./types";
+import type {
+  CartLine,
+  LedgerEntry,
+  Payment,
+  PaymentMethod,
+  ReceiptItem,
+  Sale,
+} from "./types";
 
 // Plain-text receipt builder. Width-parameterised (RECEIPT_WIDTH columns) so it
 // adapts to the paper + font scale. The print layer wraps this with ESC/POS.
@@ -282,6 +289,71 @@ export function buildQuoteText(
   out.push("");
   out.push("");
   return out.join("\n");
+}
+
+/**
+ * A customer's account statement, for the contractor's bookkeeper.
+ *
+ * Chronological — oldest first — because a statement is read as a story: what
+ * was owed, what was paid, where it stands. The ledger screen shows newest
+ * first because at a counter the question is "what just happened"; on paper
+ * the question is "how did we get here".
+ */
+export function buildStatementText(
+  who: { name: string; phone: string | null; code: string | null },
+  entries: LedgerEntry[],
+  balance: number,
+  aging: { current: number; days30: number; days60: number; days90: number }
+): string {
+  const out: string[] = [];
+  shopHeader(out, "ACCOUNT STATEMENT");
+  out.push("");
+  out.push(fmtDateTime(new Date()));
+  out.push(bold(who.name));
+  if (who.code) out.push(`Account: ${who.code}`);
+  out.push(solid());
+
+  for (const e of [...entries].reverse()) {
+    const what = e.ref ? `${e.ref} ${e.detail}` : e.detail;
+    if (e.voided) {
+      // Shown, struck through in words: a statement with silent gaps is how
+      // disputes become unwinnable.
+      out.push(lineItem(`${shortDate(e.entry_at)} ${what} (VOID)`, amount(0)));
+      continue;
+    }
+    out.push(
+      lineItem(
+        `${shortDate(e.entry_at)} ${what}`,
+        e.charge ? amount(e.charge) : `-${amount(e.payment)}`
+      )
+    );
+  }
+
+  out.push(solid());
+  const owed = aging.days30 + aging.days60 + aging.days90;
+  if (owed > 0) {
+    out.push(lineItem("Not yet due", amount(Math.max(aging.current, 0))));
+    if (aging.days30 > 0) out.push(lineItem("30 days", amount(aging.days30)));
+    if (aging.days60 > 0) out.push(lineItem("60 days", amount(aging.days60)));
+    if (aging.days90 > 0) out.push(lineItem("90+ days OVERDUE", amount(aging.days90)));
+  }
+  out.push(boxTop());
+  out.push(
+    boxRow(balance < 0 ? "IN CREDIT" : "BALANCE DUE", amount(Math.abs(balance)))
+  );
+  out.push(boxTop());
+  out.push("");
+  out.push(center("not a tax invoice"));
+  out.push("");
+  out.push("");
+  return out.join("\n");
+}
+
+/** "12 Mar 26" — compact enough for a 42-column slip line. */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "2-digit" });
 }
 
 /** A sample slip for testing the printer / RawBT setup on the tablet. */

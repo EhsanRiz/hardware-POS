@@ -261,3 +261,54 @@ test("a mistyped number is refused rather than stored as a buyer", async ({ page
   await expect(picker.getByText(/does not look like a phone number/i)).toBeVisible();
   expect(be.customers).toHaveLength(0);
 });
+
+/**
+ * Accounts: the paying-back half of selling on credit.
+ *
+ * The loop that matters end to end: charge a sale to an account, find that
+ * balance in Accounts, take a payment against it, watch the balance fall. Until
+ * this build there was no way to record the payment at all — balances could
+ * only ever grow.
+ */
+test("an account sale shows in Accounts, and taking a payment reduces the balance", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  // Charge R115 of cement to the account.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/INV-\d+/);
+  // The print preview sits over the whole screen; put it away first.
+  await page.getByLabel("Close").click();
+
+  // The debtors book knows.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Accounts" }).click();
+  await expect(page.getByText("Owed to the shop")).toBeVisible();
+  const row = page.locator(".acc-row", { hasText: "Mokoena" });
+  await expect(row).toContainText("R 115.00");
+  await row.click();
+
+  // They hand over R100 in cash.
+  await page.getByLabel("Amount").fill("100");
+  await page.getByRole("button", { name: /Receive R/ }).click();
+  await expect(page.getByText(/R 100\.00 received/)).toBeVisible();
+  await expect(page.getByText(/R 15\.00 still owing/)).toBeVisible();
+
+  // The fake server holds one payment, and the maths agrees.
+  expect(be.accountPayments).toHaveLength(1);
+  expect(be.accountPayments[0].amount).toBe(100);
+  expect(be.balance("k1")).toBe(15);
+
+  // The ledger shows both movements.
+  await expect(page.locator(".acc-ledger tr", { hasText: "INV" })).toBeVisible();
+  await expect(page.locator(".acc-ledger tr", { hasText: "cash" })).toBeVisible();
+});

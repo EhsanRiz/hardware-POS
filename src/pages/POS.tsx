@@ -28,6 +28,7 @@ import type {
   Sale,
 } from "../lib/types";
 
+import Accounts from "../components/accounts/Accounts";
 import Admin from "../components/Admin";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
@@ -105,6 +106,10 @@ export default function POS() {
   // On a tablet the payment column is a sheet raised from the bar; on a wide
   // screen it is always docked and this flag is ignored by the stylesheet.
   const [payOpen, setPayOpen] = useState(false);
+  // Which section fills the frame. Sell is home; Accounts is the same screen
+  // with the counter swapped for the debtors book. Deliberately NOT a route:
+  // an in-progress sale must survive a glance at an account.
+  const [section, setSection] = useState<"sell" | "accounts">("sell");
   const [showDiscount, setShowDiscount] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
@@ -338,18 +343,43 @@ export default function POS() {
 
   if (!paired) return <PairRegister onPaired={() => setPaired(true)} />;
 
+  const header = (
+    <SellHeader
+      user={user}
+      online={online}
+      pending={pending}
+      failed={failed}
+      canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
+      section={section}
+      canAccounts={can(user, "take_payments")}
+      onSection={setSection}
+      onShowFailed={() => setShowFailed(true)}
+      onManage={() => setAskAdminPin(true)}
+      onSignOut={logout}
+    />
+  );
+
+  // Accounts replaces the counter, not the frame: the header keeps the sync
+  // state and the way back, and a parked sale stays parked underneath.
+  if (section === "accounts" && user) {
+    return (
+      <div className="sell">
+        {header}
+        <Accounts user={user} />
+        <footer className="sell-foot">
+          <InnovaMark size={16} />
+          <span>InnovaPOS · a product of InnovaEarth</span>
+          <span className="push">
+            © {new Date().getFullYear()} InnovaEarth · All rights reserved
+          </span>
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="sell">
-      <SellHeader
-        user={user}
-        online={online}
-        pending={pending}
-        failed={failed}
-        canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
-        onShowFailed={() => setShowFailed(true)}
-        onManage={() => setAskAdminPin(true)}
-        onSignOut={logout}
-      />
+      {header}
 
       {banner && (
         <div className="sell-banner" onClick={() => setBanner(null)} role="status">

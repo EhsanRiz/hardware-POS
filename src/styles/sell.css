@@ -1103,3 +1103,170 @@
    and red only when the sale would take the shelf below zero. */
 .line-stock { color: var(--color-accent-700); }
 .line-stock.is-short { color: var(--color-owing); font-weight: 600; }
+
+/* ---- Accounts ----------------------------------------------------------- */
+/* The debtors book. Same frame as Sell; the content scrolls, the frame does
+   not. The aging columns are the point of the screen — colour marks age, not
+   size, because every rand here is the same size of rand. */
+
+.acc {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--sell-pad);
+  gap: 14px;
+  overflow: hidden;
+}
+
+.acc-summary {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.acc-figure { display: flex; flex-direction: column; gap: 2px; }
+.acc-figure-label {
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-700);
+}
+.acc-figure-value {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.acc-figure.is-big .acc-figure-value { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
+.acc-figure-value.is-late { color: var(--color-accent-700); }
+.acc-figure-value.is-bad { color: var(--color-owing); }
+
+.acc-tools { display: flex; gap: 10px; align-items: center; }
+
+.acc-note { font-size: 13px; color: var(--color-neutral-700); }
+.acc-note.is-bad { color: var(--color-owing); }
+.acc-note.is-good { color: var(--color-accent-700); font-weight: 600; }
+
+.acc-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+
+.acc-table { width: 100%; border-collapse: collapse; }
+.acc-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg);
+  text-align: left;
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-700);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--divider);
+}
+.acc-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--divider-row);
+  font-size: 14px;
+  vertical-align: top;
+}
+.acc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.acc-table .quiet { color: var(--color-neutral-700); }
+.acc-row { cursor: pointer; }
+.acc-row:hover td { background: var(--color-neutral-100); }
+.acc-empty { text-align: center; color: var(--color-neutral-700); padding: 28px 10px; }
+
+.acc-name { display: block; font-weight: 500; }
+.acc-sub { display: block; font-size: 12px; color: var(--color-neutral-700); margin-top: 1px; }
+
+.is-owing { color: var(--color-text); font-weight: 600; }
+.is-late { color: var(--color-accent-700); font-weight: 600; }
+.is-bad { color: var(--color-owing); font-weight: 600; }
+tr.is-void td { opacity: 0.5; text-decoration: line-through; }
+tr.is-void td:last-child { text-decoration: none; }
+
+/* One account ------------------------------------------------------------- */
+
+.acc-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.acc-head-who h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.acc-head-owed { margin-left: auto; text-align: right; }
+.acc-owed {
+  display: block;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.acc-owed.is-owing { color: var(--color-owing); }
+
+.acc-panels {
+  flex: 1;
+  display: flex;
+  gap: 26px;
+  min-height: 0;
+}
+.acc-take {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+}
+.acc-take h3, .acc-ledger h3 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.acc-label {
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-700);
+}
+.acc-amount-input {
+  width: 100%;
+  min-height: 54px;
+  padding: 0 14px;
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-text);
+  background: var(--color-neutral-100);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.acc-amount-input:focus { border-color: var(--color-accent); }
+.acc-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.acc-methods .btn-line { justify-content: center; }
+.acc-methods .btn-line.is-on {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100);
+  font-weight: 600;
+}
+.acc-take-go { justify-content: center; min-height: 54px; font-size: 16px; }
+
+.acc-ledger { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.acc-ledger-head { display: flex; align-items: center; justify-content: space-between; }
+
+/* On a tablet in portrait the panels stack; taking money stays on top. */
+@media (max-width: 899px) {
+  .acc-panels { flex-direction: column; overflow-y: auto; }
+  .acc-take { flex: none; align-self: stretch; }
+  .acc-scroll { overflow: visible; }
+  .acc-summary { gap: 16px; }
+  .acc-figure.is-big .acc-figure-value { font-size: 26px; }
+}

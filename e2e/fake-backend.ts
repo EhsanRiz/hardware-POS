@@ -75,6 +75,7 @@ export const REGISTER_TOKEN = "test-register-token";
 export interface RecordedSale {
   client_ref: string | null;
   cashier_id: string;
+  customer_id: string | null;
   items: { product_id: string; qty: number }[];
   payment_method: string;
   discount_amount: number;
@@ -119,11 +120,23 @@ function e164(raw: string | null): string | null {
   return /^\+\d{9,15}$/.test(out) ? out : null;
 }
 
+/** A payment against an account, as the fake server recorded it. */
+export interface RecordedAccountPayment {
+  id: string;
+  customer_id: string;
+  amount: number;
+  method: string;
+  reference: string | null;
+  client_ref: string | null;
+  voided: boolean;
+}
+
 /** Everything the fake server saw, so tests can assert on it. */
 export class Backend {
   sales: RecordedSale[] = [];
   calls: string[] = [];
   customers: FakeCustomer[] = [];
+  accountPayments: RecordedAccountPayment[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
   private seq = 0;
@@ -132,8 +145,20 @@ export class Backend {
     this.sales = [];
     this.calls = [];
     this.customers = [];
+    this.accountPayments = [];
     this.offline = false;
     this.seq = 0;
+  }
+
+  /** Balance the way the real customer_balance() computes it. */
+  balance(customerId: string): number {
+    const charges = this.sales
+      .filter((s) => s.customer_id === customerId && s.payment_method === "account")
+      .reduce((t, s) => t + s.total, 0);
+    const paid = this.accountPayments
+      .filter((p) => p.customer_id === customerId && !p.voided)
+      .reduce((t, p) => t + p.amount, 0);
+    return Math.round((charges - paid) * 100) / 100;
   }
 
   /** Sales actually stored, i.e. after idempotent replays collapse. */
@@ -189,6 +214,7 @@ export class Backend {
     const sale: RecordedSale = {
       client_ref: ref,
       cashier_id: body.p_cashier_id as string,
+      customer_id: (body.p_customer_id as string) ?? null,
       items,
       payment_method: (body.p_payment_method as string) ?? "cash",
       discount_amount: discount,
@@ -212,9 +238,9 @@ export class Backend {
       doc_number: pending ? null : "INV-" + String(this.seq).padStart(6, "0"),
       cashier_id: sale.cashier_id,
       cashier_name: "Sam",
-      customer_id: null,
-      customer_name: null,
-      trade_pricing: false,
+      customer_id: sale.customer_id,
+      customer_name: this.customers.find((c) => c.id === sale.customer_id)?.name ?? null,
+      trade_pricing: this.customers.find((c) => c.id === sale.customer_id)?.is_trade ?? false,
       subtotal: sale.total + sale.discount_amount,
       discount_amount: sale.discount_amount,
       discount_reason: null,
@@ -349,6 +375,79 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_customer_history":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
+      case "rpc/pos_accounts_overview":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(
+          be.customers
+            .filter((c) => (c.credit_limit ?? 1) > 0 || be.balance(c.id) !== 0)
+            .map((c) => ({
+              ...c,
+              balance: be.balance(c.id),
+              available: c.credit_limit == null ? null
+                : Math.round((c.credit_limit - be.balance(c.id)) * 100) / 100,
+              // The fake backend has no dated history; everything reads current.
+              current_due: be.balance(c.id),
+              days30: 0, days60: 0, days90: 0,
+              oldest_unpaid: null, last_payment_at: null,
+            }))
+        );
+      case "rpc/pos_customer_ledger": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const custId = body.p_customer_id as string;
+        let running = 0;
+        const rows: unknown[] = [];
+        for (const s of be.sales.filter(
+          (x) => x.customer_id === custId && x.payment_method === "account")) {
+          running += s.total;
+          rows.push({ kind: "charge", entry_at: s.created_at ?? new Date().toISOString(),
+            ref: "INV", detail: "Invoice", charge: s.total, payment: 0,
+            balance: Math.round(running * 100) / 100, entry_id: "c" + rows.length,
+            voided: false });
+        }
+        for (const p of be.accountPayments.filter((x) => x.customer_id === custId)) {
+          if (!p.voided) running -= p.amount;
+          rows.push({ kind: "payment", entry_at: new Date().toISOString(),
+            ref: p.reference ?? "", detail: p.method, charge: 0,
+            payment: p.voided ? 0 : p.amount,
+            balance: Math.round(running * 100) / 100, entry_id: p.id,
+            voided: p.voided });
+        }
+        return json(rows.reverse());
+      }
+      case "rpc/pos_take_account_payment": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const cust = be.customers.find((c) => c.id === body.p_customer_id);
+        if (!cust) return fail("Unknown customer");
+        const amt = Math.round(Number(body.p_amount) * 100) / 100;
+        if (!(amt > 0)) return fail("A payment must be more than nothing");
+        const cref = (body.p_client_ref as string) ?? null;
+        // The replay guard, exactly as the real RPC behaves.
+        const dup = cref
+          ? be.accountPayments.find((p) => p.client_ref === cref)
+          : undefined;
+        const pay = dup ?? {
+          id: "ap" + (be.accountPayments.length + 1),
+          customer_id: cust.id,
+          amount: amt,
+          method: String(body.p_method ?? "cash"),
+          reference: (body.p_reference as string) ?? null,
+          client_ref: cref,
+          voided: false,
+        };
+        if (!dup) be.accountPayments.push(pay);
+        return json([{ payment_id: pay.id, balance: be.balance(cust.id),
+          available: cust.credit_limit == null ? null
+            : Math.round((cust.credit_limit - be.balance(cust.id)) * 100) / 100 }]);
+      }
+      case "rpc/pos_void_account_payment": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: void_refund");
+        const pay = be.accountPayments.find(
+          (p) => p.id === body.p_payment_id && !p.voided);
+        if (!pay) return fail("No such payment");
+        pay.voided = true;
+        return json(be.balance(pay.customer_id));
+      }
       case "rpc/pos_sale_payments":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(be.sales.at(-1)?.payments ?? []);

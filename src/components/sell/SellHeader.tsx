@@ -17,6 +17,9 @@ export default function SellHeader({
   pending,
   failed,
   canManage,
+  section = "sell",
+  canAccounts = false,
+  onSection,
   onShowFailed,
   onManage,
   onSignOut,
@@ -26,6 +29,11 @@ export default function SellHeader({
   pending: number;
   failed: number;
   canManage: boolean;
+  /** Which section is on screen; drives the highlighted tab. */
+  section?: "sell" | "accounts";
+  /** Whether this user may open Accounts at all. */
+  canAccounts?: boolean;
+  onSection?: (s: "sell" | "accounts") => void;
   onShowFailed: () => void;
   onManage: () => void;
   onSignOut: () => void;
@@ -34,16 +42,26 @@ export default function SellHeader({
     <header className="sell-head">
       <InnovaLockup edition="Hardware" />
 
-      {/* Quotes, Accounts and Stock are deliberately absent from this build —
-          the handoff puts them in the sibling products (Book and Bin), and a
-          counter screen that tries to hold every operational reality at once is
-          precisely what shopkeepers dislike about existing hardware POS. They
-          are shown disabled rather than hidden so the shape of the product is
-          honest about what is coming. */}
+      {/* Quotes and Stock are still to come — shown disabled rather than
+          hidden so the shape of the product stays honest about what is
+          missing. Accounts is live: a shop selling on credit needs the paying-
+          back half on the same counter as the charging half. */}
       <nav className="sell-nav" aria-label="Sections">
-        <button aria-current="page">Sell</button>
+        <button
+          aria-current={section === "sell" ? "page" : undefined}
+          onClick={() => onSection?.("sell")}
+        >
+          Sell
+        </button>
         <button disabled title="Quotes arrive with InnovaBook">Quotes</button>
-        <button disabled title="Accounts arrive with InnovaBook">Accounts</button>
+        <button
+          aria-current={section === "accounts" ? "page" : undefined}
+          disabled={!canAccounts}
+          title={canAccounts ? undefined : "Needs the take-payments permission"}
+          onClick={() => onSection?.("accounts")}
+        >
+          Accounts
+        </button>
         <button disabled title="Stock arrives with InnovaBin">Stock</button>
       </nav>
 

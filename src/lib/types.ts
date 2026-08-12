@@ -127,14 +127,36 @@ export interface CustomerVisit {
   summary: string | null;
 }
 
+/**
+ * One line of a customer's account, as the server computed it.
+ *
+ * The running balance comes from the database rather than being accumulated in
+ * the client, so a printed statement and the screen can never disagree about
+ * what someone owes.
+ */
 export interface LedgerEntry {
-  kind: "charge" | "payment";
-  at: string;
-  amount: number;
-  by: string | null;
-  note: string | null;
-  method: string | null;
+  kind: "opening" | "charge" | "payment";
+  entry_at: string;
+  /** Invoice number, or a payment's cheque/EFT reference. */
   ref: string;
+  detail: string;
+  charge: number;
+  payment: number;
+  balance: number;
+  entry_id: string;
+  /** A voided payment stays on the ledger but stops counting. */
+  voided: boolean;
+}
+
+/** An account and how old the money owed on it is. */
+export interface AccountRow extends Customer {
+  /** Owed less than 30 days — or, if negative, paid in advance. */
+  current_due: number;
+  days30: number;
+  days60: number;
+  days90: number;
+  oldest_unpaid: string | null;
+  last_payment_at: string | null;
 }
 
 export interface Sale {
