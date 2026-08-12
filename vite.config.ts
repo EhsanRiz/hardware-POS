@@ -26,10 +26,25 @@ export default defineConfig({
         // Fonts are part of the app shell: a till that loses the line before
         // they are cached would fall back to a system serif.
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Supplier catalogue photographs (public/catalogue) are ~10 MB of
+        // JPEGs. Precaching them would balloon first install on a shop line;
+        // they are picked up lazily by the runtime cache below instead.
+        globIgnores: ["catalogue/**"],
         // Cache product images (Supabase Storage) so the product grid still
         // shows pictures while offline. Images are immutable (UUID filenames), so
         // CacheFirst is safe and fast.
         runtimeCaching: [
+          {
+            // Catalogue photos ship with the app but cache on first sight, so
+            // items the shop actually browses still show pictures offline.
+            urlPattern: /\/catalogue\/.*\.jpg$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "catalogue-images",
+              expiration: { maxEntries: 1500, maxAgeSeconds: 60 * 60 * 24 * 90 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           {
             urlPattern: /\/storage\/v1\/object\/public\/.*/i,
             handler: "CacheFirst",

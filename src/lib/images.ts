@@ -23,8 +23,12 @@ export function imageSrc(pathOrUrl: string | null | undefined): string | null {
   if (!pathOrUrl) return null;
   // Anything already carrying a scheme is complete: an http(s) URL from an
   // imported catalogue, or a data:/blob: image from the demo build or a local
-  // preview. Only a bare storage path needs the origin and bucket bolted on.
+  // preview. A site-relative path (/catalogue/…) is an asset shipped with the
+  // app itself — supplier catalogue photographs live there, so they need no
+  // storage round-trip at all. Only a bare storage path needs the origin and
+  // bucket bolted on.
   if (/^[a-z][a-z0-9+.-]*:/i.test(pathOrUrl)) return pathOrUrl;
+  if (pathOrUrl.startsWith("/")) return pathOrUrl;
   return `${API_BASE}/storage/v1/object/public/${BUCKET}/${pathOrUrl}`;
 }
 
