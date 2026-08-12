@@ -603,8 +603,14 @@
   right: var(--sell-pad);
   top: 100%;
   z-index: 20;
-  max-height: 60%;
+  /* Sized against the SCREEN, not the scan bar. A percentage here resolves
+     against .scan-zone — which is only as tall as the field itself — so the
+     list was capped at about sixty pixels and showed a row and a half. The
+     subtraction leaves the header, the scan bar and the payment bar visible,
+     so the cashier can always see the total while choosing. */
+  max-height: min(58vh, 560px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--color-bg);
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-md);
