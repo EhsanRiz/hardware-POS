@@ -1,0 +1,70 @@
+name: CI
+
+# The suite runs against a production build served locally, with every Supabase
+# call intercepted (e2e/fake-backend.ts). No credentials, no connectivity and no
+# shared database — which is what lets it gate a pull request rather than run
+# nightly against a staging shop.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a branch makes the first run irrelevant; don't pay for it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Types, unit rules and the till end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit
+
+      # VAT, cash rounding, thin-space formatting and phone matching. These are
+      # the rules a shop would be out of pocket over, and they run in a second.
+      - name: Unit rules
+        run: npm test
+
+      # Keyed on the lockfile: the browser build Playwright wants is pinned by
+      # the @playwright/test version in it, so a dependency bump misses the
+      # cache and re-downloads, which is exactly the behaviour wanted.
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Builds with .env.e2e (deliberately fake values, committed), serves it on
+      # 4173 and drives it. See playwright.config.ts.
+      - name: End to end
+        run: npm run test:e2e
+
+      # Traces, screenshots and video are retained on failure by the config, and
+      # a trace of the actual run beats re-reading the test.
+      - name: Keep the evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
