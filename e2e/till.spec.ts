@@ -6,6 +6,25 @@ const banner = (page: import("@playwright/test").Page) =>
   page.locator(".sell-banner").first();
 
 /**
+ * Add an item the way a described (as opposed to scanned) item is added:
+ * search, open the closer look, settle the quantity, add.
+ */
+async function addBySearch(
+  page: import("@playwright/test").Page,
+  term: string,
+  name: string,
+  qty?: string
+) {
+  await page.getByPlaceholder(/Scan barcode/i).fill(term);
+  await page.locator(".result-row", { hasText: name }).first().click();
+  const card = page.locator(".detail-card");
+  await expect(card).toBeVisible();
+  if (qty !== undefined) await card.getByLabel(`How many ${name}`).fill(qty);
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+  await expect(card).toHaveCount(0);
+}
+
+/**
  * End-to-end journeys through the till.
  *
  * These are chosen for consequence rather than coverage: each one is something
@@ -56,12 +75,8 @@ test("the shop's words find the shop's product", async ({ page }) => {
 test("cut goods take a decimal quantity and price correctly", async ({ page }) => {
   await pairAndSignIn(page);
 
-  await page.getByPlaceholder(/Scan barcode/i).fill("chain");
-  await page.getByText("Chain 6mm Galvanised").first().click();
-
-  const qty = page.getByLabel("Quantity of Chain 6mm Galvanised");
-  await qty.fill("2.5");
-  await qty.press("Enter");
+  // 2.5 m is settled in the closer look, before the line exists.
+  await addBySearch(page, "chain", "Chain 6mm Galvanised", "2.5");
 
   // 2.5 m x R35.00 = R87.50
   await expect(page.locator(".total-row .fig")).toContainText("87.50");
@@ -70,8 +85,7 @@ test("cut goods take a decimal quantity and price correctly", async ({ page }) =
 test("whole-unit goods refuse a fraction", async ({ page }) => {
   await pairAndSignIn(page);
 
-  await page.getByPlaceholder(/Scan barcode/i).fill("padlock");
-  await page.getByText("Padlock 50mm Brass").first().click();
+  await addBySearch(page, "padlock", "Padlock 50mm Brass");
 
   const qty = page.getByLabel("Quantity of Padlock 50mm Brass");
   // Sold "each": the field must not even offer decimal entry.
@@ -113,12 +127,9 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
 test("the server's refusal reaches the cashier, and nothing is charged", async ({ page }) => {
   await pairAndSignIn(page);
 
-  // Only 2 rolls on hand; ask for 5.
-  await page.getByPlaceholder(/Scan barcode/i).fill("twin");
-  await page.getByText("Twin & Earth 2.5mm 100m").first().click();
-  const qty = page.getByLabel("Quantity of Twin & Earth 2.5mm 100m");
-  await qty.fill("5");
-  await qty.press("Enter");
+  // Only 2 rolls on hand; ask for 5. The closer look warns, but selling short
+  // is the shop's call to make — the server is the one that refuses.
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "5");
 
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
@@ -314,6 +325,43 @@ test("an account sale shows in Accounts, and taking a payment reduces the balanc
 });
 
 /**
+ * "Put it on my account", said after the goods are rung up.
+ *
+ * The cashier does not know every builder by sight, so the sale is a walk-in
+ * until the moment it isn't. Account must therefore be a live button on a
+ * walk-in sale — it asks who — rather than a dead one that leaves the cashier
+ * hunting for the customer selector at the top of a different column.
+ */
+test("Account asks who, then charges the account, on a sale that began as a walk-in", async ({ page }) => {
+  be.customers.push({
+    id: "k2", code: "TRD-002", name: "Nkosi Plumbing",
+    phone: "051 924 1111", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // Still a walk-in: Account is offered, and it opens the picker.
+  await expect(page.getByRole("button", { name: /Walk-in customer/i })).toBeVisible();
+  const account = page.getByRole("button", { name: /^Account$/ });
+  await expect(account).toBeEnabled();
+  await account.click();
+  await page.locator(".modal-row", { hasText: "Nkosi" }).click();
+
+  // Named now — the second press puts the money on the account.
+  await account.click();
+  await expect(page.locator(".taken-row", { hasText: "Account" })).toContainText("R 115.00");
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales).toHaveLength(1);
+  expect(be.storedSales[0].payments).toEqual([{ method: "account", amount: 115 }]);
+  expect(be.balance("k2")).toBe(115);
+});
+
+/**
  * Stock: booking in a delivery at the back door.
  *
  * The property worth pinning: a delivery is all or nothing, it needs the
@@ -388,25 +436,19 @@ test("a saved quote is recalled by number and closes against its sale", async ({
 });
 
 /**
- * The closer look.
+ * The closer look, which is where a described item is chosen and counted.
  *
- * The property that matters is what it does NOT change: tapping a search
- * result still adds the item in one tap. A counter action performed a hundred
- * times a day must never grow a confirmation step, so the enlarged view hangs
- * off the picture instead.
+ * Two properties matter. A search result opens rather than adds — "is that the
+ * one?" and "how many?" are asked in the same breath, and answering both before
+ * the line exists beats adding one and correcting it. And a SCAN still rings
+ * straight through: the gun types a code and presses Enter, and no dialog may
+ * ever stand in front of the hundred-times-a-day path.
  */
-test("the picture opens a closer look, while the row still adds in one tap", async ({ page }) => {
+test("a search result opens the closer look, and the quantity is settled there", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
 
-  await page.getByPlaceholder(/Scan barcode/i).fill("cement");
-  await page.locator(".result-row").first().click();
-  // One tap, one line, no dialog in the way.
-  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
-  await expect(page.locator(".detail-card")).toHaveCount(0);
-
-  // The picture is the way in to the detail.
   await page.getByPlaceholder(/Scan barcode/i).fill("chain");
-  await page.locator(".result-thumb-btn").first().click();
+  await page.locator(".result-row").first().click();
   const card = page.locator(".detail-card");
   await expect(card).toBeVisible();
   await expect(card).toContainText("Chain 6mm Galvanised");
@@ -414,12 +456,30 @@ test("the picture opens a closer look, while the row still adds in one tap", asy
   // Nothing on this screen may be a number the customer should not read.
   await expect(card).not.toContainText(/cost/i);
   await expect(card).not.toContainText(/trade/i);
+  // Nothing is in the sale until it is added.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(0);
 
-  await card.getByRole("button", { name: /Add to sale/ }).click();
+  // Four metres of chain at R35.00, decided here rather than corrected after.
+  await card.getByLabel("How many Chain 6mm Galvanised").fill("4");
+  await card.getByRole("button", { name: /Add to sale · R.*140\.00/ }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(page.getByLabel("Quantity of Chain 6mm Galvanised")).toHaveValue("4");
+  // The query is cleared, because the field must be ready for the next scan.
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveValue("");
+
+  // A scan is not a choice: it rings through with no dialog in the way.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
   await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
-  await expect(page.locator(".detail-card")).toHaveCount(0);
+  await expect(card).toHaveCount(0);
 
-  // A line already in the sale opens the same view.
+  // A line already in the sale opens the same view — to CORRECT the quantity,
+  // not to add a second helping of what is already there.
   await page.locator(".line-desc-btn").first().click();
-  await expect(page.locator(".detail-card")).toBeVisible();
+  await expect(card).toBeVisible();
+  await card.getByLabel("How many Chain 6mm Galvanised").fill("6");
+  await card.getByRole("button", { name: /Update sale · R.*210\.00/ }).click();
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+  await expect(page.getByLabel("Quantity of Chain 6mm Galvanised")).toHaveValue("6");
 });

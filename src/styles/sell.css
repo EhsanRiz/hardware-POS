@@ -616,43 +616,29 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
 }
-/* Two targets per row: the picture opens a closer look, everything else adds
-   the item. Splitting them means the hundred-times-a-day action never grows a
-   confirmation step, while the once-an-hour "is this the right one?" has
-   somewhere to live. */
-.result-pair {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--divider-row);
-}
-.result-pair:last-child { border-bottom: 0; }
-.result-pair:hover, .result-pair.is-active { background: var(--color-neutral-100); }
-
-.result-thumb-btn {
-  flex: none;
-  display: flex;
-  align-items: center;
-  padding: 11px 0;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-.result-thumb-btn:hover .result-thumb { border-color: var(--color-accent); }
-
+/* One target per row, and it opens the closer look rather than adding the item.
+   A described item — as opposed to a scanned one — is a CHOICE between near
+   neighbours, and the quantity is asked for in the same breath as the choice.
+   Scanning still rings straight through; that path never touches this list. */
 .result-row {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   display: grid;
-  grid-template-columns: 1fr 120px;
+  grid-template-columns: auto 1fr 120px;
   gap: 16px;
   align-items: center;
-  padding: 11px 0 11px 16px;
+  padding: 11px 18px;
   text-align: left;
   background: none;
+  border: 0;
+  border-bottom: 1px solid var(--divider-row);
 }
-.result-row:disabled { opacity: 0.45; cursor: not-allowed; }
+.result-row:last-child { border-bottom: 0; }
+.result-row:hover, .result-row.is-active { background: var(--color-neutral-100); }
+.result-row:hover .result-thumb { border-color: var(--color-accent); }
+/* Out of stock stays openable: where it lives and how many are due in is
+   exactly what gets asked next. It just does not look sellable. */
+.result-row.is-out .result-name,
+.result-row.is-out .result-price { opacity: 0.55; }
 .result-name { display: block; font-size: 15px; color: var(--color-text); }
 
 /* The photograph in a search result. Fixed box so the rows stay on a grid
@@ -1407,8 +1393,64 @@ tr.is-void td:last-child { text-decoration: none; }
   line-height: 1.2;
 }
 .detail-note { font-size: 12px; color: var(--color-neutral-700); }
+.detail-note.is-short { color: var(--color-owing); }
 .detail-desc { font-size: 14px; color: var(--color-neutral-800); }
 .detail-actions { margin-top: 4px; }
+
+/* How many, decided before the line exists. Stepper for the thumb, field for
+   the keyboard: 44px targets per the hit-target constraint, and the field opens
+   selected so a typed quantity needs no tap at all. */
+.detail-qty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.qty-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+.qty-stepper button {
+  width: 44px;
+  min-height: 44px;
+  background: none;
+  border: 0;
+  font-family: var(--font-heading);
+  font-size: 21px;
+  line-height: 1;
+  color: var(--color-accent-700);
+}
+.qty-stepper button:hover:not(:disabled) { background: var(--state-hover); }
+.qty-stepper button:active:not(:disabled) { background: var(--state-pressed); }
+.qty-stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+.qty-stepper input {
+  width: 84px;
+  min-height: 44px;
+  border: 0;
+  border-left: 1px solid var(--divider);
+  border-right: 1px solid var(--divider);
+  background: var(--color-surface);
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.qty-stepper input:focus {
+  outline: none;
+  background: var(--color-neutral-100);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.detail-qty-note {
+  font-size: 13px;
+  color: var(--color-neutral-700);
+  font-variant-numeric: tabular-nums;
+}
 
 /* The line-item name is a button; it must not look like one. */
 .line-desc-btn {

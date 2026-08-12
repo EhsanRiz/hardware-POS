@@ -41,8 +41,9 @@ export default function ScanBar({
   products: Product[];
   trade: boolean;
   customer: Customer | null;
+  /** Ring an item straight through — a scan, where there is nothing to check. */
   onAdd: (p: Product) => void;
-  /** Open the closer look — the picture, the bin, the stock. */
+  /** Open the closer look, where the quantity is decided and the sale is made. */
   onInspect: (p: Product) => void;
   onPickCustomer: () => void;
   inputRef: React.RefObject<HTMLInputElement>;
@@ -87,7 +88,7 @@ export default function ScanBar({
   const matches = term.trim() ? remote ?? local : [];
   useEffect(() => setActive(0), [term]);
 
-  function pick(p: Product) {
+  function scan(p: Product) {
     onAdd(p);
     onTermChange("");
     inputRef.current?.focus();
@@ -98,10 +99,13 @@ export default function ScanBar({
     const q = term.trim();
     if (!q) return;
     // An exact barcode or SKU is unambiguous — treat it as a scan, whatever
-    // else the fuzzy search turned up.
+    // else the fuzzy search turned up. The gun types a code and presses Enter;
+    // putting a dialog in front of that would halve the speed of the counter.
     const hit = exactMatch(products, q);
-    if (hit) return pick(hit);
-    if (matches[active]) return pick(matches[active]);
+    if (hit) return scan(hit);
+    // A described item is a different thing: somebody is choosing between eight
+    // near-identical hose sets, so the choice opens for a look and a quantity.
+    if (matches[active]) return onInspect(matches[active]);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -158,37 +162,28 @@ export default function ScanBar({
               p.stock_qty > 0 &&
               p.stock_qty <= p.reorder_level;
             return (
-              <div
+              // Eight hose sets differing only by length and colour are chosen
+              // from this list, and the answer to "is that the one?" arrives at
+              // the same moment as "give me four". So the whole row opens the
+              // closer look — picture, bin, quantity — and the sale is made
+              // from there. An out-of-stock row opens too: where it lives and
+              // how many are due in is exactly what gets asked next.
+              <button
+                type="button"
                 key={p.id}
-                className={`result-pair${i === active ? " is-active" : ""}`}
+                className={`result-row${i === active ? " is-active" : ""}${
+                  out ? " is-out" : ""
+                }`}
                 onMouseEnter={() => setActive(i)}
+                onClick={() => onInspect(p)}
+                title="Look closer"
               >
-                {/* Eight hose sets differing only by length and colour are
-                    chosen from this list. A picture settles it in a glance —
-                    and tapping the picture enlarges it, which is the gesture
-                    everybody already expects. The rest of the row still adds
-                    the item, because that is the move a cashier makes a
-                    hundred times a day and it must not grow a step. */}
-                <button
-                  type="button"
-                  className="result-thumb-btn"
-                  onClick={() => onInspect(p)}
-                  aria-label={`Look closer at ${p.name}`}
-                  title="Look closer"
-                >
-                  {imageSrc(p.image_url) ? (
-                    <img className="result-thumb" src={imageSrc(p.image_url)!} alt="" loading="lazy" />
-                  ) : (
-                    <span className="result-thumb is-empty" aria-hidden="true" />
-                  )}
-                </button>
+                {imageSrc(p.image_url) ? (
+                  <img className="result-thumb" src={imageSrc(p.image_url)!} alt="" loading="lazy" />
+                ) : (
+                  <span className="result-thumb is-empty" aria-hidden="true" />
+                )}
 
-                <button
-                  type="button"
-                  disabled={out}
-                  onClick={() => pick(p)}
-                  className="result-row"
-                >
                 <span>
                   <span className="result-name">{p.name}</span>
                   <span className="result-meta">
@@ -207,8 +202,7 @@ export default function ScanBar({
                   </span>
                 </span>
                 <span className="result-price">{money(price(p))}</span>
-                </button>
-              </div>
+              </button>
             );
           })}
         </div>
