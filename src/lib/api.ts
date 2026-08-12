@@ -372,6 +372,91 @@ export async function customerHistory(
   return data as CustomerVisit[];
 }
 
+// --- Quotes -------------------------------------------------------------------
+
+export interface QuoteSummary {
+  id: string;
+  doc_number: string | null;
+  created_at: string;
+  cashier_name: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  total: number;
+  valid_until: string;
+  expired: boolean;
+  item_count: number;
+  note: string | null;
+}
+
+export interface QuoteLine {
+  product_id: string | null;
+  sku: string | null;
+  name: string;
+  unit_code: string;
+  qty: number;
+  /** The promise: what the shop quoted on the day. */
+  unit_price: number;
+  line_total: number;
+  /** Today's price, so a drift from the promise is visible before the sale. */
+  price_now: number | null;
+  still_sold: boolean;
+}
+
+/** Save the cart as a quote. Prices snapshot server-side, same as a sale. */
+export async function saveQuote(
+  cashierId: string,
+  items: { product_id: string; qty: number }[],
+  customerId: string | null,
+  validDays = 14,
+  note?: string | null
+): Promise<{ quote_id: string; doc_number: string; valid_until: string; total: number }> {
+  const { data, error } = await supabase.rpc("pos_save_quote", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_items: items,
+    p_customer_id: customerId,
+    p_valid_days: validDays,
+    p_note: note ?? null,
+  });
+  if (error) throw error;
+  return (data as { quote_id: string; doc_number: string; valid_until: string; total: number }[])[0];
+}
+
+export async function listQuotes(limit = 50): Promise<QuoteSummary[]> {
+  const { data, error } = await supabase.rpc("pos_list_quotes", {
+    p_register_token: requireToken(),
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return data as QuoteSummary[];
+}
+
+export async function quoteItems(quoteId: string): Promise<QuoteLine[]> {
+  const { data, error } = await supabase.rpc("pos_quote_items", {
+    p_register_token: requireToken(),
+    p_quote_id: quoteId,
+  });
+  if (error) throw error;
+  return data as QuoteLine[];
+}
+
+/** Close a quote as converted (with its sale) or cancelled. */
+export async function closeQuote(
+  cashierId: string,
+  quoteId: string,
+  status: "converted" | "cancelled",
+  saleId?: string | null
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_close_quote", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_quote_id: quoteId,
+    p_status: status,
+    p_sale_id: saleId ?? null,
+  });
+  if (error) throw error;
+}
+
 // --- Search -----------------------------------------------------------------
 
 /**

@@ -257,11 +257,20 @@ export function buildReceiptText(
  */
 export function buildQuoteText(
   lines: CartLine[],
-  opts: { subtotal: number; discount: number; total: number; trade: boolean }
+  opts: {
+    subtotal: number;
+    discount: number;
+    total: number;
+    trade: boolean;
+    /** Set when the quote was saved: the number the builder brings back. */
+    docNumber?: string | null;
+    validUntil?: string | null;
+  }
 ): string {
   const out: string[] = [];
   shopHeader(out, "QUOTE");
   out.push("");
+  if (opts.docNumber) out.push(bold(opts.docNumber));
   out.push(fmtDateTime(new Date()));
   if (opts.trade) out.push("Trade pricing");
   out.push(solid());
@@ -285,7 +294,16 @@ export function buildQuoteText(
   out.push(boxTop());
   out.push("");
   out.push(center("not a tax invoice"));
-  out.push(center("prices valid today"));
+  out.push(
+    center(
+      opts.validUntil
+        ? `prices held until ${shortDate(opts.validUntil)}`
+        : "prices valid today"
+    )
+  );
+  if (opts.docNumber) {
+    out.push(center(`quote this number to buy: ${opts.docNumber}`));
+  }
   out.push("");
   out.push("");
   return out.join("\n");

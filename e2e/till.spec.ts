@@ -349,3 +349,40 @@ test("a delivery is booked in against a reference and the shelves update", async
     page.locator("tr", { hasText: "Cement 42.5N 50kg" }).locator("td").nth(1)
   ).toContainText("340");
 });
+
+/**
+ * Quotes: the sale that has not happened yet, and the loop that closes it.
+ *
+ * Save the cart as a quote, find it in Quotes, open it back onto the till,
+ * ring the sale — and the quote must close AGAINST that sale, so "did that
+ * quote ever come back?" always has an answer.
+ */
+test("a saved quote is recalled by number and closes against its sale", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  // Build a cart and save it as a quote instead of ringing it.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
+  await page.getByLabel("Close").click();
+  expect(be.quotes).toHaveLength(1);
+
+  // The cart cleared with the save; Thursday comes, the builder is back.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await expect(page.getByText("QUO-000001")).toBeVisible();
+  await page.getByRole("button", { name: /Open on the till/ }).click();
+
+  // Back on Sell with the same goods, and the sale rings as normal.
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-000001 loaded/);
+  await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/INV-\d+/);
+
+  // The paper trail joins up: quote converted, pointing at the sale.
+  expect(be.quotes[0].status).toBe("converted");
+  expect(be.quotes[0].sale_id).toBeTruthy();
+  expect(be.storedSales).toHaveLength(1);
+});

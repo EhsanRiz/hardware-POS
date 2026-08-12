@@ -19,6 +19,7 @@ export default function SellHeader({
   canManage,
   section = "sell",
   canAccounts = false,
+  canQuotes = false,
   canStock = false,
   onSection,
   onShowFailed,
@@ -31,12 +32,14 @@ export default function SellHeader({
   failed: number;
   canManage: boolean;
   /** Which section is on screen; drives the highlighted tab. */
-  section?: "sell" | "accounts" | "stock";
+  section?: "sell" | "accounts" | "stock" | "quotes";
   /** Whether this user may open Accounts at all. */
   canAccounts?: boolean;
+  /** Whether this user may open Quotes (same right as selling). */
+  canQuotes?: boolean;
   /** Whether this user may open Stock (manage_inventory). */
   canStock?: boolean;
-  onSection?: (s: "sell" | "accounts" | "stock") => void;
+  onSection?: (s: "sell" | "accounts" | "stock" | "quotes") => void;
   onShowFailed: () => void;
   onManage: () => void;
   onSignOut: () => void;
@@ -45,11 +48,10 @@ export default function SellHeader({
     <header className="sell-head">
       <InnovaLockup edition="Hardware" />
 
-      {/* Quotes is still to come — shown disabled rather than hidden so the
-          shape of the product stays honest about what is missing. Accounts and
-          Stock are live: a shop selling on credit needs the paying-back half on
-          the same counter as the charging half, and the person at the back door
-          checking a delivery is standing at this tablet, not at a desk. */}
+      {/* Every section lives on the till, because the people doing this work
+          are standing at this tablet: the cashier quoting a builder, the
+          bookkeeper's question about an account, the person checking a
+          delivery at the back door. */}
       <nav className="sell-nav" aria-label="Sections">
         <button
           aria-current={section === "sell" ? "page" : undefined}
@@ -57,7 +59,14 @@ export default function SellHeader({
         >
           Sell
         </button>
-        <button disabled title="Quotes arrive with InnovaBook">Quotes</button>
+        <button
+          aria-current={section === "quotes" ? "page" : undefined}
+          disabled={!canQuotes}
+          title={canQuotes ? undefined : "Needs the take-payments permission"}
+          onClick={() => onSection?.("quotes")}
+        >
+          Quotes
+        </button>
         <button
           aria-current={section === "accounts" ? "page" : undefined}
           disabled={!canAccounts}

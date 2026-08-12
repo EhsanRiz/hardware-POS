@@ -138,6 +138,9 @@ export class Backend {
   customers: FakeCustomer[] = [];
   accountPayments: RecordedAccountPayment[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string; note: string | null }[] = [];
+  quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
+            customer_id: string | null;
+            items: { product_id: string; qty: number; unit_price: number }[] }[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
   private seq = 0;
@@ -148,6 +151,7 @@ export class Backend {
     this.customers = [];
     this.accountPayments = [];
     this.stockMoves = [];
+    this.quotes = [];
     this.offline = false;
     this.seq = 0;
   }
@@ -377,6 +381,59 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_customer_history":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([]);
+      case "rpc/pos_save_quote": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const items = (body.p_items as { product_id: string; qty: number }[]) ?? [];
+        if (!items.length) return fail("An empty quote is not a quote");
+        const q = {
+          id: "q" + (be.quotes.length + 1),
+          doc_number: "QUO-" + String(be.quotes.length + 1).padStart(6, "0"),
+          status: "open", sale_id: null as string | null,
+          customer_id: (body.p_customer_id as string) ?? null,
+          items: items.map((it) => ({
+            product_id: it.product_id, qty: it.qty,
+            unit_price: PRODUCTS.find((x) => x.id === it.product_id)?.price_retail ?? 0,
+          })),
+        };
+        be.quotes.push(q);
+        const total = q.items.reduce((t, i) => t + i.unit_price * i.qty, 0);
+        return json([{ quote_id: q.id, doc_number: q.doc_number,
+          valid_until: "2099-01-01", total }]);
+      }
+      case "rpc/pos_list_quotes":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(be.quotes.filter((q) => q.status === "open").map((q) => ({
+          id: q.id, doc_number: q.doc_number, created_at: "2026-01-01T08:00:00Z",
+          cashier_name: "Sam", customer_id: q.customer_id, customer_name: null,
+          total: q.items.reduce((t, i) => t + i.unit_price * i.qty, 0),
+          valid_until: "2099-01-01", expired: false,
+          item_count: q.items.length, note: null,
+        })));
+      case "rpc/pos_quote_items": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const q = be.quotes.find((x) => x.id === body.p_quote_id);
+        if (!q) return fail("Unknown quote");
+        return json(q.items.map((i) => {
+          const prod = PRODUCTS.find((x) => x.id === i.product_id);
+          return { product_id: i.product_id, sku: prod?.sku ?? null,
+            name: prod?.name ?? "?", unit_code: prod?.unit_code ?? "ea",
+            qty: i.qty, unit_price: i.unit_price,
+            line_total: i.unit_price * i.qty,
+            price_now: prod?.price_retail ?? null, still_sold: !!prod };
+        }));
+      }
+      case "rpc/pos_close_quote": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const q = be.quotes.find(
+          (x) => x.id === body.p_quote_id && x.status === "open");
+        if (!q) return fail("Quote already closed or unknown");
+        if (body.p_status === "converted" && !body.p_sale_id) {
+          return fail("A converted quote needs its sale");
+        }
+        q.status = String(body.p_status);
+        q.sale_id = (body.p_sale_id as string) ?? null;
+        return json(null);
+      }
       case "rpc/pos_receive_stock": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");

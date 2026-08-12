@@ -1296,3 +1296,7 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 .stock-qty-input:focus { border-color: var(--color-accent); }
 .stock-count { display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---- Quotes ------------------------------------------------------------- */
+
+.quote-actions { display: inline-flex; gap: 6px; }

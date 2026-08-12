@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   approveSale,
+  closeQuote,
   fetchCatalogue,
   fetchCategories,
   listCustomers,
   NotPairedError,
+  saveQuote,
+  type QuoteLine,
+  type QuoteSummary,
 } from "../lib/api";
 import { adminListProducts, stockMovements } from "../lib/adminApi";
 import { verifyPinOffline } from "../lib/auth";
@@ -29,6 +33,7 @@ import type {
 } from "../lib/types";
 
 import Accounts from "../components/accounts/Accounts";
+import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quotes";
 import Stock from "../components/stock/Stock";
 import Admin from "../components/Admin";
 import DiscountModal from "../components/DiscountModal";
@@ -110,7 +115,10 @@ export default function POS() {
   // Which section fills the frame. Sell is home; the others swap the counter
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
-  const [section, setSection] = useState<"sell" | "accounts" | "stock">("sell");
+  const [section, setSection] = useState<"sell" | "accounts" | "stock" | "quotes">("sell");
+  // The open quote this cart came from, so completing the sale closes it and
+  // the paper trail joins up: QUO-000031 -> INV-000214.
+  const [fromQuote, setFromQuote] = useState<{ id: string; doc: string } | null>(null);
   // Stock changes things, so entering it costs a PIN — verified server-side by
   // the first inventory call, then held in memory only, like the back office.
   const [stockPin, setStockPin] = useState<string | null>(null);
@@ -224,8 +232,90 @@ export default function POS() {
     setDiscountReason(null);
     setApproverPin(null);
     setFreshId(null);
+    setFromQuote(null);
     setTerm("");
     scanRef.current?.focus();
+  }
+
+  /**
+   * A quote comes back to the counter.
+   *
+   * The lines land in the cart priced from TODAY's catalogue — the server
+   * reprices every sale, so the till cannot promise otherwise. What the till
+   * can do is be honest about it: any drift from the quoted price is put in
+   * the banner before a single item is rung, so honouring the promise (with a
+   * discount) is a decision made looking at the difference, not after it.
+   */
+  function recallQuote(q: QuoteSummary, quoteLines: QuoteLine[]) {
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const cart: CartLine[] = [];
+    let missing = 0;
+    for (const l of sellableLines(quoteLines)) {
+      const product = byId.get(l.product_id!);
+      if (!product) {
+        missing++;
+        continue;
+      }
+      cart.push({ product, qty: l.qty });
+    }
+    setLines(cart);
+    setCustomer(customers.find((c) => c.id === q.customer_id) ?? null);
+    setDiscount(0);
+    setDiscountReason(null);
+    setFromQuote({ id: q.id, doc: q.doc_number ?? "Quote" });
+    setSection("sell");
+
+    const warn = recallWarnings(quoteLines);
+    const gaps = missing
+      ? `${missing} line${missing === 1 ? "" : "s"} not in this till's catalogue were left off. `
+      : "";
+    setBanner(
+      `${q.doc_number ?? "Quote"} loaded.` +
+        (gaps || warn ? ` ${gaps}${warn ?? ""}` : "")
+    );
+  }
+
+  /**
+   * The cart becomes a quote: saved under a QUO number, then printed.
+   *
+   * Offline it still prints — a builder at the counter cannot wait for the
+   * line — but without a number, and the slip says so.
+   */
+  async function quoteThis() {
+    if (!user || lines.length === 0) return;
+    if (!online) {
+      printReceipt(
+        buildQuoteText(lines, { subtotal, discount, total, trade }),
+        "Quote"
+      );
+      setBanner("Printed unsaved — quotes get a number when the line is back.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const q = await saveQuote(
+        user.id,
+        lines.map((l) => ({ product_id: l.product.id, qty: l.qty })),
+        customer?.id ?? null
+      );
+      printReceipt(
+        buildQuoteText(lines, {
+          subtotal,
+          discount,
+          total,
+          trade,
+          docNumber: q.doc_number,
+          validUntil: q.valid_until,
+        }),
+        "Quote"
+      );
+      setBanner(`${q.doc_number} saved — bring it back by number.`);
+      clearSale();
+    } catch (e) {
+      setBanner(errorMessage(e, "The quote could not be saved"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   /** Set the sale aside so the next customer can be served. */
@@ -329,6 +419,18 @@ export default function POS() {
         "Tax Invoice"
       );
 
+      // If this cart came off a quote and the sale reached the server, close
+      // the quote against it. A queued offline sale leaves the quote open —
+      // better an open quote that was honoured than a closed one whose sale
+      // never synced.
+      if (fromQuote && !queued && sale.id) {
+        try {
+          await closeQuote(user.id, fromQuote.id, "converted", sale.id);
+        } catch {
+          // The sale stands either way; the quote can be tidied later.
+        }
+      }
+
       clearSale();
       setBanner(
         queued
@@ -357,6 +459,7 @@ export default function POS() {
       canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
       section={section}
       canAccounts={can(user, "take_payments")}
+      canQuotes={can(user, "take_payments")}
       canStock={can(user, "manage_inventory")}
       onSection={(s) => {
         if (s === "stock" && !stockPin) {
@@ -373,12 +476,15 @@ export default function POS() {
 
   // Accounts and Stock replace the counter, not the frame: the header keeps
   // the sync state and the way back, and a parked sale stays parked underneath.
-  if ((section === "accounts" || (section === "stock" && stockPin)) && user) {
+  if ((section === "accounts" || section === "quotes" ||
+       (section === "stock" && stockPin)) && user) {
     return (
       <div className="sell">
         {header}
         {section === "accounts" ? (
           <Accounts user={user} />
+        ) : section === "quotes" ? (
+          <Quotes user={user} onRecall={recallQuote} />
         ) : (
           <Stock pin={stockPin!} />
         )}
@@ -428,15 +534,10 @@ export default function POS() {
           <div className="sell-actions">
             <button
               className="btn-line"
-              disabled={lines.length === 0}
-              onClick={() =>
-                printReceipt(
-                  buildQuoteText(lines, { subtotal, discount, total, trade }),
-                  "Quote"
-                )
-              }
+              disabled={lines.length === 0 || busy}
+              onClick={() => void quoteThis()}
             >
-              Print quote
+              Save as quote
             </button>
 
             <button

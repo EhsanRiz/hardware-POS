@@ -146,6 +146,17 @@ interface DemoMove {
 }
 const MOVES: DemoMove[] = [];
 
+interface DemoQuote {
+  id: string; doc_number: string; created_at: string; cashier_name: string;
+  customer_id: string | null; customer_name: string | null; total: number;
+  valid_until: string; expired: boolean; item_count: number; note: string | null;
+  status: string;
+  items: { product_id: string; sku: string; name: string; unit_code: string;
+           qty: number; unit_price: number; line_total: number }[];
+}
+const QUOTES: DemoQuote[] = [];
+let quoteSeq = 0;
+
 const sales: { client_ref: string | null; doc: string; row: unknown }[] = [];
 let seq = 0;
 let paired = false;
@@ -345,6 +356,60 @@ export function installDemoBackend(): void {
         };
         CUSTOMERS.push(made);
         return ok([made]);
+      }
+      case "rpc/pos_save_quote": {
+        const items = (body.p_items as { product_id: string; qty: number }[]) ?? [];
+        if (!items.length) return bad("An empty quote is not a quote");
+        const cust = CUSTOMERS.find((c) => c.id === body.p_customer_id) ?? null;
+        const trade = cust?.is_trade ?? false;
+        let total = 0;
+        const qItems = items.map((it) => {
+          const prod = PRODUCTS.find((x) => x.id === it.product_id)!;
+          const price = trade && prod.price_trade != null ? prod.price_trade : prod.price_retail;
+          const line = Math.round(price * it.qty * 100) / 100;
+          total += line;
+          return { product_id: prod.id, sku: prod.sku, name: prod.name,
+                   unit_code: prod.unit_code, qty: it.qty, unit_price: price,
+                   line_total: line };
+        });
+        quoteSeq += 1;
+        const q: DemoQuote = {
+          id: "q" + quoteSeq,
+          doc_number: "QUO-" + String(quoteSeq).padStart(6, "0"),
+          created_at: new Date().toISOString(),
+          cashier_name: user?.name ?? "Cashier",
+          customer_id: cust?.id ?? null, customer_name: cust?.name ?? null,
+          total: Math.round(total * 100) / 100,
+          valid_until: new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10),
+          expired: false, item_count: qItems.length,
+          note: (body.p_note as string) ?? null, status: "open", items: qItems,
+        };
+        QUOTES.unshift(q);
+        return ok([{ quote_id: q.id, doc_number: q.doc_number,
+                     valid_until: q.valid_until, total: q.total }]);
+      }
+      case "rpc/pos_list_quotes":
+        return ok(QUOTES.filter((q) => q.status === "open"));
+      case "rpc/pos_quote_items": {
+        const q = QUOTES.find((x) => x.id === body.p_quote_id);
+        if (!q) return bad("Unknown quote");
+        const qTrade = CUSTOMERS.find((c) => c.id === q.customer_id)?.is_trade ?? false;
+        return ok(q.items.map((i) => {
+          const prod = PRODUCTS.find((x) => x.id === i.product_id);
+          const now = prod
+            ? (qTrade && prod.price_trade != null ? prod.price_trade : prod.price_retail)
+            : null;
+          return { ...i, price_now: now, still_sold: !!prod };
+        }));
+      }
+      case "rpc/pos_close_quote": {
+        const q = QUOTES.find((x) => x.id === body.p_quote_id && x.status === "open");
+        if (!q) return bad("Quote already closed or unknown");
+        if (body.p_status === "converted" && !body.p_sale_id) {
+          return bad("A converted quote needs its sale");
+        }
+        q.status = String(body.p_status);
+        return ok(null);
       }
       case "rpc/pos_receive_stock": {
         if (!user || user.role !== "admin") return bad("Not permitted: manage_inventory");
