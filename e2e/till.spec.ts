@@ -133,10 +133,91 @@ test("the server's refusal reaches the cashier, and nothing is charged", async (
 
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
+  // The till asks before it sends; the shop decides to sell it anyway.
+  await page.getByRole("button", { name: /Sell short/ }).click();
 
   // The server's reason must reach the cashier, not a generic refusal.
   await expect(banner(page)).toContainText(/Not enough stock/i);
   expect(be.storedSales).toHaveLength(0);
+});
+
+/**
+ * Selling more than the shelf count.
+ *
+ * The till must not refuse it — a yard genuinely holds stock the count has lost
+ * track of, and refusing the money for goods the shop is standing next to is
+ * worse than asking. But it must not let it happen by accident either, and the
+ * cashier's last sight of the shortfall was a red number on a line they have
+ * since scrolled past.
+ *
+ * The case that decides the design is the one BELOW: offline, there is no
+ * server to refuse it, the slip prints, and the customer leaves with the goods.
+ * This question is the only thing standing between a mistyped 5 and a sale
+ * nobody catches until it fails to sync hours later.
+ */
+test("selling short is asked about at the tender, and the answer is not remembered", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  // Two rolls on hand; the cashier types five.
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "5");
+
+  // Restated where the money is taken, not only on the line.
+  await expect(page.locator(".pay-short")).toContainText("2 roll on hand, selling 5");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const ask = page.getByRole("dialog", { name: /shelf count/i });
+  await expect(ask).toBeVisible();
+  await expect(ask).toContainText("2 roll on hand");
+  await expect(ask).toContainText("3 short");
+
+  // Backing out sends nothing and charges nothing.
+  await ask.getByRole("button", { name: /Go back/ }).click();
+  await expect(ask).toHaveCount(0);
+  expect(be.storedSales).toHaveLength(0);
+
+  // Dismissing is not answering. Pressing Tender again asks again — otherwise a
+  // stray tap on the backdrop would buy a permanent licence to sell short.
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: /Go back/ }).click();
+
+  // Correcting the quantity retires the question. The cash taken for five rolls
+  // no longer settles two, so it comes off and is taken again — which is what
+  // happens at the counter when a cashier fixes a line after tendering.
+  await page.getByRole("button", { name: "Remove Cash payment" }).click();
+  const qty = page.getByLabel("Quantity of Twin & Earth 2.5mm 100m");
+  await qty.fill("2");
+  await qty.press("Enter");
+  await expect(page.locator(".pay-short")).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales).toHaveLength(1);
+});
+
+test("offline, nothing but the question stands between a mistyped quantity and an over-sale", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "5");
+
+  // The line goes down. There is no server to refuse this now.
+  be.offline = true;
+  await page.context().setOffline(true);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Asked offline too — this is the case that needs it most.
+  const ask = page.getByRole("dialog", { name: /shelf count/i });
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: /Sell short/ }).click();
+
+  // Deliberate, and therefore allowed: the sale completes on the device.
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
 });
 
 test("a sale taken offline still prints, then syncs exactly once", async ({ page }) => {
