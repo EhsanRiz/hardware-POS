@@ -386,3 +386,40 @@ test("a saved quote is recalled by number and closes against its sale", async ({
   expect(be.quotes[0].sale_id).toBeTruthy();
   expect(be.storedSales).toHaveLength(1);
 });
+
+/**
+ * The closer look.
+ *
+ * The property that matters is what it does NOT change: tapping a search
+ * result still adds the item in one tap. A counter action performed a hundred
+ * times a day must never grow a confirmation step, so the enlarged view hangs
+ * off the picture instead.
+ */
+test("the picture opens a closer look, while the row still adds in one tap", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("cement");
+  await page.locator(".result-row").first().click();
+  // One tap, one line, no dialog in the way.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(page.locator(".detail-card")).toHaveCount(0);
+
+  // The picture is the way in to the detail.
+  await page.getByPlaceholder(/Scan barcode/i).fill("chain");
+  await page.locator(".result-thumb-btn").first().click();
+  const card = page.locator(".detail-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Chain 6mm Galvanised");
+  await expect(card).toContainText("A1");           // where it is
+  // Nothing on this screen may be a number the customer should not read.
+  await expect(card).not.toContainText(/cost/i);
+  await expect(card).not.toContainText(/trade/i);
+
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+  await expect(page.locator(".detail-card")).toHaveCount(0);
+
+  // A line already in the sale opens the same view.
+  await page.locator(".line-desc-btn").first().click();
+  await expect(page.locator(".detail-card")).toBeVisible();
+});

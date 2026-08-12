@@ -19,6 +19,7 @@ export default function LineItems({
   freshId,
   onSetQty,
   onRemove,
+  onInspect,
 }: {
   lines: CartLine[];
   trade: boolean;
@@ -26,6 +27,8 @@ export default function LineItems({
   freshId: string | null;
   onSetQty: (productId: string, qty: number) => void;
   onRemove: (productId: string) => void;
+  /** Open the closer look for a line already in the sale. */
+  onInspect: (p: CartLine["product"]) => void;
 }) {
   const priceOf = (l: CartLine) =>
     trade && l.product.price_trade != null
@@ -65,7 +68,17 @@ export default function LineItems({
               <span className="line-n">{i + 1}</span>
 
               <span>
-                <span className="line-desc">{p.name}</span>
+                {/* The name is a button: "is that the right one?" gets asked
+                    about a line already in the sale at least as often as about
+                    a search result. */}
+                <button
+                  type="button"
+                  className="line-desc line-desc-btn"
+                  onClick={() => onInspect(l.product)}
+                  title="Look closer"
+                >
+                  {p.name}
+                </button>
                 <span className="line-meta">
                   {/* Weighed and cut goods carry a tag before their metadata,
                       because these are the lines a customer queries later and

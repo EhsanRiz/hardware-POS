@@ -616,19 +616,42 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
 }
+/* Two targets per row: the picture opens a closer look, everything else adds
+   the item. Splitting them means the hundred-times-a-day action never grows a
+   confirmation step, while the once-an-hour "is this the right one?" has
+   somewhere to live. */
+.result-pair {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--divider-row);
+}
+.result-pair:last-child { border-bottom: 0; }
+.result-pair:hover, .result-pair.is-active { background: var(--color-neutral-100); }
+
+.result-thumb-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 11px 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+.result-thumb-btn:hover .result-thumb { border-color: var(--color-accent); }
+
 .result-row {
+  flex: 1;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 44px 1fr 120px;
+  grid-template-columns: 1fr 120px;
   gap: 16px;
   align-items: center;
-  width: 100%;
-  padding: 11px 18px;
+  padding: 11px 0 11px 16px;
   text-align: left;
-  border-bottom: 1px solid var(--divider-row);
   background: none;
 }
-.result-row:last-child { border-bottom: 0; }
-.result-row:hover:not(:disabled), .result-row.is-active { background: var(--color-neutral-100); }
 .result-row:disabled { opacity: 0.45; cursor: not-allowed; }
 .result-name { display: block; font-size: 15px; color: var(--color-text); }
 
@@ -1306,3 +1329,100 @@ tr.is-void td:last-child { text-decoration: none; }
 /* ---- Quotes ------------------------------------------------------------- */
 
 .quote-actions { display: inline-flex; gap: 6px; }
+
+
+/* ---- A closer look at one product --------------------------------------- */
+/* Shown to the CUSTOMER as often as to the cashier — the tablet gets turned
+   around — so it carries no cost price and no margin. */
+
+.detail-card {
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.detail-photo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--divider);
+}
+/* Contained, not cropped: a catalogue photograph is already framed, and
+   filling a square with it turns a tap fitting into a length of pipe. */
+.detail-photo img { max-width: 92%; max-height: 92%; object-fit: contain; }
+.detail-nophoto { font-size: 13px; color: var(--color-neutral-700); }
+
+.detail-body { padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.detail-name {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+.detail-sku {
+  font-size: 12.5px;
+  color: var(--color-neutral-700);
+  font-variant-numeric: tabular-nums;
+  margin-top: -6px;
+}
+
+.detail-figures {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: 14px 0;
+  border-top: 1px solid var(--divider-row);
+  border-bottom: 1px solid var(--divider-row);
+}
+.detail-figure { display: flex; flex-direction: column; gap: 2px; }
+.detail-price {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+/* The bin is what someone reads before walking into the yard. */
+.detail-bin {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-accent-700);
+  line-height: 1.1;
+}
+.detail-stock {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.detail-note { font-size: 12px; color: var(--color-neutral-700); }
+.detail-desc { font-size: 14px; color: var(--color-neutral-800); }
+.detail-actions { margin-top: 4px; }
+
+/* The line-item name is a button; it must not look like one. */
+.line-desc-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.line-desc-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+@media (max-width: 899px) {
+  .detail-photo { height: 220px; }
+  .detail-figures { gap: 18px; }
+}

@@ -43,6 +43,7 @@ import ManagerPinModal from "../components/ManagerPinModal";
 import CustomerPicker from "../components/sell/CustomerPicker";
 import LineItems from "../components/sell/LineItems";
 import PaymentColumn from "../components/sell/PaymentColumn";
+import ProductDetail from "../components/sell/ProductDetail";
 import ScanBar from "../components/sell/ScanBar";
 import SellHeader from "../components/sell/SellHeader";
 import InnovaMark from "../components/InnovaMark";
@@ -116,6 +117,8 @@ export default function POS() {
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
   const [section, setSection] = useState<"sell" | "accounts" | "stock" | "quotes">("sell");
+  // The product being looked at closely — from a search result or a cart line.
+  const [inspecting, setInspecting] = useState<Product | null>(null);
   // The open quote this cart came from, so completing the sale closes it and
   // the paper trail joins up: QUO-000031 -> INV-000214.
   const [fromQuote, setFromQuote] = useState<{ id: string; doc: string } | null>(null);
@@ -519,6 +522,7 @@ export default function POS() {
             trade={trade}
             customer={customer}
             onAdd={addProduct}
+            onInspect={setInspecting}
             onPickCustomer={() => setShowCustomers(true)}
             inputRef={scanRef}
           />
@@ -529,6 +533,7 @@ export default function POS() {
             freshId={freshId}
             onSetQty={setQty}
             onRemove={removeLine}
+            onInspect={setInspecting}
           />
 
           <div className="sell-actions">
@@ -634,6 +639,18 @@ export default function POS() {
             });
           }}
           onClose={() => setShowCustomers(false)}
+        />
+      )}
+
+      {inspecting && (
+        <ProductDetail
+          product={inspecting}
+          trade={trade}
+          onAdd={(p) => {
+            addProduct(p);
+            setInspecting(null);
+          }}
+          onClose={() => setInspecting(null)}
         />
       )}
 

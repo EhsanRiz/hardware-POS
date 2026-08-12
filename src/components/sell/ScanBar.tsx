@@ -32,6 +32,7 @@ export default function ScanBar({
   trade,
   customer,
   onAdd,
+  onInspect,
   onPickCustomer,
   inputRef,
 }: {
@@ -41,6 +42,8 @@ export default function ScanBar({
   trade: boolean;
   customer: Customer | null;
   onAdd: (p: Product) => void;
+  /** Open the closer look — the picture, the bin, the stock. */
+  onInspect: (p: Product) => void;
   onPickCustomer: () => void;
   inputRef: React.RefObject<HTMLInputElement>;
 }) {
@@ -155,20 +158,37 @@ export default function ScanBar({
               p.stock_qty > 0 &&
               p.stock_qty <= p.reorder_level;
             return (
-              <button
+              <div
                 key={p.id}
-                disabled={out}
-                onClick={() => pick(p)}
+                className={`result-pair${i === active ? " is-active" : ""}`}
                 onMouseEnter={() => setActive(i)}
-                className={`result-row${i === active ? " is-active" : ""}`}
               >
                 {/* Eight hose sets differing only by length and colour are
-                    chosen from this list. A picture settles it in a glance. */}
-                {imageSrc(p.image_url) ? (
-                  <img className="result-thumb" src={imageSrc(p.image_url)!} alt="" loading="lazy" />
-                ) : (
-                  <span className="result-thumb is-empty" aria-hidden="true" />
-                )}
+                    chosen from this list. A picture settles it in a glance —
+                    and tapping the picture enlarges it, which is the gesture
+                    everybody already expects. The rest of the row still adds
+                    the item, because that is the move a cashier makes a
+                    hundred times a day and it must not grow a step. */}
+                <button
+                  type="button"
+                  className="result-thumb-btn"
+                  onClick={() => onInspect(p)}
+                  aria-label={`Look closer at ${p.name}`}
+                  title="Look closer"
+                >
+                  {imageSrc(p.image_url) ? (
+                    <img className="result-thumb" src={imageSrc(p.image_url)!} alt="" loading="lazy" />
+                  ) : (
+                    <span className="result-thumb is-empty" aria-hidden="true" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={out}
+                  onClick={() => pick(p)}
+                  className="result-row"
+                >
                 <span>
                   <span className="result-name">{p.name}</span>
                   <span className="result-meta">
@@ -187,7 +207,8 @@ export default function ScanBar({
                   </span>
                 </span>
                 <span className="result-price">{money(price(p))}</span>
-              </button>
+                </button>
+              </div>
             );
           })}
         </div>
