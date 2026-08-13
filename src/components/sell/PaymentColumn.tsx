@@ -22,6 +22,20 @@ const TENDERS: { method: PaymentMethod; label: string; icon: React.ReactNode }[]
 ];
 
 /**
+ * A tender, plus what was physically handed over for it.
+ *
+ * The two are not the same and must travel together: R900 handed over for an
+ * R891 sale applies R891 and leaves R9 as change. Keeping the notes in a
+ * counter of their own was the bug — removing the tender left its notes behind,
+ * so re-tendering added a second lot and the change grew each time.
+ */
+interface TakenTender {
+  payment: Payment;
+  /** Notes handed over. Equal to the amount applied for anything but cash. */
+  offered: number;
+}
+
+/**
  * The payment column — design_handoff_innovapos §1.5, rebuilt around a LIST of
  * tenders after watching a real counter work.
  *
@@ -76,11 +90,7 @@ export default function PaymentColumn({
     customerVatNumber: string | null;
   }) => void;
 }) {
-  const [taken, setTaken] = useState<Payment[]>([]);
-  // Notes physically handed over, which is NOT the same as the amount applied
-  // to the sale: a customer paying R115 with a R200 note tenders 200 and the
-  // sale takes 115. Conflating the two overpays the invoice.
-  const [cashTendered, setCashTendered] = useState(0);
+  const [taken, setTaken] = useState<TakenTender[]>([]);
   const [entry, setEntry] = useState("");
   const [poNumber, setPoNumber] = useState("");
   const [vatNumber, setVatNumber] = useState("");
@@ -96,7 +106,6 @@ export default function PaymentColumn({
   useEffect(() => {
     if (lines.length === 0) {
       setTaken([]);
-      setCashTendered(0);
       setEntry("");
       setPoNumber("");
       setVatNumber("");
@@ -113,11 +122,17 @@ export default function PaymentColumn({
   const vat = vatWithin(total, VAT_RATE);
 
   const nonCashTaken = taken
-    .filter((p) => p.method !== "cash")
-    .reduce((s, p) => s + p.amount, 0);
+    .filter((t) => t.payment.method !== "cash")
+    .reduce((s, t) => s + t.payment.amount, 0);
   const cashTaken = taken
-    .filter((p) => p.method === "cash")
-    .reduce((s, p) => s + p.amount, 0);
+    .filter((t) => t.payment.method === "cash")
+    .reduce((s, t) => s + t.payment.amount, 0);
+  // The notes behind the cash tenders that are still in this sale. Summed from
+  // the tenders rather than accumulated in a counter of its own, so removing a
+  // tender takes its notes with it.
+  const cashOffered = taken
+    .filter((t) => t.payment.method === "cash")
+    .reduce((s, t) => s + t.offered, 0);
   const paid = cashTaken + nonCashTaken;
 
   // What the remaining cash would settle at, if the rest were paid in coins.
@@ -152,9 +167,9 @@ export default function PaymentColumn({
   const handedOver = useMemo(() => {
     // No cash in the sale, no change to give — a card sale must not invent
     // change from a stray figure left in the box.
-    if (cashTaken <= 0.005) return cashTendered;
-    return Math.max(cashTendered, hasTyped ? typed : 0);
-  }, [cashTaken, cashTendered, hasTyped, typed]);
+    if (cashTaken <= 0.005) return 0;
+    return Math.max(cashOffered, hasTyped ? typed : 0);
+  }, [cashTaken, cashOffered, hasTyped, typed]);
 
   const changeDue = Math.max(0, Math.round((handedOver - cashTaken) * 100) / 100);
 
@@ -199,9 +214,15 @@ export default function PaymentColumn({
     }
     if (applied <= 0.005) return;
 
-    if (method === "cash") setCashTendered((c) => c + offered);
-
-    setTaken((prev) => [...prev, { method, amount: Math.round(applied * 100) / 100 }]);
+    setTaken((prev) => [
+      ...prev,
+      {
+        payment: { method, amount: Math.round(applied * 100) / 100 },
+        // What was physically handed over for this tender. Only cash can be
+        // more than the amount applied; a card is settled exactly.
+        offered: method === "cash" ? offered : Math.round(applied * 100) / 100,
+      },
+    ]);
     setEntry("");
   }
 
@@ -245,7 +266,7 @@ export default function PaymentColumn({
   function finish() {
     if (!ready) return;
     onComplete({
-      payments: taken,
+      payments: taken.map((t) => t.payment),
       // The notes handed over, so the server can work out the change.
       amountTendered: handedOver > 0 ? handedOver : null,
       rounding,
@@ -269,8 +290,8 @@ export default function PaymentColumn({
   const accountHeadroom = useMemo(() => {
     if (!customer || customer.available == null) return null;
     const already = taken
-      .filter((p) => p.method === "account")
-      .reduce((s, p) => s + p.amount, 0);
+      .filter((t) => t.payment.method === "account")
+      .reduce((s, t) => s + t.payment.amount, 0);
     return Math.round((customer.available - already) * 100) / 100;
   }, [customer, taken]);
 
@@ -331,13 +352,13 @@ export default function PaymentColumn({
       <div className="tender">
         {taken.length > 0 && (
           <div className="taken" aria-label="Payments taken">
-            {taken.map((p, i) => (
+            {taken.map((t, i) => (
               <div className="taken-row" key={i}>
-                <span className="taken-method">{labelFor(p.method)}</span>
-                <span className="taken-amt">{money(p.amount)}</span>
+                <span className="taken-method">{labelFor(t.payment.method)}</span>
+                <span className="taken-amt">{money(t.payment.amount)}</span>
                 <button
                   type="button"
-                  aria-label={`Remove ${labelFor(p.method)} payment`}
+                  aria-label={`Remove ${labelFor(t.payment.method)} payment`}
                   onClick={() => setTaken((prev) => prev.filter((_, j) => j !== i))}
                 >
                   ×
