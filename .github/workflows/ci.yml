@@ -15,6 +15,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The browser suite drives the till against a hand-written fake of the server,
+  # which is a second implementation of the same rules — and a second
+  # implementation agrees with the first right up until it doesn't. This job
+  # applies every migration to a real Postgres and calls the RPCs as written, so
+  # a migration that will not apply fails here instead of at a deploy.
+  database:
+    name: Migrations and database rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The client only — the server is the service container above.
+      - name: Postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Migrations and database rules
+        run: npm run test:db
+
   test:
     name: Types, unit rules and the till end to end
     runs-on: ubuntu-latest
