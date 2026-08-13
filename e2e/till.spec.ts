@@ -515,6 +515,70 @@ test("a discount can be given as a percentage, and the slip says so", async ({ p
   expect(be.storedSales[0].discount_amount).toBe(11.5);
 });
 
+test("money can come off one line without touching the others", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // A cheap line and a dear one. Ten percent off the ladder is a different
+  // transaction from ten percent off the lot, and only the second could be
+  // recorded before — which spread itself across both lines pro-rata, so the
+  // ladder showed full price and the cement carried a discount nobody gave it.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await expect(page.locator(".total-row .fig")).toContainText("1 565.00");
+
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // R145 off the cable line, and the cement untouched.
+  const cable = page.locator(".line-row", { hasText: "Twin & Earth" });
+  await expect(cable.locator(".line-disc")).toContainText("145.00");
+  await expect(cable.locator(".line-disc")).toContainText("10%");
+  await expect(
+    page.locator(".line-row", { hasText: "Cement" }).locator(".line-disc")
+  ).toHaveCount(0);
+  await expect(page.locator(".total-row .fig")).toContainText("1 420.00");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // The line discount reaches the server as the line's own, and the slip says
+  // which line it came off rather than showing an unexplained lump.
+  expect(be.storedSales[0].total).toBe(1420);
+  expect(be.storedSales[0].discount_amount).toBe(145);
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("less 10%");
+  await expect(slip).toContainText("145.00");
+});
+
+test("a line discount survives being taken offline", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("15");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.locator(".total-row .fig")).toContainText("100.00");
+
+  // The line goes down between ringing it up and taking the money. A queued
+  // sale that dropped the discount would replay at full price hours later,
+  // with nobody watching and the customer long gone.
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 15000 }).toBe(1);
+  expect(be.storedSales[0].total).toBe(100);
+  expect(be.storedSales[0].discount_amount).toBe(15);
+});
+
 test("a discount cannot be more than the whole thing", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
 

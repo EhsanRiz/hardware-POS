@@ -88,6 +88,20 @@ export interface UnitOfMeasure {
 export interface CartLine {
   product: Product;
   qty: number;
+  /**
+   * Money off THIS line, as opposed to off the sale.
+   *
+   * "Ten percent off the ladder" is a different transaction from "ten percent
+   * off the lot": the second spreads itself across every line pro-rata, so the
+   * ladder would show full price and the padlocks would carry a discount
+   * nobody gave them.
+   *
+   * The amount is what counts. The percentage is remembered only so the slip
+   * can say how it was asked for — and the server works the amount out again
+   * from it, so the till and the database cannot disagree.
+   */
+  discount?: number;
+  discountPercent?: number | null;
 }
 
 /** A customer account. Trade customers price off `price_trade` automatically. */
@@ -247,6 +261,9 @@ export interface ReceiptItem {
   qty: number;
   unit_price: number;
   line_total: number;
+  /** Money off this line alone. Printed under it when there is any. */
+  discount_amount?: number;
+  discount_percent?: number | null;
 }
 
 /**

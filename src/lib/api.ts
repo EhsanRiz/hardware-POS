@@ -170,8 +170,18 @@ export async function fetchSettings(): Promise<ShopSettings> {
 
 export interface CreateSaleInput {
   cashierId: string;
-  /** [{ product_id, qty }] — the server prices it; the client never sends money. */
-  items: { product_id: string; qty: number }[];
+  /**
+   * [{ product_id, qty, discount_amount?, discount_percent? }] — the server
+   * prices it; the client never sends money. A line discount travels because
+   * it is the cashier's decision, but the server re-works a percentage into an
+   * amount itself rather than trusting the arithmetic that arrives.
+   */
+  items: {
+    product_id: string;
+    qty: number;
+    discount_amount?: number;
+    discount_percent?: number | null;
+  }[];
   customerId: string | null;
   paymentMethod: string;
   discountAmount: number;

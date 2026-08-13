@@ -532,4 +532,111 @@ begin
   delete from public.app_users where id = v_emp;
 end $$;
 
+-- 0035: money off one line ----------------------------------------------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_a uuid; v_b uuid; v_pa numeric; v_pb numeric;
+        v_sale public.sales; v_row record;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id, price_retail into v_a, v_pa from public.products
+   where active and price_retail > 0 order by price_retail limit 1;
+  select id, price_retail into v_b, v_pb from public.products
+   where active and price_retail > 0 and id <> v_a order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+
+  -- Ten percent off the dearer line only.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 10)),
+    p_payment_method => 'cash');
+
+  perform assert_eq(v_sale.subtotal, round(v_pa + v_pb, 2),
+    'the subtotal is what the goods cost before anything comes off');
+  perform assert_eq(v_sale.discount_amount, round(v_pb * 0.10, 2),
+    'the line discount is the sale discount');
+  perform assert_eq(v_sale.total, round(v_pa + v_pb - v_pb * 0.10, 2),
+    'and the total is the difference');
+  -- The invoice has to add up, whichever kind of discount was given.
+  perform assert_eq(v_sale.subtotal - v_sale.discount_amount, v_sale.total,
+    'subtotal less discount equals total');
+
+  -- The discount sits on the line that got it, and the other line is untouched.
+  select * into v_row from public.sale_items where sale_id = v_sale.id and product_id = v_b;
+  perform assert_eq(v_row.discount_amount, round(v_pb * 0.10, 2),
+    'the discounted line carries its own discount');
+  perform assert_eq(v_row.discount_percent, 10::numeric,
+    'and remembers it was asked for as a percentage');
+  select * into v_row from public.sale_items where sale_id = v_sale.id and product_id = v_a;
+  perform assert_eq(v_row.discount_amount, 0::numeric,
+    'the line nobody discounted carries nothing');
+  perform assert_eq(v_row.line_total, round(v_pa, 2),
+    'and still shows full price — the old way spread it across every line');
+
+  -- The percentage is worked out here, not taken on trust: a client sending a
+  -- percentage and a mismatched amount must not be able to choose which wins.
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 1, 'discount_percent', 50, 'discount_amount', 1)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.discount_amount, round(v_pb * 0.50, 2),
+    'the percentage decides, not the amount sent beside it');
+
+  -- More off than the line comes to is refused by name, so the cashier knows
+  -- which line to fix.
+  perform assert_refuses(
+    format('select public.pos_create_sale(%L, %L, %L::jsonb)', v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_b, 'qty', 1, 'discount_amount', v_pb + 1))::text),
+    'a line discount bigger than the line');
+  perform assert_refuses(
+    format('select public.pos_create_sale(%L, %L, %L::jsonb)', v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_b, 'qty', 1, 'discount_percent', 120))::text),
+    'a line discount over 100%');
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
+-- A line discount is money off, so it needs the same approval a sale discount
+-- does. Otherwise the whole approval gate is one tap away from being pointless.
+do $$
+declare v_tok text; v_emp uuid; v_prod uuid; v_sale public.sales;
+begin
+  select token into v_tok from till;
+  select id, price_retail into v_prod from public.products
+   where active and price_retail > 0 limit 1;
+
+  select id into v_emp from public.pos_admin_invite_user(
+    v_tok, '1234', 'No approvals', '+27820000012', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('7788', gen_salt('bf')) where id = v_emp;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_prod, 'qty', 1, 'discount_percent', 10)));
+  perform assert_eq(v_sale.status::text, 'pending_approval',
+    'a counter hand''s line discount waits for a manager');
+  perform assert(v_sale.doc_number is null,
+    'and burns no invoice number while it waits');
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  delete from public.app_users where id = v_emp;
+end $$;
+
 select 'all database tests passed' as result;
