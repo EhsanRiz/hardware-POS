@@ -240,6 +240,56 @@ test("counting the notes after tapping Cash still gives change", async ({ page }
   await expect(page.locator("#print-area")).toContainText("Change");
 });
 
+test("removing a tender takes its notes with it", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  // R891 of stock, and the customer hands over R900.
+  await addBySearch(page, "padlock", "Padlock 50mm Brass", "9");
+  await expect(page.locator(".total-row .fig")).toContainText("801.00");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByLabel("Cash received").fill("900");
+  const change = page.locator(".taken-row.is-outstanding");
+  await expect(change).toContainText("99.00");
+
+  // The cashier changes their mind and takes the tender off. The notes were
+  // recorded against it, so they come off with it.
+  await page.getByRole("button", { name: /Remove Cash payment/i }).click();
+  await expect(page.locator(".taken-row")).toHaveCount(0);
+
+  // Tendering again shows the SAME change, not another R900 stacked on top of
+  // the first. This is the bug: the notes used to live in a counter of their
+  // own that removing a tender never touched, so each retry grew the change
+  // and the drawer was told to hand back money it had never been given.
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await expect(change).toContainText("99.00");
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].amount_tendered).toBe(900);
+  expect(be.storedSales[0].change_due).toBe(99);
+});
+
+test("a removed cash tender leaves no change behind on a card sale", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // Cash first, with a note over the total, then removed entirely and settled
+  // on card. Nothing about the abandoned cash may survive into the sale.
+  await page.getByLabel("Cash received").fill("200");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await expect(page.locator(".taken-row.is-outstanding")).toContainText("85.00");
+  await page.getByRole("button", { name: /Remove Cash payment/i }).click();
+
+  await page.getByRole("button", { name: /^Card$/ }).click();
+  await expect(page.locator(".taken-row.is-outstanding")).toContainText("0.00");
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].payments).toEqual([{ method: "card", amount: 115 }]);
+  expect(be.storedSales[0].amount_tendered).toBeNull();
+});
+
 test("a stray figure in the amount box invents no change on a card sale", async ({ page }) => {
   await pairAndSignIn(page);
 
