@@ -523,6 +523,7 @@ export default function POS() {
         line_total: Math.round(share * 100) / 100,
         discount_amount: l.discount ?? 0,
         discount_percent: l.discountPercent ?? null,
+        discount_reason: l.discountReason ?? null,
       };
     });
   }
@@ -843,7 +844,7 @@ export default function POS() {
           ceiling={anyCapped ? saleCeiling : null}
           approvalFreeUpTo={limited ? saleFreeUpTo : undefined}
           onCancel={() => setShowDiscount(false)}
-          onApply={(amount, reason) => {
+          onApply={({ amount, reason }) => {
             const wasAmount = discount;
             const wasReason = discountReason;
             setDiscount(amount);
@@ -883,11 +884,12 @@ export default function POS() {
           })()}
           approvalFreeUpTo={limited ? lineFreeUpTo : undefined}
           onCancel={() => setDiscountLine(null)}
-          onApply={(amount, reason) => {
-            // The percentage is recovered from the reason the modal writes, so
-            // the slip can name it. The server works the amount out again from
-            // the percentage, which is what stops the two disagreeing.
-            const pct = /^(\d+(?:\.\d+)?)% off/.exec(reason)?.[1];
+          onApply={({ amount, percent, note }) => {
+            // A line has a column for each of these, so each goes to its own:
+            // the percentage so the slip can name it — the server works the
+            // amount out again from it, which is what stops the two disagreeing
+            // — and the words so somebody reading the sale back in a month can
+            // see what was agreed and not just that something was.
             const id = discountLine;
             const was = lines.find((l) => l.product.id === id);
             setLines((prev) =>
@@ -896,7 +898,8 @@ export default function POS() {
                   ? {
                       ...l,
                       discount: amount,
-                      discountPercent: pct ? Number(pct) : null,
+                      discountPercent: percent,
+                      discountReason: note,
                     }
                   : l
               )
@@ -911,6 +914,7 @@ export default function POS() {
                           ...l,
                           discount: was?.discount,
                           discountPercent: was?.discountPercent,
+                          discountReason: was?.discountReason,
                         }
                       : l
                   )

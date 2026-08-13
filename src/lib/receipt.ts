@@ -201,11 +201,17 @@ export function buildReceiptText(
     // customer sees a total that does not match the price they were quoted and
     // has nothing on the paper to explain the difference.
     if (item.discount_amount && item.discount_amount > 0) {
+      // The reason rides on the same row rather than taking one of its own: a
+      // basket of ten marked-down lines would otherwise add ten lines to a slip
+      // printed on 80mm paper. Truncation is the printer's, and losing the tail
+      // of "damaged box, agreed with Sipho" costs nothing — the full text is on
+      // the sale.
+      const label = item.discount_percent
+        ? `  less ${item.discount_percent}%`
+        : "  less discount";
       out.push(
         lineItem(
-          item.discount_percent
-            ? `  less ${item.discount_percent}%`
-            : "  less discount",
+          item.discount_reason ? `${label} (${item.discount_reason})` : label,
           `-${amount(item.discount_amount)}`
         )
       );

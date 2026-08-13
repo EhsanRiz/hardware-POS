@@ -68,6 +68,7 @@ function itemsPayload(lines: CartLine[]) {
     qty: l.qty,
     ...(l.discount ? { discount_amount: l.discount } : {}),
     ...(l.discountPercent ? { discount_percent: l.discountPercent } : {}),
+    ...(l.discountReason ? { discount_reason: l.discountReason } : {}),
   }));
 }
 

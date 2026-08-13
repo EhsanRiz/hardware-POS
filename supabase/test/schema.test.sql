@@ -1369,4 +1369,93 @@ begin
   delete from public.sales;
 end $$;
 
+-- 0041: why the money came off this line --------------------------------------
+--
+-- The amount and the percentage have been stored since 0035. The words the
+-- cashier typed were dropped between the modal and the server, so an invoice
+-- could say a line was marked down 10% and nothing anywhere said why.
+
+do $$
+declare v_tok text; v_mgr uuid; v_a uuid; v_b uuid; v_pb numeric;
+        v_sale public.sales; v_row record; v_long text;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id into v_a from public.products
+   where active and price_retail > 0 order by price_retail limit 1;
+  select id, price_retail into v_b, v_pb from public.products
+   where active and price_retail > 0 and id <> v_a order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null, stock_qty = 1000
+   where id in (v_a, v_b);
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1,
+                         'discount_reason', 'no discount here'),
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 10,
+                         'discount_reason', '  church job, Mr Molefe  ')),
+    p_payment_method => 'cash');
+
+  select * into v_row from public.sale_items
+   where sale_id = v_sale.id and product_id = v_b;
+  perform assert_eq(v_row.discount_reason, 'church job, Mr Molefe',
+    'the line keeps the words the cashier typed, trimmed');
+  -- The percentage lives in its own column and must not be doubled up here:
+  -- two copies of one fact are two facts that can disagree.
+  perform assert_eq(v_row.discount_percent, 10::numeric,
+    'while the percentage stays where it has always been');
+
+  select * into v_row from public.sale_items
+   where sale_id = v_sale.id and product_id = v_a;
+  perform assert(v_row.discount_reason is null,
+    'a reason on a line nobody discounted is a note about nothing');
+
+  -- The reprint reads it back. Without this the reason exists only in the
+  -- database and never on the paper the customer and the month-end look at.
+  select * into v_row from public.pos_sale_items(v_tok, v_sale.id)
+   where discount_amount > 0;
+  perform assert_eq(v_row.discount_reason, 'church job, Mr Molefe',
+    'and a reprint can say it');
+
+  -- Free text off a till, so it is bounded. Nothing downstream wants a
+  -- paragraph pasted into an invoice line.
+  v_long := repeat('x', 500);
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 1, 'discount_percent', 10,
+      'discount_reason', v_long)),
+    p_payment_method => 'cash');
+  select * into v_row from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(length(v_row.discount_reason), 200,
+    'a reason is cut to something an invoice line can hold');
+
+  -- Whitespace is not a reason.
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 1, 'discount_percent', 10,
+      'discount_reason', '   ')),
+    p_payment_method => 'cash');
+  select * into v_row from public.sale_items where sale_id = v_sale.id;
+  perform assert(v_row.discount_reason is null,
+    'and blank is no reason at all');
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
 select 'all database tests passed' as result;

@@ -321,6 +321,17 @@
   color: var(--color-owing);
   margin-top: 2px;
 }
+/* Why the money came off. It sits in the amount column, which is the narrowest
+   one on the row, so it is allowed one line and then cut — the words are on the
+   sale and on the slip, and this is a reminder rather than the record. */
+.line-disc-why {
+  display: block;
+  font-weight: 400;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The per-line discount key. Outlined so it reads as something to press on a
    tablet, where nothing hovers and a bare glyph reads as decoration. */
 .line-off {
