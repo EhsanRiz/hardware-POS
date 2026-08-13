@@ -61,6 +61,16 @@ const CATALOGUE_KEY = "catalogue.products";
 const CATEGORIES_KEY = "catalogue.categories";
 const CUSTOMERS_KEY = "catalogue.customers";
 const PARKED_KEY = "sell.parked";
+/**
+ * The sale in progress right now, kept on the device between renders.
+ *
+ * A counter screen is a browser tab, and a browser tab gets refreshed: a
+ * mistyped URL, a stray gesture on a tablet, the PWA updating itself, a phone
+ * killing a backgrounded page to save memory. Every one of those used to throw
+ * away a basket that had been scanned item by item, with the customer standing
+ * there — and the cashier's only clue was an empty screen.
+ */
+const LIVE_KEY = "sell.live";
 
 /** A sale set aside to serve the next customer while this one fetches a card. */
 interface ParkedSale {
@@ -125,6 +135,34 @@ export default function POS() {
   const [parked, setParked] = useState<ParkedSale[]>(() =>
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
+
+  /**
+   * A sale that was open when the screen reloaded becomes a parked sale.
+   *
+   * Parked rather than simply restored, and the difference is the point. A
+   * refresh is not always an accident — a cashier with a screen that has gone
+   * strange refreshes it deliberately — and a basket that silently reappears
+   * is fighting whoever did that. Parking says what happened, hands the sale
+   * back on one tap, and is a state the till already knows how to be in.
+   *
+   * The approval on a discount is deliberately NOT carried across. A PIN or a
+   * code released a particular sale at a particular moment; resuming asks
+   * again, which is the right side to be wrong on.
+   */
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    const live = cacheGet<ParkedSale | null>(LIVE_KEY, null);
+    if (!live || !live.lines?.length) return;
+    setParked((prev) => {
+      const next = [...prev, { ...live, id: String(Date.now()), at: new Date().toISOString() }];
+      cacheSet(PARKED_KEY, next);
+      return next;
+    });
+    cacheSet(LIVE_KEY, null);
+    setBanner("The sale that was open here has been parked. Resume it below.");
+  }, []);
 
   // On a tablet the payment column is a sheet raised from the bar; on a wide
   // screen it is always docked and this flag is ignored by the stylesheet.
@@ -317,6 +355,24 @@ export default function POS() {
     setLines((prev) => prev.filter((l) => l.product.id !== productId));
     scanRef.current?.focus();
   }
+
+  /**
+   * Keep the device's copy of the open sale in step.
+   *
+   * Written on every change rather than on a timer: the events this protects
+   * against — a refresh, a tab dying, the PWA swapping itself out — give no
+   * warning and no chance to flush. localStorage is synchronous and the object
+   * is a handful of lines, so the cost is nothing next to losing the basket.
+   */
+  useEffect(() => {
+    if (!restored.current) return;
+    cacheSet(
+      LIVE_KEY,
+      lines.length
+        ? { id: "live", at: new Date().toISOString(), lines, customer, discount, discountReason }
+        : null
+    );
+  }, [lines, customer, discount, discountReason]);
 
   function clearSale() {
     setPayOpen(false);
