@@ -19,9 +19,17 @@ import ProductEditor from "./ProductEditor";
 import CashUp from "./admin/CashUp";
 import SalesHistory from "./admin/SalesHistory";
 import ShopSettings from "./admin/ShopSettings";
+import Approvals from "./admin/Approvals";
 import StaffAdmin from "./admin/StaffAdmin";
 
-type TabKey = "catalogue" | "import" | "sales" | "cashup" | "staff" | "shop";
+type TabKey =
+  | "catalogue"
+  | "import"
+  | "sales"
+  | "approvals"
+  | "cashup"
+  | "staff"
+  | "shop";
 
 /**
  * The back office.
@@ -48,6 +56,10 @@ export default function Admin({
       { key: "import", label: "Bulk import" },
     ];
     if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
+    // Its own tab rather than a corner of Settings: issuing a code is something
+    // a manager does standing in a bank queue with a phone to their ear, not
+    // something they configure.
+    if (can(user, "approve_discount")) t.push({ key: "approvals", label: "Approvals" });
     if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
     if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
@@ -338,6 +350,8 @@ export default function Admin({
       )}
 
       {tab === "sales" && <SalesHistory pin={pin} />}
+
+      {tab === "approvals" && <Approvals pin={pin} />}
 
       {tab === "cashup" && <CashUp pin={pin} />}
 

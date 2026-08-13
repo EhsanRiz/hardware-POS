@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   approveSale,
+  checkApprovalCode,
   closeQuote,
   fetchCatalogue,
   fetchCategories,
@@ -104,6 +105,10 @@ export default function POS() {
   // counter. Their PIN is held only until the sale is submitted, then dropped —
   // it is never queued, and never written to the device.
   const [approverPin, setApproverPin] = useState<string | null>(null);
+  // A manager's single-use code, when they were not in the building. Only ever
+  // one of the two: a PIN identifies somebody standing here, a code stands in
+  // for somebody who is not.
+  const [approvalCode, setApprovalCode] = useState<string | null>(null);
   const [needsApproval, setNeedsApproval] = useState(false);
   // How to put things back if the manager is not fetched after all. Backing
   // out has to undo the discount that raised the prompt and nothing else: a
@@ -320,6 +325,7 @@ export default function POS() {
     setDiscount(0);
     setDiscountReason(null);
     setApproverPin(null);
+    setApprovalCode(null);
     setFreshId(null);
     setFromQuote(null);
     setTerm("");
@@ -492,6 +498,7 @@ export default function POS() {
         poNumber: p.poNumber,
         customerVatNumber: p.customerVatNumber,
         approverPin,
+        approvalCode,
         customerId: customer?.id ?? null,
         customerName: customer?.name ?? null,
         tradePricing: trade,
@@ -524,10 +531,17 @@ export default function POS() {
       }
 
       clearSale();
+      // A sale the server parked is NOT completed, and saying so was how a
+      // cashier came to hand over a slip that was not an invoice and walk away
+      // believing the sale had gone through. A missing document number is the
+      // tell: queued sales have not got one yet either, so the two are told
+      // apart by which of them the server actually accepted.
       setBanner(
         queued
           ? "Saved on this device — it will sync when the connection returns."
-          : `${sale.doc_number ?? "Sale"} completed.`
+          : sale.status === "pending_approval"
+            ? "Waiting for a manager — no invoice yet. Release it in Manage → Sales."
+            : `${sale.doc_number ?? "Sale"} completed.`
       );
       if (!queued) void refresh();
     } catch (e) {
@@ -856,15 +870,46 @@ export default function POS() {
           title="Manager approval"
           // The whole discount on the sale, not just the blanket one — a line
           // discount used to make this read "Discount of R0.00".
-          subtitle={`Discount of ${money(allDiscount)} needs a manager's PIN`}
-          onApprove={async (pin) => {
-            // Checked against the device credential cache so this works during
-            // an outage too; the server rechecks the approver's permission.
-            const approver = await findByPinOffline(pin);
-            if (!approver || !can(approver, "approve_discount")) {
-              throw new Error("That PIN can't approve discounts");
+          subtitle={`${money(allDiscount)} off — a manager's PIN, or a code they gave you`}
+          onApprove={async (entered) => {
+            // Two things can be typed here, and the difference matters. A PIN
+            // belongs to somebody standing at the till and is checked against
+            // the device credential cache, so approval survives an outage. A
+            // code is a manager's single-use stand-in, read over the phone from
+            // wherever they are — it lives on the server and cannot be checked
+            // here, so it is verified online when it can be and carried with
+            // the sale either way.
+            const approver = await findByPinOffline(entered).catch(() => null);
+            if (approver && can(approver, "approve_discount")) {
+              setApproverPin(entered);
+              setApprovalCode(null);
+              undoDiscount.current = null;
+              setNeedsApproval(false);
+              return;
             }
-            setApproverPin(pin);
+
+            if (online) {
+              const check = await checkApprovalCode(entered);
+              if (!check.ok) {
+                throw new Error(
+                  "Not a PIN that can approve, and not a code we recognise. " +
+                    "A code may have expired or already been used."
+                );
+              }
+              if (check.max_amount != null && allDiscount > check.max_amount + 0.005) {
+                throw new Error(
+                  `That code releases up to ${money(check.max_amount)}, and this is ${money(allDiscount)}.`
+                );
+              }
+            } else if (!approver) {
+              // Offline, the code cannot be checked. Taking it on trust is the
+              // right call — the shop sells through outages and the server
+              // still has the last word at sync — but say so, rather than
+              // implying it has been verified.
+              setBanner("Code taken on trust — the line is down. It will be checked when it syncs.");
+            }
+            setApprovalCode(entered);
+            setApproverPin(null);
             undoDiscount.current = null;
             setNeedsApproval(false);
           }}

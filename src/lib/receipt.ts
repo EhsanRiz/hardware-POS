@@ -157,10 +157,15 @@ export function buildReceiptText(
   shopHeader(out, "TAX INVOICE");
   out.push("");
 
-  // A sale taken offline has no document number until it syncs. Say so plainly
-  // rather than printing a stand-in that looks like an invoice number.
+  // A sale with no document number has not been invoiced, and there are two
+  // quite different reasons for that. One is waiting for a connection; the
+  // other is waiting for a manager. Printing "pending sync" over both told a
+  // customer holding a parked sale that the shop's line was down, which is not
+  // what happened and not what they need to do about it.
   if (sale.doc_number) {
     out.push(`Invoice No: ${sale.doc_number}`);
+  } else if (sale.status === "pending_approval") {
+    out.push("NOT AN INVOICE — awaiting approval");
   } else {
     out.push("Invoice No: pending sync");
   }

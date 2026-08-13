@@ -1135,4 +1135,172 @@ begin
     'and editing the phone number does not lose the bank account');
 end $$;
 
+-- 0039: approving over the phone without giving away a PIN --------------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_emp uuid; v_b uuid; v_pb numeric;
+        v_code text; v_exp timestamptz; v_sale public.sales; v_row record;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select employee_id into v_emp from fixture;
+  select id, price_retail into v_b, v_pb from public.products
+   where active and price_retail > 0 order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  delete from public.approval_codes;
+  update public.app_users
+     set active = true, status = 'active',
+         discount_limit_percent = null, discount_limit_amount = null
+   where id = v_emp;
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null, stock_qty = 1000
+   where id = v_b;
+
+  select code, expires_at into v_code, v_exp
+    from public.pos_issue_approval_code(v_tok, '1234', 10, 100, 'Mr Molefe');
+  perform assert(v_code ~ '^\d{6}$', 'a code is six digits');
+  perform assert(v_exp > now(), 'and it is alive when it is issued');
+
+  -- Nothing anywhere stores the code itself, only its hash — the same bargain
+  -- as a PIN. Nobody can read it back out, including whoever runs the database.
+  perform assert_eq(
+    (select count(*)::int from public.approval_codes where code_hash = v_code), 0,
+    'the code is stored hashed, never in the clear');
+
+  -- The till asks before the cashier is committed to anything.
+  select * into v_row from public.pos_check_approval_code(v_tok, v_code);
+  perform assert(v_row.ok, 'a live code checks out');
+  perform assert_eq(v_row.max_amount, 100::numeric, 'and says what it will carry');
+  select * into v_row from public.pos_check_approval_code(v_tok, '000000');
+  perform assert(not v_row.ok, 'a code nobody issued does not');
+
+  -- It releases the sale, and the sale names the MANAGER who issued it.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 50, p_payment_method => 'cash',
+    p_approval_code => v_code);
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'a code releases the sale');
+  perform assert_eq(v_sale.approved_by, v_mgr,
+    'and the manager who issued it is the approver, not the cashier who typed it');
+  perform assert(v_sale.doc_number is not null, 'so it takes an invoice number');
+
+  -- Single use. Overhearing it is worth nothing once it has been spent.
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb,
+                     p_discount_amount => 50, p_approval_code => %L)$f$,
+      v_tok, v_emp,
+      jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1))::text,
+      v_code),
+    'a code that has already been used');
+  select * into v_row from public.pos_check_approval_code(v_tok, v_code);
+  perform assert(not v_row.ok, 'and it stops checking out too');
+
+  -- The trail: who issued it, who spent it, on what.
+  select * into v_row from public.pos_approval_codes(v_tok, '1234') limit 1;
+  perform assert(v_row.used_at is not null, 'a spent code says so');
+  perform assert_eq(v_row.used_by_name,
+    (select name from public.app_users where id = v_emp),
+    'and names who spent it');
+  perform assert_eq(v_row.doc_number, v_sale.doc_number,
+    'and which invoice it released');
+
+  -- ---- the ceiling ---------------------------------------------------------
+  select code into v_code from public.pos_issue_approval_code(v_tok, '1234', 10, 20);
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb,
+                     p_discount_amount => 50, p_approval_code => %L)$f$,
+      v_tok, v_emp,
+      jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1))::text,
+      v_code),
+    'a code for R20 releasing a R50 discount');
+  -- Refused, and NOT spent: the manager should not have to issue a second one
+  -- because the first was burnt on a sale that never happened.
+  select * into v_row from public.pos_check_approval_code(v_tok, v_code);
+  perform assert(v_row.ok, 'a code refused for being too small is not spent');
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 20, p_payment_method => 'cash',
+    p_approval_code => v_code);
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'and it still works at its ceiling');
+
+  -- ---- expiry --------------------------------------------------------------
+  select code into v_code from public.pos_issue_approval_code(v_tok, '1234', 1);
+  update public.approval_codes set expires_at = now() - interval '1 minute'
+   where used_at is null;
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb,
+                     p_discount_amount => 5, p_approval_code => %L)$f$,
+      v_tok, v_emp,
+      jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1))::text,
+      v_code),
+    'a code that has expired');
+
+  -- But a sale RUNG UP while it was live still goes through when the line comes
+  -- back. This shop sells through outages; a queued sale must not be refused
+  -- because the connection returned late.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 5, p_payment_method => 'cash',
+    p_created_at => now() - interval '5 minutes',
+    p_approval_code => v_code);
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'a sale taken while the code was live syncs later on that code');
+
+  -- ---- what a code may NOT do ---------------------------------------------
+  -- An item cap is not an authority question. No code lifts one.
+  update public.products set max_discount_percent = 5 where id = v_b;
+  select code into v_code from public.pos_issue_approval_code(v_tok, '1234', 10);
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb,
+                     p_discount_amount => %L, p_approval_code => %L)$f$,
+      v_tok, v_emp,
+      jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1))::text,
+      round(v_pb * 0.20, 2), v_code),
+    'a code lifting an item cap');
+  update public.products set max_discount_percent = null where id = v_b;
+
+  -- Only somebody who could approve in person may issue one.
+  perform assert_refuses(
+    format($f$select public.pos_issue_approval_code(%L, '5678', 10)$f$, v_tok),
+    'a counter hand issuing themselves an approval code');
+
+  delete from public.approval_codes;
+  delete from public.approval_attempts;
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
+-- 0039: guessing at codes is not a game you can play --------------------------
+
+do $$
+declare v_tok text; v_row record; v_blocked boolean := false;
+begin
+  select token into v_tok from till;
+  delete from public.approval_attempts;
+
+  for i in 1..10 loop
+    select * into v_row from public.pos_check_approval_code(v_tok, '999999');
+    perform assert(not v_row.ok, 'a wrong code is wrong');
+  end loop;
+
+  begin
+    perform public.pos_check_approval_code(v_tok, '999999');
+  exception when others then
+    v_blocked := true;
+  end;
+  perform assert(v_blocked, 'and a till that keeps guessing stops being answered');
+
+  delete from public.approval_attempts;
+end $$;
+
 select 'all database tests passed' as result;

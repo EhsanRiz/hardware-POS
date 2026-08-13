@@ -197,6 +197,8 @@ export interface CreateSaleInput {
   discountReason: string | null;
   /** Manager's user id when a discount was approved. Re-checked server-side. */
   approvedBy: string | null;
+  /** A manager's single-use code, when one was read over the phone instead. */
+  approvalCode?: string | null;
   /** Cash physically handed over, for working out the change. */
   amountTendered: number | null;
   paidCash: number | null;
@@ -228,6 +230,7 @@ export async function createSale(input: CreateSaleInput): Promise<Sale> {
     p_discount_amount: input.discountAmount,
     p_discount_reason: input.discountReason,
     p_approved_by: input.approvedBy,
+    p_approval_code: input.approvalCode ?? null,
     p_amount_tendered: input.amountTendered,
     p_paid_cash: input.paidCash,
     p_paid_card: input.paidCard,
@@ -240,6 +243,77 @@ export async function createSale(input: CreateSaleInput): Promise<Sale> {
   });
   if (error) throw error;
   return data as Sale;
+}
+
+/**
+ * A single-use code a manager can read over the phone instead of their PIN.
+ *
+ * The whole point is that this is safe to say out loud: it approves one
+ * discount, once, before it expires, and it cannot sign in or open anything.
+ * See supabase/migrations/0039_approval_codes.sql.
+ */
+export async function issueApprovalCode(
+  pin: string,
+  minutes: number,
+  maxAmount: number | null,
+  reason: string | null
+): Promise<{ code: string; expires_at: string }> {
+  const { data, error } = await supabase.rpc("pos_issue_approval_code", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_minutes: minutes,
+    p_max_amount: maxAmount,
+    p_reason: reason,
+  });
+  if (error) throw error;
+  const row = (data as { code: string; expires_at: string }[])?.[0];
+  if (!row) throw new Error("Could not issue a code");
+  return row;
+}
+
+export interface ApprovalCodeCheck {
+  ok: boolean;
+  issued_by_name: string | null;
+  max_amount: number | null;
+  expires_at: string | null;
+}
+
+/**
+ * Is this code live? Asked while the cashier types, so a wrong code is caught
+ * at the counter rather than at the tender screen. It does not spend the code —
+ * that happens with the sale itself, so a code is never burnt on a sale that
+ * then fails.
+ */
+export async function checkApprovalCode(code: string): Promise<ApprovalCodeCheck> {
+  const { data, error } = await supabase.rpc("pos_check_approval_code", {
+    p_register_token: requireToken(),
+    p_code: code,
+  });
+  if (error) throw error;
+  return (data as ApprovalCodeCheck[])?.[0] ?? { ok: false, issued_by_name: null, max_amount: null, expires_at: null };
+}
+
+export interface ApprovalCodeRow {
+  id: string;
+  issued_by_name: string;
+  max_amount: number | null;
+  reason: string | null;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  used_by_name: string | null;
+  doc_number: string | null;
+}
+
+/** What has been issued lately and what became of it — the audit trail. */
+export async function approvalCodes(pin: string): Promise<ApprovalCodeRow[]> {
+  const { data, error } = await supabase.rpc("pos_approval_codes", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_limit: 50,
+  });
+  if (error) throw error;
+  return (data as ApprovalCodeRow[]) ?? [];
 }
 
 /** Release a sale parked for approval. The manager PIN is verified server-side. */

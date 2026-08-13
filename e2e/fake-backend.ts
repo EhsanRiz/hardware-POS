@@ -190,6 +190,16 @@ export class Backend {
   closedSessions: Record<string, unknown>[] = [];
   /** Wrong PINs per person, so the lockout can be asserted on. */
   failedLogins: Record<string, number> = {};
+  /**
+   * Single-use approval codes, as 0039 stores them — minus the hashing, which
+   * is the server's business and not something a browser test can observe.
+   */
+  approvalCodes: {
+    id: string; code: string; issued_by: string; issued_by_name: string;
+    max_amount: number | null; reason: string | null;
+    expires_at: string; used_at: string | null; used_by_name: string | null;
+    doc_number: string | null;
+  }[] = [];
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string> = {
     shop_name: "Ladybrand Hardware",
@@ -337,6 +347,26 @@ export class Backend {
     //   the rand limit    is a ceiling on the whole sale
     //
     // Either half of a limit exceeded sends the sale for approval.
+    // A single-use code, spent with the sale it releases — never before, so a
+    // sale that fails a stock check does not burn the manager's code.
+    const codeTyped = (body.p_approval_code as string) ?? null;
+    let code: (typeof this.approvalCodes)[number] | undefined;
+    if (codeTyped) {
+      code = this.approvalCodes.find(
+        (c) => c.code === codeTyped && !c.used_at && Date.parse(c.expires_at) > Date.now()
+      );
+      if (!code) {
+        throw new Error(
+          "That approval code was not accepted. It may have expired or already been used."
+        );
+      }
+      if (code.max_amount != null && discount > code.max_amount + 0.005) {
+        throw new Error(
+          `That code releases up to ${code.max_amount.toFixed(2)}, and this discount is ${discount.toFixed(2)}.`
+        );
+      }
+    }
+
     const cashier = this.staff.find((u) => u.id === body.p_cashier_id);
     const limitPct = cashier?.discount_limit_percent ?? null;
     const limitAmt = cashier?.discount_limit_amount ?? null;
@@ -410,7 +440,9 @@ export class Backend {
       payment_method: (body.p_payment_method as string) ?? "cash",
       discount_amount: discount,
       discount_reason: (body.p_discount_reason as string) ?? null,
-      approved_by: (body.p_approved_by as string) ?? null,
+      // The approver is the manager who ISSUED the code, not the cashier who
+      // typed it — anything else puts the wrong name on the invoice.
+      approved_by: code ? code.issued_by : ((body.p_approved_by as string) ?? null),
       created_at: (body.p_created_at as string) ?? null,
       total,
       payments,
@@ -427,7 +459,13 @@ export class Backend {
           : null,
     };
     this.sales.push(sale);
-    return this.saleRow(sale, true);
+    const row = this.saleRow(sale, true);
+    if (code) {
+      code.used_at = new Date().toISOString();
+      code.used_by_name = cashier?.name ?? null;
+      code.doc_number = row.doc_number;
+    }
+    return row;
   }
 
   private saleRow(sale: RecordedSale, fresh: boolean) {
@@ -962,6 +1000,55 @@ export async function installBackend(page: Page): Promise<Backend> {
             tenders,
           },
         });
+      }
+
+      case "rpc/pos_issue_approval_code": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const minutes = Number(body.p_minutes ?? 10);
+        const expires = new Date(Date.now() + minutes * 60_000).toISOString();
+        // Fixed digits: a test that cannot read the code back cannot assert on
+        // anything it does. The server draws them at random.
+        const made = String(100000 + be.approvalCodes.length);
+        be.approvalCodes.unshift({
+          id: "ac" + (be.approvalCodes.length + 1),
+          code: made,
+          issued_by: USERS.manager.row.id,
+          issued_by_name: USERS.manager.row.name,
+          max_amount: body.p_max_amount == null ? null : Number(body.p_max_amount),
+          reason: (body.p_reason as string) ?? null,
+          expires_at: expires,
+          used_at: null,
+          used_by_name: null,
+          doc_number: null,
+        });
+        return json([{ code: made, expires_at: expires }]);
+      }
+
+      case "rpc/pos_check_approval_code": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const hit = be.approvalCodes.find(
+          (c) =>
+            c.code === body.p_code &&
+            !c.used_at &&
+            Date.parse(c.expires_at) > Date.now()
+        );
+        return json([
+          hit
+            ? {
+                ok: true,
+                issued_by_name: hit.issued_by_name,
+                max_amount: hit.max_amount,
+                expires_at: hit.expires_at,
+              }
+            : { ok: false, issued_by_name: null, max_amount: null, expires_at: null },
+        ]);
+      }
+
+      case "rpc/pos_approval_codes": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(be.approvalCodes.map((c) => ({ ...c, created_at: c.expires_at })));
       }
 
       case "rpc/pos_approve_sale": {

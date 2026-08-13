@@ -24,6 +24,13 @@ export interface QueuedSalePayload {
   /** Verified against the device credential cache at the time of sale. */
   approvedBy: string | null;
   approvedByName: string | null;
+  /**
+   * A manager's single-use approval code, if one released this sale. It cannot
+   * be verified on the device, so it rides the queue and is spent at sync — a
+   * sale taken while the code was live is honoured even if the line comes back
+   * after it expired.
+   */
+  approvalCode?: string | null;
   customerId: string | null;
   customerName: string | null;
   tradePricing: boolean;
