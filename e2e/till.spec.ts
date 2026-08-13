@@ -553,6 +553,27 @@ test("money can come off one line without touching the others", async ({ page })
   await expect(slip).toContainText("145.00");
 });
 
+test("the per-line discount is a key you can see, not a hidden tap", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // It hid behind the amount figure at first, which reads as text and offers
+  // nothing to press on a tablet, where there is no hover to reveal it. A
+  // feature nobody can find is a feature nobody has.
+  const key = page.locator(".line-row").getByRole("button", { name: /Discount Cement/i });
+  await expect(key).toBeVisible();
+  await expect(key).toHaveText("%");
+  await expect(key).not.toHaveClass(/is-set/);
+
+  await key.click();
+  await page.getByLabel("Discount amount").fill("15");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // And once it has one, the key says so without being read.
+  await expect(key).toHaveClass(/is-set/);
+});
+
 test("a line discount survives being taken offline", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
 

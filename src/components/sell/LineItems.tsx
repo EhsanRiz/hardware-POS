@@ -46,6 +46,9 @@ export default function LineItems({
         <span className="line-qty">Qty</span>
         <span className="line-unit">Unit</span>
         <span className="line-amt">Amount</span>
+        {/* Two empty cells: the discount key and the remove key. The header
+            shares the row grid, so a missing one shifts every column under it. */}
+        <span />
         <span />
       </div>
 
@@ -145,20 +148,7 @@ export default function LineItems({
               </span>
 
               <span className="line-amt">
-                {/* The amount is where a discount is asked for, because it is
-                    the figure being argued about. */}
-                {onDiscountLine ? (
-                  <button
-                    className="line-amt-btn"
-                    onClick={() => onDiscountLine(p.id)}
-                    aria-label={`Discount ${p.name}`}
-                    title="Take money off this line"
-                  >
-                    {money(priceOf(l) * l.qty, { currency: false })}
-                  </button>
-                ) : (
-                  money(priceOf(l) * l.qty, { currency: false })
-                )}
+                {money(priceOf(l) * l.qty, { currency: false })}
                 {!!l.discount && l.discount > 0 && (
                   <span className="line-disc">
                     {l.discountPercent ? `less ${l.discountPercent}% ` : "less "}
@@ -166,6 +156,21 @@ export default function LineItems({
                   </span>
                 )}
               </span>
+
+              {/* Money off THIS line. It hid behind the amount figure at first,
+                  which reads as text and offers nothing to tap on a tablet
+                  where there is no hover to reveal it. A feature nobody can
+                  find is a feature nobody has. */}
+              {onDiscountLine && (
+                <button
+                  className={`line-off${l.discount ? " is-set" : ""}`}
+                  onClick={() => onDiscountLine(p.id)}
+                  aria-label={`Discount ${p.name}`}
+                  title="Take money off this line"
+                >
+                  %
+                </button>
+              )}
 
               <button
                 className="line-del"
