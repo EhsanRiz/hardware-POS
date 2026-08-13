@@ -551,6 +551,20 @@
 }
 .cash-in input::placeholder { color: var(--color-neutral-300); }
 
+/* A settled sale has nothing left to size, so the entry recedes instead of
+   sitting there looking like it will still take a figure. */
+.cash-in.is-shut { opacity: 0.45; }
+.cash-in.is-shut input { cursor: not-allowed; }
+
+/* The tender that took the money, marked on the button itself. The row above
+   already lists it, but the eye goes to the grid it was just tapped in. */
+.tender-btn.is-taken {
+  border-color: var(--color-accent);
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-900);
+}
+.tender-btn.is-taken:disabled { opacity: 1; }
+
 .keypad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .keypad button {
   min-height: 52px;
