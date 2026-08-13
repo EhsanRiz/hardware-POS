@@ -55,6 +55,65 @@ test("pairing is refused with the wrong PIN", async ({ page }) => {
   await expect(page.getByText("Set up this till")).toBeVisible();
 });
 
+test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+
+  // The till names who may sign in before it asks anybody to prove it.
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+
+  // Sam types the manager's PIN. It is a real PIN — it is simply not Sam's, and
+  // the old sign-in would have looked up whoever owned it and signed them in as
+  // the manager.
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = page.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await expect(page.getByText(/PIN was not recognised/i)).toBeVisible();
+
+  // Sam's own PIN works, and the shift starts under Sam's name.
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  if (await ok.count()) await ok.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await expect(page.getByText("Sam")).toBeVisible();
+});
+
+test("a handover puts the next operator on their own name", async ({ page }) => {
+  // The manager finishes a shift.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+
+  // The counter hand takes over. Picking the wrong name is one tap to undo —
+  // otherwise the only way back is to type a PIN you know will be refused.
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  await page.getByRole("button", { name: /^Manager\b/ }).click();
+  await expect(page.getByText(/Manager.*enter your PIN/i)).toBeVisible();
+  await page.getByRole("button", { name: /Not Manager\?/i }).click();
+
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = page.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+
+  // The sale that follows is rung up by Sam, which is the point of the whole
+  // exercise: the name on the invoice is the person who was standing there.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales[0].cashier_id).toBe(USERS.employee.row.id);
+});
+
 test("scanning a barcode rings the item straight through", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");

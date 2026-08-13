@@ -168,6 +168,8 @@ export class Backend {
   cashMovements: { id: string; kind: string; amount: number; reason: string;
                    by_name: string; created_at: string }[] = [];
   closedSessions: Record<string, unknown>[] = [];
+  /** Wrong PINs per person, so the lockout can be asserted on. */
+  failedLogins: Record<string, number> = {};
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string> = {
     shop_name: "Ladybrand Hardware",
@@ -435,8 +437,19 @@ export async function installBackend(page: Page): Promise<Backend> {
       }
       case "rpc/pos_login": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        const hit = Object.values(USERS).find((u) => u.pin === body.p_pin);
-        return json(hit ? [hit.row] : []);
+        // The PIN confirms an identity now; it does not choose one. A PIN that
+        // is right for somebody else is simply wrong here, which is the whole
+        // point of naming who is signing in.
+        const target = Object.values(USERS).find((u) => u.row.id === body.p_user_id);
+        if (!target) return json([]);
+        const tries = be.failedLogins[target.row.id] ?? 0;
+        if (tries >= 5) return fail(`Too many wrong PINs for ${target.row.name}. Try again in 15 minutes.`);
+        if (target.pin !== body.p_pin) {
+          be.failedLogins[target.row.id] = tries + 1;
+          return json([]);
+        }
+        delete be.failedLogins[target.row.id];
+        return json([target.row]);
       }
       case "rpc/pos_list_customers":
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -743,6 +756,16 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
         return json(be.closedSessions);
 
+      case "rpc/pos_staff_for_login":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // Only people who can actually sign in: active, with a PIN set.
+        return json(
+          be.staff
+            .filter((u) => u.active && u.status === "active")
+            .map((u) => ({ id: u.id, name: u.name, role: u.role }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+
       case "rpc/pos_admin_list_users":
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
@@ -840,6 +863,10 @@ export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.locator('input[type=tel]').fill(USERS.manager.phone);
   await page.locator('input[type=password]').fill(USERS.manager.pin);
   await page.getByRole("button", { name: /Pair this till/i }).click();
+  // Sign-in names who is on the till before it offers a PIN pad, so the person
+  // is chosen first and the keys only exist afterwards.
+  const person = Object.values(USERS).find((u) => u.pin === pin)!;
+  await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
   const ok = page.locator('button:text-is("OK")');

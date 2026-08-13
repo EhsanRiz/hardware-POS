@@ -12,7 +12,7 @@ import {
   type QuoteSummary,
 } from "../lib/api";
 import { adminListProducts, stockMovements } from "../lib/adminApi";
-import { verifyPinOffline } from "../lib/auth";
+import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
 import { money } from "../lib/money";
@@ -700,7 +700,7 @@ export default function POS() {
           onApprove={async (pin) => {
             // Checked against the device credential cache so this works during
             // an outage too; the server rechecks the approver's permission.
-            const approver = await verifyPinOffline(pin);
+            const approver = await findByPinOffline(pin);
             if (!approver || !can(approver, "approve_discount")) {
               throw new Error("That PIN can't approve discounts");
             }

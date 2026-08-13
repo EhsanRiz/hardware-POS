@@ -285,3 +285,14 @@ export interface StockMovement {
   by_name: string | null;
   note: string | null;
 }
+
+/**
+ * A name on the sign-in screen. Deliberately the least that will do: no phone,
+ * no permissions, nothing about a PIN — this list is shown before anybody has
+ * proved who they are.
+ */
+export interface LoginCandidate {
+  id: string;
+  name: string;
+  role: "admin" | "manager" | "employee";
+}

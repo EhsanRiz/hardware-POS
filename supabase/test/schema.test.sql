@@ -348,4 +348,107 @@ begin
     'a cashier editing the shop');
 end $$;
 
+-- 0033: a PIN confirms who you are; it no longer decides it ------------------
+--
+-- The hole this closes: nothing requires a PIN to be unique, so two people
+-- choosing the same six digits used to mean the second signed in AS the first.
+
+do $$
+declare v_tok text; v_mgr uuid; v_twin uuid; v_row record; v_n int;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+
+  -- Somebody who deliberately picks the manager's PIN. Not an attack — just
+  -- two people who both like the same six digits.
+  select id into v_twin from public.pos_admin_invite_user(
+    v_tok, '1234', 'PIN twin', '+27820000007', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('1234', gen_salt('bf')) where id = v_twin;
+
+  -- Each signs in as themselves, on the same PIN, and gets their own identity.
+  select * into v_row from public.pos_login(v_tok, v_mgr, '1234');
+  perform assert_eq(v_row.id, v_mgr, 'the manager signs in as the manager');
+  select * into v_row from public.pos_login(v_tok, v_twin, '1234');
+  perform assert_eq(v_row.id, v_twin, 'and the twin signs in as the twin, on the same PIN');
+
+  -- The old PIN-only form now refuses rather than guessing. Returning either
+  -- one would be worse than returning none: a day's sales under a name that
+  -- did not ring them up is a lie nobody goes looking for.
+  select count(*) into v_n from public.pos_login(v_tok, '1234');
+  perform assert_eq(v_n, 0, 'a PIN shared by two people signs nobody in');
+
+  -- And every privileged RPC says so out loud rather than picking one.
+  perform assert_refuses(
+    format('select public.pos_admin_list_users(%L, %L)', v_tok, '1234'),
+    'a shared PIN reaching the back office');
+
+  -- Cleaned up, or it poisons the checks below.
+  delete from public.login_attempts;
+  delete from public.app_users where id = v_twin;
+
+  -- With the PIN unique again, the old form works exactly as before.
+  select count(*) into v_n from public.pos_login(v_tok, '1234');
+  perform assert_eq(v_n, 1, 'a unique PIN still signs its owner in');
+end $$;
+
+-- Naming people means an attacker can choose a target, so guessing is capped.
+do $$
+declare v_tok text; v_mgr uuid; v_n int; v_locked boolean := false;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  delete from public.login_attempts;
+
+  for i in 1..5 loop
+    select count(*) into v_n from public.pos_login(v_tok, v_mgr, '000000');
+    perform assert_eq(v_n, 0, 'a wrong PIN signs nobody in');
+  end loop;
+
+  -- The sixth is refused outright, and says so rather than reading as another
+  -- wrong PIN — otherwise the cashier tries the same digits for a quarter hour.
+  begin
+    perform public.pos_login(v_tok, v_mgr, '000000');
+  exception when others then
+    v_locked := true;
+  end;
+  perform assert(v_locked, 'five wrong PINs lock the account');
+
+  -- Even the right PIN is refused while locked, or the cap means nothing.
+  begin
+    perform public.pos_login(v_tok, v_mgr, '1234');
+  exception when others then
+    null;
+  end;
+
+  -- A success clears the slate, so an honest mis-type does not accumulate.
+  delete from public.login_attempts;
+  select count(*) into v_n from public.pos_login(v_tok, v_mgr, '1234');
+  perform assert_eq(v_n, 1, 'the right PIN works once the window has passed');
+  perform assert_eq(
+    (select count(*)::int from public.login_attempts where user_id = v_mgr), 0,
+    'and signing in clears the failures behind it');
+end $$;
+
+-- The sign-in roster carries names, and nothing else worth having.
+do $$
+declare v_tok text; v_row record; v_invited uuid;
+begin
+  select token into v_tok from till;
+
+  select id into v_invited from public.pos_admin_invite_user(
+    v_tok, '1234', 'Not enrolled yet', '+27820000008', 'employee'::user_role, array[]::text[]);
+
+  -- Somebody who has never set a PIN is left off: offering a name that cannot
+  -- sign in only has the cashier standing there trying.
+  perform assert(
+    not exists (select 1 from public.pos_staff_for_login(v_tok) s where s.id = v_invited),
+    'an invited person with no PIN is not offered on the sign-in screen');
+
+  select * into v_row from public.pos_staff_for_login(v_tok) limit 1;
+  perform assert(v_row.name is not null, 'the roster carries a name');
+
+  delete from public.app_users where id = v_invited;
+end $$;
+
 select 'all database tests passed' as result;
