@@ -1303,4 +1303,70 @@ begin
   delete from public.approval_attempts;
 end $$;
 
+-- 0040: telling a phone approval from one given at the counter ----------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_emp uuid; v_b uuid; v_code text;
+        v_sale public.sales; v_hist jsonb; v_row jsonb;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select employee_id into v_emp from fixture;
+  select id into v_b from public.products
+   where active and price_retail > 0 order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  delete from public.approval_codes;
+  update public.app_users
+     set active = true, status = 'active',
+         discount_limit_percent = null, discount_limit_amount = null
+   where id = v_emp;
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null, stock_qty = 1000
+   where id = v_b;
+
+  -- One released by a manager standing at the till.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 10, p_payment_method => 'cash',
+    p_approved_by => v_mgr);
+  perform assert_eq(v_sale.status, 'completed'::sale_status, 'a PIN releases it');
+
+  -- And one released down a phone line.
+  select code into v_code from public.pos_issue_approval_code(v_tok, '1234', 10);
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 10, p_payment_method => 'cash',
+    p_approval_code => v_code);
+  perform assert_eq(v_sale.status, 'completed'::sale_status, 'so does a code');
+
+  v_hist := public.pos_sales_history(
+    v_tok, '1234', now() - interval '1 hour', now() + interval '1 hour');
+
+  -- Both name the manager, because both were the manager's decision. Only one
+  -- of them was made by somebody who could see the counter.
+  select r into v_row from jsonb_array_elements(v_hist->'rows') r
+   where (r->>'id')::uuid = v_sale.id;
+  perform assert_eq(v_row->>'approved_by_name',
+    (select name from public.app_users where id = v_mgr),
+    'the sales list says who released it');
+  perform assert_eq((v_row->>'approved_by_code')::boolean, true,
+    'and that this one was released by a code');
+
+  select r into v_row from jsonb_array_elements(v_hist->'rows') r
+   where (r->>'approved_by_code')::boolean is false;
+  perform assert_eq(v_row->>'approved_by_name',
+    (select name from public.app_users where id = v_mgr),
+    'while the one approved at the counter names the same manager');
+
+  delete from public.approval_codes;
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
 select 'all database tests passed' as result;

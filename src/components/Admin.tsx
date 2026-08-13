@@ -149,15 +149,23 @@ export default function Admin({
   }
 
   return (
-    <div className="fixed inset-0 bg-stone-50 z-40 flex flex-col">
-      <header className="flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-200">
-        <h1 className="text-lg font-semibold">Manage</h1>
-        <nav className="flex gap-1 ml-4">
+    // 100dvh, not just inset-0: a phone's address bar overlays the layout
+    // viewport, so the bottom of the last card sat underneath it with no way to
+    // scroll clear. The dynamic unit tracks the chrome as it comes and goes.
+    <div className="fixed inset-0 h-[100dvh] bg-stone-50 z-40 flex flex-col">
+      <header className="flex items-center gap-2 px-4 py-3 bg-white border-b border-stone-200">
+        <h1 className="text-lg font-semibold shrink-0">Manage</h1>
+        {/* Built for a tablet, then opened on a manager's phone — where seven
+            tabs do not fit, "Bulk import" wrapped onto two lines, and Staff and
+            Shop were off the right-hand edge with nothing to say so. The row
+            scrolls now: min-w-0 lets it shrink below its content so the
+            overflow actually engages, and nothing inside it wraps. */}
+        <nav className="flex gap-1 ml-1 min-w-0 overflow-x-auto">
           {tabs.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`px-3 py-1.5 rounded-lg text-sm ${
+              className={`px-3 py-1.5 rounded-lg text-sm shrink-0 whitespace-nowrap ${
                 tab === t.key ? "bg-stone-800 text-white" : "text-stone-600"
               }`}
             >
@@ -165,7 +173,10 @@ export default function Admin({
             </button>
           ))}
         </nav>
-        <button onClick={onClose} className="ml-auto text-stone-500 px-3 py-1.5">
+        <button
+          onClick={onClose}
+          className="ml-auto shrink-0 text-stone-500 px-2 py-1.5 text-sm whitespace-nowrap"
+        >
           Back to till
         </button>
       </header>
@@ -240,7 +251,11 @@ export default function Admin({
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          {/* overflow-x too: the catalogue is a wide table and on a phone it
+              was pushing the whole page sideways, so the header and the tab
+              strip slid off with it. A table that scrolls inside its own box
+              keeps that to the table. */}
+          <div className="flex-1 overflow-y-auto overflow-x-auto">
             {loading ? (
               <p className="p-6 text-center text-stone-500">Loading…</p>
             ) : (

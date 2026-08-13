@@ -60,3 +60,58 @@ for (const device of DEVICES) {
     });
   });
 }
+
+/**
+ * The back office on a manager's phone.
+ *
+ * Manage was built for a tablet and then opened on a phone the day approval
+ * codes shipped — because issuing one is something a manager does standing in a
+ * bank queue, not at a counter. Seven tabs did not fit: "Bulk import" wrapped
+ * onto two lines, and Staff and Shop were off the right-hand edge with nothing
+ * on screen to suggest they existed.
+ */
+test.describe("manager's phone, 390", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("every Manage tab is reachable, and nothing wraps", async ({ page }) => {
+    const be = await installBackend(page);
+    void be;
+    await pairAndSignIn(page, "1234");
+
+    await page.getByRole("button", { name: /^Manage$/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage" });
+    for (const d of "1234".split("")) {
+      await dialog.locator(`button:text-is("${d}")`).first().click();
+    }
+    await dialog.locator('button:text-is("OK")').click();
+
+    // The header must fit the phone. Not the whole document: the Sell screen is
+    // still mounted underneath and is built for a tablet, which is a separate
+    // question — nobody rings up a sale on a phone. What matters here is that
+    // the back office fits the device a manager actually carries.
+    const header = page.locator("header").filter({ hasText: "Manage" }).first();
+    const box = await header.boundingBox();
+    expect(box!.width, "header width").toBeLessThanOrEqual(390);
+
+    // The strip itself scrolls rather than squeezing — that is the mechanism.
+    const strip = page.locator("nav").filter({ hasText: "Catalogue" }).first();
+    const scrolls = await strip.evaluate((n) => n.scrollWidth > n.clientWidth);
+    expect(scrolls, "the tab strip scrolls instead of cramming").toBe(true);
+
+    // Every tab is one line. A wrapped label is the tell that the row is being
+    // squeezed rather than scrolled.
+    for (const label of ["Catalogue", "Bulk import", "Sales", "Approvals", "Shop"]) {
+      const tab = page.getByRole("button", { name: label, exact: true });
+      const box = await tab.boundingBox();
+      expect(box, `${label} is present`).not.toBeNull();
+      expect(box!.height, `${label} on one line`).toBeLessThan(44);
+    }
+
+    // And the far tab can actually be reached and used.
+    await page.getByRole("button", { name: "Shop", exact: true }).click();
+    await expect(page.getByLabel("Shop name")).toBeVisible();
+
+    // Leaving is always available, however narrow it gets.
+    await expect(page.getByRole("button", { name: /Back to till/i })).toBeVisible();
+  });
+});

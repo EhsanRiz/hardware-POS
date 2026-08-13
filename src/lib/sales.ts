@@ -20,6 +20,14 @@ export interface SaleRow {
   tax_amount: number;
   discount_amount: number;
   discount_reason: string | null;
+  /** Who released a discount on this sale, if anybody had to. */
+  approved_by_name?: string | null;
+  /**
+   * Whether that release came from a code read over the phone rather than a
+   * PIN typed at the till. Both are the manager's decision; only one of them
+   * was made by somebody who could see the counter.
+   */
+  approved_by_code?: boolean | null;
   paid_cash: number | null;
   paid_card: number | null;
   status: "completed" | "pending_approval" | "voided";
