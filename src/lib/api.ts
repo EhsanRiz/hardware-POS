@@ -12,6 +12,7 @@
 import { registerToken } from "./device";
 import { supabase } from "./supabase";
 import type {
+  LoginCandidate,
   AccountRow,
   Category,
   Customer,
@@ -51,9 +52,26 @@ export function requireToken(): string {
  * shops' staff may well pick the same six digits, and neither must ever
  * resolve to the other. That is also why sign-in needs no phone number.
  */
-export async function login(pin: string): Promise<User | null> {
+/** Who may sign in at this till: names and roles, nothing else. */
+export async function staffForLogin(): Promise<LoginCandidate[]> {
+  const { data, error } = await supabase.rpc("pos_staff_for_login", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  return (data as LoginCandidate[]) ?? [];
+}
+
+/**
+ * Sign in as a named person.
+ *
+ * The id is what identifies them; the PIN only confirms it. Passing the PIN
+ * alone used to be enough, which is precisely the problem — nothing requires a
+ * PIN to be unique, so it was never a safe way to say who somebody is.
+ */
+export async function login(userId: string, pin: string): Promise<User | null> {
   const { data, error } = await supabase.rpc("pos_login", {
     p_register_token: requireToken(),
+    p_user_id: userId,
     p_pin: pin,
   });
   if (error) throw error;

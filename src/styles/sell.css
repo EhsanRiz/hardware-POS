@@ -922,6 +922,44 @@
 /* The two ways off the sign-in screen. Quiet by design — a cashier signing in
    normally should not notice them, and a cashier who is stuck must be able to
    find them without asking anybody. */
+/* The roster on the sign-in screen. Big targets: this is tapped on a tablet
+   with a queue waiting, often by somebody whose hands are not clean. */
+.login-who {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.login-who button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-neutral-300);
+  border-radius: 12px;
+  background: var(--color-bg);
+  cursor: pointer;
+  text-align: left;
+}
+.login-who button:hover { border-color: var(--color-accent); }
+.login-who-name { font-size: 16px; color: var(--color-neutral-900); }
+.login-who-role { font-size: 13px; color: var(--color-neutral-700); }
+.login-back {
+  background: none;
+  border: 0;
+  padding: 4px;
+  font-size: 14px;
+  color: var(--color-neutral-700);
+  cursor: pointer;
+}
+.login-back:hover { color: var(--color-accent); }
+
 .login-outs {
   display: flex;
   align-items: center;

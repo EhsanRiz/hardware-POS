@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { createSale } from "./api";
 import { errorMessage } from "./errors";
-import { verifyPinOffline } from "./auth";
+import { findByPinOffline } from "./auth";
 import { isNetworkError, isOnline, onNetworkChange } from "./offline";
 import { can } from "./permissions";
 import {
@@ -70,7 +70,7 @@ async function resolveApprover(
   pin: string | null
 ): Promise<{ id: string; name: string } | null> {
   if (!pin) return null;
-  const approver = await verifyPinOffline(pin);
+  const approver = await findByPinOffline(pin);
   if (!approver) {
     throw new Error("Manager PIN not recognised on this device");
   }

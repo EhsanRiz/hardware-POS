@@ -10,10 +10,10 @@
 // a per-credential random salt + PBKDF2 (150k iterations) so a stolen device
 // can't read PINs at a glance, but this is a shop tablet trade-off, not a
 // high-security vault.
-import { login as serverLogin } from "./api";
+import { login as serverLogin, staffForLogin } from "./api";
 import { cacheGet, cacheSet } from "./localCache";
 import { isOnline, isNetworkError } from "./offline";
-import type { User } from "./types";
+import type { LoginCandidate, User } from "./types";
 
 const CREDS_KEY = "auth.creds";
 const ITERATIONS = 150_000;
@@ -68,25 +68,87 @@ async function cacheCredential(pin: string, user: User): Promise<void> {
   cacheSet(CREDS_KEY, creds);
 }
 
-/** Verify a PIN against the on-device credential cache (offline path). */
-export async function verifyPinOffline(pin: string): Promise<User | null> {
-  const creds = cacheGet<Credential[]>(CREDS_KEY, []);
-  for (const c of creds) {
-    const hash = await derive(pin, c.salt, c.iter);
-    if (hash === c.hash) return c.user;
-  }
-  return null;
+/**
+ * Verify a PIN against this person's cached credential (offline path).
+ *
+ * Keyed by who is signing in, not searched across everybody. The old version
+ * walked every cached credential and returned the first PIN that matched, which
+ * is the same flaw the server had: two people sharing six digits meant the
+ * second became the first, on the device as well as in the database.
+ */
+export async function verifyPinOffline(
+  userId: string,
+  pin: string
+): Promise<User | null> {
+  const cred = cacheGet<Credential[]>(CREDS_KEY, []).find(
+    (c) => c.user.id === userId
+  );
+  if (!cred) return null;
+  const hash = await derive(pin, cred.salt, cred.iter);
+  return hash === cred.hash ? cred.user : null;
 }
 
 /**
- * Sign in by PIN. Tries the server when online (and refreshes the offline
- * credential), and falls back to the cached credential when the network is
- * unavailable. Returns null for a genuinely wrong PIN.
+ * Find a manager by PIN alone, for an over-the-shoulder approval.
+ *
+ * Sign-in asks who you are first; this cannot, because a manager leans over a
+ * colleague's till and types a PIN with a customer waiting. So it searches —
+ * but it refuses when the PIN matches more than one cached person rather than
+ * returning whichever came first, which would put somebody else's name against
+ * the approval. The server applies the same rule.
  */
-export async function signIn(pin: string): Promise<User | null> {
+export async function findByPinOffline(pin: string): Promise<User | null> {
+  const creds = cacheGet<Credential[]>(CREDS_KEY, []);
+  const hits: User[] = [];
+  for (const c of creds) {
+    const hash = await derive(pin, c.salt, c.iter);
+    if (hash === c.hash) hits.push(c.user);
+  }
+  if (hits.length > 1) {
+    throw new Error(
+      "That PIN belongs to more than one person. Change one of them before using it."
+    );
+  }
+  return hits[0] ?? null;
+}
+
+/** Whether this person has ever signed in online on this till. */
+export function canSignInOffline(userId: string): boolean {
+  return cacheGet<Credential[]>(CREDS_KEY, []).some((c) => c.user.id === userId);
+}
+
+const ROSTER_KEY = "auth.roster";
+
+/**
+ * Who to offer on the sign-in screen.
+ *
+ * Refreshed from the server whenever it can be, and cached so the list is still
+ * there with the line down — a till that cannot name its own staff cannot let
+ * anybody start a shift, and the whole point of this app is that it keeps
+ * selling through an outage.
+ */
+export async function loginRoster(): Promise<LoginCandidate[]> {
   if (isOnline()) {
     try {
-      const user = await serverLogin(pin);
+      const staff = await staffForLogin();
+      if (staff.length > 0) cacheSet(ROSTER_KEY, staff);
+      return staff;
+    } catch (e) {
+      if (!isNetworkError(e)) throw e;
+    }
+  }
+  return cacheGet<LoginCandidate[]>(ROSTER_KEY, []);
+}
+
+/**
+ * Sign in as a named person. Tries the server when online (and refreshes the
+ * offline credential), and falls back to that person's cached credential when
+ * the network is unavailable. Returns null for a genuinely wrong PIN.
+ */
+export async function signIn(userId: string, pin: string): Promise<User | null> {
+  if (isOnline()) {
+    try {
+      const user = await serverLogin(userId, pin);
       if (user) await cacheCredential(pin, user);
       return user;
     } catch (e) {
@@ -94,5 +156,5 @@ export async function signIn(pin: string): Promise<User | null> {
       // Network died mid-attempt — fall through to the offline check.
     }
   }
-  return verifyPinOffline(pin);
+  return verifyPinOffline(userId, pin);
 }

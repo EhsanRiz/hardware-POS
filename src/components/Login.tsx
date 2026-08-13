@@ -1,42 +1,76 @@
-import { useState } from "react";
-import { signIn } from "../lib/auth";
+import { useEffect, useState } from "react";
+import { canSignInOffline, loginRoster, signIn } from "../lib/auth";
 import { ENROL_URL } from "../lib/config";
 import { useAuth } from "../context/AuthContext";
 import { shopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
 import { errorMessage } from "../lib/errors";
+import { isOnline } from "../lib/offline";
 import { usePendingSync } from "../lib/sync";
 import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
+import type { LoginCandidate } from "../lib/types";
 
 /**
  * Daily sign-in.
  *
- * A PIN and nothing else. The till already knows which shop it belongs to — it
- * was paired once with a manager's phone and PIN — so the org is implied by the
- * device and the cashier never types a phone number to start their shift. It
- * works with the line down, because the credential is verified against a cached
- * hash when the server cannot be reached.
+ * Pick your name, then prove it with your PIN. The till already knows which
+ * shop it belongs to — it was paired once with a manager's phone and PIN — so
+ * the org is implied by the device and the cashier never types a phone number
+ * to start their shift. It works with the line down, because the roster is
+ * cached and the credential is verified against a cached hash when the server
+ * cannot be reached.
+ *
+ * The name is not decoration. Sign-in used to take a PIN alone and look up
+ * whoever owned it, and nothing requires a PIN to be unique — so two people
+ * choosing the same six digits meant the second silently became the first.
+ * Choosing a name makes the PIN confirm an identity instead of deciding one,
+ * which is what lets a cashier be held to what was rung up under their name.
+ *
+ * It is also the handover: a manager finishes, taps Sign out, and the next
+ * operator picks their own name rather than inheriting the screen.
  *
  * Two ways out, because a screen that can only be satisfied by remembering
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
  */
+const ROLE_LABEL: Record<LoginCandidate["role"], string> = {
+  admin: "Owner",
+  manager: "Manager",
+  employee: "Counter",
+};
+
 export default function Login() {
   const { setUser } = useAuth();
   const { pending } = usePendingSync();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  const [roster, setRoster] = useState<LoginCandidate[] | null>(null);
+  const [who, setWho] = useState<LoginCandidate | null>(null);
+
+  useEffect(() => {
+    void loginRoster().then(setRoster, () => setRoster([]));
+  }, []);
+
+  // Somebody who has never signed in on this till has no cached credential, so
+  // offline there is nothing to check their PIN against. Saying so beats a
+  // "wrong PIN" they cannot do anything about.
+  const offlineStranger = !!who && !isOnline() && !canSignInOffline(who.id);
 
   const handle = async (pin: string) => {
+    if (!who) return;
     setBusy(true);
     setError(null);
     try {
-      const user = await signIn(pin);
+      const user = await signIn(who.id, pin);
       if (!user) {
-        setError("That PIN was not recognised.");
+        setError(
+          offlineStranger
+            ? `${who.name} has not signed in on this till before, so it cannot check their PIN while the line is down.`
+            : "That PIN was not recognised."
+        );
       } else {
         setUser(user);
       }
@@ -61,8 +95,46 @@ export default function Login() {
       </div>
 
       <div className="login-body">
-        <p className="login-prompt">Enter your PIN to sign in</p>
-        <PinPad onSubmit={handle} busy={busy} />
+        {!who ? (
+          <>
+            <p className="login-prompt">Who is on the till?</p>
+            {roster === null ? (
+              <p className="login-prompt">Loading…</p>
+            ) : roster.length === 0 ? (
+              /* No roster and no cache. Rather than a dead screen, name the two
+                 things that actually cause it. */
+              <p className="login-prompt">
+                Nobody on this shop's staff list has set a PIN yet, or this till
+                has not reached the server since it was paired. A manager can
+                add staff from Manage on a till that is online.
+              </p>
+            ) : (
+              <ul className="login-who">
+                {roster.map((c) => (
+                  <li key={c.id}>
+                    <button onClick={() => { setWho(c); setError(null); }}>
+                      <span className="login-who-name">{c.name}</span>
+                      <span className="login-who-role">{ROLE_LABEL[c.role]}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="login-prompt">
+              <strong>{who.name}</strong> — enter your PIN
+            </p>
+            <PinPad onSubmit={handle} busy={busy} />
+            <button
+              className="login-back"
+              onClick={() => { setWho(null); setError(null); }}
+            >
+              Not {who.name}?
+            </button>
+          </>
+        )}
         {error && (
           <p className="login-error" role="alert">
             {error}
