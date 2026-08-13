@@ -194,7 +194,7 @@ claim by typing into it. See [`landing/README.md`](landing/README.md).
 
 ## Deploying (Cloudflare Workers)
 
-The till deploys as its own Worker, `innovaearth-pos-app`, served at
+The till deploys as its own Worker, `hardware-pos`, served at
 **app.innovaearth.com**:
 
 ```bash
@@ -202,7 +202,7 @@ npm run build
 npx wrangler deploy
 ```
 
-Then attach the hostname: **Workers & Pages → innovaearth-pos-app → Settings →
+Then attach the hostname: **Workers & Pages → hardware-pos → Settings →
 Domains & Routes → Add custom domain → app.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.

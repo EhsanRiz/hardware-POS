@@ -9,7 +9,12 @@
 #
 # The route below attaches app.innovaearth.com on deploy — the zone is already
 # in this account, so wrangler creates the DNS record itself. No dashboard step.
-name = "innovaearth-pos-app"
+# The name the Worker is ACTUALLY deployed under. It read
+# "innovaearth-pos-app" for a while, which was a name nothing in the account
+# answered to — so `wrangler deploy` from here, exactly as this file's own
+# instructions say to run it, would have created a second, empty Worker and
+# tried to take app.innovaearth.com off the live till to give it to that.
+name = "hardware-pos"
 main = "worker/index.ts"
 compatibility_date = "2024-09-23"
 account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
