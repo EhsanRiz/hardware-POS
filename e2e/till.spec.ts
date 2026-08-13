@@ -462,10 +462,20 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
 
   // Invited, not active: they choose their own PIN on their own phone, so a
   // manager never holds a credential that would ring up a sale as someone else.
-  await expect(page.getByText("PIN not set")).toBeVisible();
   const invited = be.staff.find((s) => s.name === "Thabo");
   expect(invited?.status).toBe("invited");
-  expect(invited?.phone).toBe("0825550100");
+  // Stored in E.164, which is what the enrolment lookup matches on.
+  expect(invited?.phone).toBe("+27825550100");
+
+  // The invite sends nothing, on purpose — so the screen has to say so, or it
+  // reads as a button that did nothing and the new cashier is never told what
+  // to do. This is the step a manager would otherwise have to already know.
+  const next = page.getByRole("button", { name: /copy a message for them/i });
+  await expect(next).toContainText("pos.innovaearth.com/enrol/");
+  await expect(next).toContainText("+27825550100");
+  await page.getByRole("button", { name: /^Done$/ }).click();
+
+  await expect(page.getByText("PIN not set")).toBeVisible();
 });
 
 test("a role's own permissions are shown fixed, and only the extras are saved", async ({ page }) => {

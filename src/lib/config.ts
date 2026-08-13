@@ -38,3 +38,13 @@ export const RECEIPT_WIDTH = Math.max(16, Math.floor(BASE_COLS / PRINT_WIDTH_SCA
  * it changes here and the server's own constant moves in the same release.
  */
 export const VAT_RATE = 0.15;
+
+/**
+ * Where staff prove their phone and choose their own PIN.
+ *
+ * Both the sign-in screen (a forgotten PIN) and the staff roster (a new
+ * colleague) point here, so it lives in one place: the two must never disagree
+ * about where somebody is being sent.
+ */
+export const ENROL_URL =
+  import.meta.env.VITE_ENROL_URL ?? "https://pos.innovaearth.com/enrol/";
