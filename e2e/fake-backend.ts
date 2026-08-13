@@ -79,6 +79,12 @@ export interface RecordedSale {
   items: { product_id: string; qty: number }[];
   payment_method: string;
   discount_amount: number;
+  /**
+   * Why money came off. The fake hardcoded this to null on the way back, so no
+   * test could see a discount reason on a slip — which is how "10% off" could
+   * reach the database and never reach the paper without anything noticing.
+   */
+  discount_reason: string | null;
   approved_by: string | null;
   created_at: string | null;
   total: number;
@@ -308,6 +314,7 @@ export class Backend {
       items,
       payment_method: (body.p_payment_method as string) ?? "cash",
       discount_amount: discount,
+      discount_reason: (body.p_discount_reason as string) ?? null,
       approved_by: (body.p_approved_by as string) ?? null,
       created_at: (body.p_created_at as string) ?? null,
       total,
@@ -340,7 +347,7 @@ export class Backend {
       trade_pricing: this.customers.find((c) => c.id === sale.customer_id)?.is_trade ?? false,
       subtotal: sale.total + sale.discount_amount,
       discount_amount: sale.discount_amount,
-      discount_reason: null,
+      discount_reason: sale.discount_reason,
       tax_amount: Math.round((sale.total - sale.total / 1.15) * 100) / 100,
       total: sale.total,
       status: pending ? "pending_approval" : "completed",

@@ -147,7 +147,17 @@ export default function ScanBar({
           <UserIcon />
           <span>
             <span className="who">{customer ? customer.name : "Walk-in customer"}</span>
-            <span className="band">{trade ? "Trade price" : "Retail price"}</span>
+            {/* With nobody named, the second line says what tapping does. It
+                used to state the price band and nothing else, so the way to put
+                a name, number and address on the sale was behind a button that
+                looked like it only reported which price list was in use. */}
+            <span className="band">
+              {customer
+                ? trade
+                  ? "Trade price"
+                  : "Retail price"
+                : "Retail price · tap to add their details"}
+            </span>
           </span>
         </button>
       </div>
