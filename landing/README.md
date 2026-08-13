@@ -42,7 +42,7 @@ product page and vice versa.
 
 ### The app lives elsewhere
 
-The till is a separate Worker — `innovaearth-pos-app`, at
+The till is a separate Worker — `hardware-pos`, at
 **app.innovaearth.com** — configured by `wrangler.toml` at the repo root. This
 page links to it for store sign-in rather than hosting a login of its own.
 
