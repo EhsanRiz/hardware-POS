@@ -16,10 +16,11 @@ import { can } from "../lib/permissions";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
 import ProductEditor from "./ProductEditor";
+import CashUp from "./admin/CashUp";
 import ShopSettings from "./admin/ShopSettings";
 import StaffAdmin from "./admin/StaffAdmin";
 
-type TabKey = "catalogue" | "import" | "staff" | "shop";
+type TabKey = "catalogue" | "import" | "cashup" | "staff" | "shop";
 
 /**
  * The back office.
@@ -45,6 +46,7 @@ export default function Admin({
       { key: "catalogue", label: "Catalogue" },
       { key: "import", label: "Bulk import" },
     ];
+    if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
     if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
     return t;
@@ -332,6 +334,8 @@ export default function Admin({
       {tab === "import" && (
         <ImportPanel pin={pin} onDone={load} />
       )}
+
+      {tab === "cashup" && <CashUp pin={pin} />}
 
       {tab === "staff" && <StaffAdmin user={user} pin={pin} />}
 
