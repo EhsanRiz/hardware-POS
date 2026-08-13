@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminSaveSettings, type ShopDetails } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { refreshSettings, shopSettings } from "../../lib/settings";
@@ -40,11 +40,21 @@ export default function ShopSettings({ pin }: { pin: string }) {
   // The cache is what the till prints from; the server is what is true. Take
   // the server's version on the way in so an edit is never made against a
   // figure that has since changed on another till.
+  //
+  // But only if nothing has been typed yet. The fetch lands whenever the line
+  // lets it, and a manager who starts typing straight away would otherwise have
+  // the answer arrive on top of their edit and wipe it — silently, since the
+  // field simply goes back to what it was and Save then writes the old value.
+  // Fast connections hide this completely; a slow one loses the change.
+  const touched = useRef(false);
   useEffect(() => {
-    void refreshSettings().then(setF);
+    void refreshSettings().then((server) => {
+      if (!touched.current) setF(server);
+    });
   }, []);
 
   function set(k: keyof ShopDetails, v: string) {
+    touched.current = true;
     setF((prev) => ({ ...prev, [k]: v }));
     setSaved(false);
   }

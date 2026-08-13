@@ -800,6 +800,31 @@ test("a cashier who has rung up sales is signed out rather than deleted", async 
   expect(be.staff.find((s) => s.id === "u2")?.active).toBe(false);
 });
 
+test("a slow shop-settings load does not wipe what was just typed", async ({ page }) => {
+  // The screen fetches the server's copy on the way in, and the answer arrives
+  // whenever the line lets it. CI found this by being slower than a laptop: the
+  // fetch landed on top of the typing and put the old VAT number back, silently,
+  // and Save then wrote the value the manager had just replaced.
+  await page.route(/rpc\/pos_org_settings/, async (r) => {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    await r.continue();
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+
+  // Type immediately, while the fetch is still in flight.
+  await page.getByLabel("VAT number").fill("4001111111");
+  await page.waitForTimeout(2000);
+
+  // Still what was typed, not what came back.
+  await expect(page.getByLabel("VAT number")).toHaveValue("4001111111");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  expect(be.orgSettings.vat_number).toBe("4001111111");
+});
+
 test("the shop's own details are editable and reach the next invoice", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
