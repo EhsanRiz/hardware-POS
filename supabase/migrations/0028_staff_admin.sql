@@ -132,8 +132,22 @@ begin
     return 'disabled';
   end if;
 
-  delete from public.app_users u where u.id = p_user_id;
-  return 'deleted';
+  -- Sales are the case worth naming, but they are not the only thing that
+  -- remembers a person: stock movements, discount approvals, voids, account
+  -- payments and cash sessions all point back here, and the list grows every
+  -- time the shop learns to record something new. So rather than enumerate the
+  -- references and go stale, take the database's word for it — anything still
+  -- pointing at this row means somebody's work would lose its author, which is
+  -- the same reason sales are spared.
+  begin
+    delete from public.app_users u where u.id = p_user_id;
+    return 'deleted';
+  exception when foreign_key_violation then
+    update public.app_users u
+       set active = false, status = 'disabled'
+     where u.id = p_user_id;
+    return 'disabled';
+  end;
 end;
 $$;
 
