@@ -639,4 +639,54 @@ begin
   delete from public.app_users where id = v_emp;
 end $$;
 
+-- 0036: a PIN cannot be taken twice ------------------------------------------
+--
+-- 0033 made a shared PIN refuse rather than sign the second person in as the
+-- first. This stops the pair existing at all, at the one place a PIN is set.
+
+do $$
+declare v_tok text; v_mgr uuid; v_new uuid; v_taken boolean := false;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+
+  -- Give the manager a known PIN, then have somebody else try to take it.
+  update public.app_users set pin_hash = crypt('246810', gen_salt('bf'))
+   where id = v_mgr;
+
+  select id into v_new from public.pos_admin_invite_user(
+    v_tok, '246810', 'PIN thief', '+27820000013', 'employee'::user_role, array[]::text[]);
+  update public.app_users set phone_e164 = '+27820000013' where id = v_new;
+
+  begin
+    perform public.auth_set_pin('+27820000013', '246810');
+  exception when others then
+    v_taken := true;
+  end;
+  perform assert(v_taken, 'a PIN already in use here is refused at enrolment');
+  perform assert_eq(
+    (select count(*)::int from public.app_users u
+      where u.org_id = (select org_id from fixture) and u.active
+        and u.pin_hash is not null and u.pin_hash = crypt('246810', u.pin_hash)),
+    1, 'so only one person ever answers to it');
+
+  -- A different PIN goes through, and the person can sign in on it.
+  perform public.auth_set_pin('+27820000013', '135791');
+  perform assert_eq(
+    (select count(*)::int from public.pos_login(v_tok, v_new, '135791')), 1,
+    'and a PIN nobody else holds works straight away');
+
+  -- The manager's own PIN still resolves, unshared.
+  perform assert_eq(
+    (select count(*)::int from public.pos_login(v_tok, v_mgr, '246810')), 1,
+    'the first holder keeps theirs');
+
+  -- Resetting to your OWN current PIN is not a collision with yourself.
+  perform public.auth_set_pin('+27820000013', '135791');
+
+  delete from public.login_attempts;
+  delete from public.app_users where id = v_new;
+  update public.app_users set pin_hash = crypt('1234', gen_salt('bf')) where id = v_mgr;
+end $$;
+
 select 'all database tests passed' as result;
