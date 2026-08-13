@@ -298,6 +298,30 @@ begin
   perform public.pos_cash_session_open(v_tok, '1234', 300);
 end $$;
 
+-- Reprinting a past day carries what explains it.
+--
+-- The figures alone are not the cash-up. A reprint that keeps the shortfall and
+-- drops the R60 taken out for diesel hands somebody a piece of paper accusing a
+-- cashier of being R60 down with the answer removed.
+do $$
+declare v_tok text; v_past jsonb; v_day jsonb;
+begin
+  select token into v_tok from till;
+  v_past := public.pos_cash_sessions(v_tok, '1234', 30);
+  perform assert(jsonb_array_length(v_past) >= 1, 'a closed day is listed for reprinting');
+
+  v_day := v_past -> 0;
+  perform assert(v_day ? 'figures', 'a reprint carries its figures');
+  perform assert(v_day ? 'movements', 'a reprint carries its movements');
+  perform assert_eq(jsonb_array_length(v_day -> 'movements'), 2,
+    'both the payout and the pay-in survive to the reprint');
+  perform assert(
+    (v_day -> 'movements') @> '[{"reason": "Diesel for the bakkie"}]'::jsonb,
+    'and the reprint still says where the money went');
+  perform assert_eq((v_day ->> 'variance')::numeric, -5::numeric,
+    'the stored variance is what reprints, not a recomputed one');
+end $$;
+
 
 -- Permissions are enforced in the database, not only hidden in the UI --------
 
