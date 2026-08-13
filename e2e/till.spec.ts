@@ -637,6 +637,72 @@ test("a reprinted slip still shows what came off each line, and why", async ({ p
   await expect(slip).toContainText("R1305.00");
 });
 
+test("Manage → Sales shows what came off a sale, on what, and why", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  // Money off one line, for one reason...
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await page.getByPlaceholder("e.g. staff, loyalty").fill("church job");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // ...and money off the whole sale, for another. Two different decisions.
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByPlaceholder("e.g. staff, loyalty").fill("regular customer");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // The day's total discount has always been at the top of this screen. What it
+  // was given for was nowhere at all — the only way to find out was to reprint
+  // the slip and read it, which is a strange thing to do at a desk.
+  const row = page.locator("li", { has: page.getByRole("button", { name: /Reprint/ }) }).first();
+  await expect(row).toContainText("R165.00 off");
+
+  await row.getByRole("button", { name: /Discounts on/i }).click();
+
+  // The line that was marked down, named, with the words behind it.
+  await expect(row).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(row).toContainText("less 10%");
+  await expect(row).toContainText("R145.00 off");
+  await expect(row).toContainText("church job");
+
+  // And the blanket discount said separately — spreading it across the lines it
+  // touched would report a decision nobody made.
+  await expect(row).toContainText("Off the whole sale");
+  await expect(row).toContainText("R20.00 off");
+  await expect(row).toContainText("regular customer");
+});
+
+test("a sale with no discount is not offered a discount panel", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // A button that opens an empty panel on most of the day's rows teaches people
+  // it is not worth pressing, and then they do not press it on the one that
+  // matters.
+  const row = page.locator("li", { has: page.getByRole("button", { name: /Reprint/ }) }).first();
+  await expect(row.getByRole("button", { name: /Discounts on/i })).toHaveCount(0);
+  await expect(row).not.toContainText("off");
+});
+
 test("the per-line discount is a key you can see, not a hidden tap", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
