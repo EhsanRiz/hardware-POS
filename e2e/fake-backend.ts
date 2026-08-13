@@ -756,6 +756,86 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
         return json(be.closedSessions);
 
+      case "rpc/pos_sales_history": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const from = Date.parse(String(body.p_from));
+        const to = Date.parse(String(body.p_to));
+        // End-exclusive, as the server does it, so a sale at 23:59:59 lands on
+        // the day it was rung up rather than in a gap between two windows.
+        const inWindow = be.sales.filter((x) => {
+          const at = Date.parse(x.created_at ?? new Date().toISOString());
+          return at >= from && at < to;
+        });
+        const round2 = (n: number) => Math.round(n * 100) / 100;
+        const tenders: Record<string, number> = {};
+        for (const sale of inWindow) {
+          for (const p of sale.payments) {
+            tenders[p.method] = round2((tenders[p.method] ?? 0) + p.amount);
+          }
+        }
+        const gross = round2(inWindow.reduce((t, x) => t + x.total, 0));
+        return json({
+          rows: inWindow.map((x, i) => ({
+            id: "s" + i,
+            doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+            created_at: x.created_at ?? new Date().toISOString(),
+            cashier_name: "Sam",
+            customer_name: null,
+            customer_phone: null,
+            customer_address: null,
+            trade_pricing: false,
+            subtotal: round2(x.total + x.discount_amount),
+            discount_reason: null,
+            paid_cash: null,
+            paid_card: null,
+            total: x.total,
+            tax_amount: round2(x.total - x.total / 1.15),
+            discount_amount: x.discount_amount,
+            status: "completed",
+            payment_method: x.payment_method,
+            amount_tendered: x.amount_tendered,
+            change_due: x.change_due,
+            rounding: x.rounding,
+            po_number: x.po_number,
+            customer_vat_number: x.customer_vat_number,
+            item_count: x.items.length,
+          })),
+          totals: {
+            count: inWindow.length,
+            gross,
+            vat: round2(gross - gross / 1.15),
+            discount: round2(inWindow.reduce((t, x) => t + x.discount_amount, 0)),
+            voided: 0,
+            tenders,
+          },
+        });
+      }
+
+      case "rpc/pos_sale_items": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
+        const sale = be.sales[idx];
+        if (!sale) return json([]);
+        return json(
+          sale.items.map((it) => {
+            const prod = PRODUCTS.find((p) => p.id === it.product_id)!;
+            return {
+              name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
+              qty: it.qty, unit_price: prod.price_retail,
+              line_total: Math.round(prod.price_retail * it.qty * 100) / 100,
+              tax_amount: 0,
+            };
+          })
+        );
+      }
+
+      case "rpc/pos_sale_payments": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
+        return json(be.sales[idx]?.payments ?? []);
+      }
+
       case "rpc/pos_staff_for_login":
         if (!tokenOk) return fail("Register not paired or revoked");
         // Only people who can actually sign in: active, with a PIN set.
