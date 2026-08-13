@@ -93,19 +93,65 @@ export function saleDiscountCeiling(
 }
 
 /**
- * What this person may discount without fetching anybody.
+ * What this person may discount without fetching anybody — on one line.
  *
- * Null means "no standing authority" — every discount goes for approval, which
- * is how the shop behaved before limits existed. Somebody who can approve
- * discounts is not bound by a limit at all: they would only be approving
+ * The two halves of a limit are two different kinds of ceiling, because they
+ * are about two different things. THE PERCENT IS A RATE and holds on every
+ * line: "Sam may give 5%" means no line loses more than a twentieth of what it
+ * sells for, whatever the sale totals. THE RAND IS A CEILING ON THE SALE: the
+ * whole discount, lines and blanket together, may not pass it.
+ *
+ * Measuring the percentage against the sale instead — which is what 0037 did —
+ * turns a rate into a sum of money and loses what the rate was for. On a R1,710
+ * sale a 5% limit came to R85.50, so 10% off a R714 line was R71.40 and went
+ * through unasked. At the extreme it let a cashier give a cheap line away free
+ * inside a big enough basket.
+ *
+ * Null means no standing authority: every discount goes for approval, which is
+ * how the shop behaved before limits existed. Somebody who can approve
+ * discounts is not bound by a limit at all — they would only be approving
  * themselves. To rein those people in the owner caps the items instead.
  */
-export function staffCeiling(user: User | null, subtotal: number): number | null {
+export function staffLineCeiling(
+  user: User | null,
+  lineGross: number,
+  /** Discount already coming off the rest of the sale, against the rand half. */
+  discountElsewhere = 0
+): number | null {
   if (!user) return null;
-  const caps: number[] = [];
-  if (user.discount_limit_percent != null) {
-    caps.push(r2((subtotal * user.discount_limit_percent) / 100));
+  const { discount_limit_percent: pct, discount_limit_amount: amt } = user;
+  if (pct == null && amt == null) return null;
+  const ceilings: number[] = [];
+  if (pct != null) ceilings.push(r2((lineGross * pct) / 100));
+  if (amt != null) ceilings.push(Math.max(0, amt - discountElsewhere));
+  return Math.min(...ceilings);
+}
+
+/**
+ * The same, for a discount taken off the whole sale.
+ *
+ * A blanket discount spreads pro-rata, so the rate ceiling is the same shape as
+ * an item cap — cap each line at its own share and ask how much blanket
+ * discount that leaves room for. Which is exactly what saleDiscountCeiling
+ * already answers, so it is asked rather than reimplemented.
+ */
+export function staffSaleCeiling(
+  user: User | null,
+  lines: { qty: number; price: number; discount?: number }[],
+  /** What the lines have already taken off themselves. */
+  itemsDiscount = 0
+): number | null {
+  if (!user) return null;
+  const { discount_limit_percent: pct, discount_limit_amount: amt } = user;
+  if (pct == null && amt == null) return null;
+  const ceilings: number[] = [];
+  if (pct != null) {
+    ceilings.push(
+      saleDiscountCeiling(
+        lines.map((l) => ({ ...l, cap: r2((r2(l.price * l.qty) * pct) / 100) }))
+      )
+    );
   }
-  if (user.discount_limit_amount != null) caps.push(user.discount_limit_amount);
-  return caps.length ? Math.min(...caps) : null;
+  if (amt != null) ceilings.push(Math.max(0, amt - itemsDiscount));
+  return Math.min(...ceilings);
 }

@@ -18,7 +18,8 @@ import { isPaired } from "../lib/device";
 import {
   cartLineCap,
   saleDiscountCeiling,
-  staffCeiling,
+  staffLineCeiling,
+  staffSaleCeiling,
 } from "../lib/discountLimits";
 import { money } from "../lib/money";
 import { cacheGet, cacheSet } from "../lib/localCache";
@@ -239,28 +240,43 @@ export default function POS() {
   );
   const saleCeiling = useMemo(() => saleDiscountCeiling(caps), [caps]);
   const anyCapped = caps.some((c) => c.cap != null);
-  // What this person may give away before a manager is fetched. Undefined for
-  // anybody who approves their own, so the dialogs never raise the subject.
-  const ownCeiling = useMemo(
-    () => (can(user, "approve_discount") ? undefined : staffCeiling(user, subtotal)),
-    [user, subtotal]
-  );
+  // Whether the limits are this person's business at all. Somebody who approves
+  // their own discounts is not bound by one, so the dialogs never raise it.
+  const limited = !can(user, "approve_discount");
 
   /**
-   * Whether a total discount of this much has to wait for a manager's PIN.
+   * Whether a discount has to wait for a manager's PIN.
    *
-   * Mirrors the rule in pos_create_sale: an approver never needs asking, and
-   * anybody else needs asking unless the whole discount on the sale — lines and
-   * blanket together — sits inside their standing limit.
+   * Mirrors pos_create_sale: the percent half of a limit is a RATE and holds on
+   * every line, the rand half is a ceiling on the sale, and either one exceeded
+   * fetches a manager. Passing the ceiling that applied to the box the cashier
+   * was typing in keeps the two answers the same — the dialog cannot say "fine"
+   * and the tender screen then ask for a PIN.
    */
-  const needsApprovalFor = useCallback(
-    (totalDiscount: number) => {
-      if (can(user, "approve_discount")) return false;
-      const ceil = staffCeiling(user, subtotal);
-      return ceil == null || totalDiscount > ceil + 0.005;
+  const overCeiling = useCallback(
+    (amount: number, ceiling: number | null | undefined) => {
+      if (!limited) return false;
+      return ceiling == null || amount > ceiling + 0.005;
     },
-    [user, subtotal]
+    [limited]
   );
+
+  /** How big a blanket discount goes through without fetching anybody. */
+  const saleFreeUpTo = useMemo(
+    () => staffSaleCeiling(user, caps, itemsDiscount),
+    [user, caps, itemsDiscount]
+  );
+  /** The same for the line whose discount box is open, if one is. */
+  const lineFreeUpTo = useMemo(() => {
+    const l = lines.find((x) => x.product.id === discountLine);
+    if (!l) return null;
+    // The rand half of a limit is a ceiling on the whole sale, so what is
+    // already coming off elsewhere eats into what is left for this line.
+    const elsewhere = lines
+      .filter((x) => x.product.id !== discountLine)
+      .reduce((sum, x) => sum + (x.discount ?? 0), 0);
+    return staffLineCeiling(user, priceOf(l.product) * l.qty, elsewhere + discount);
+  }, [lines, discountLine, user, priceOf, discount]);
 
   function addProduct(p: Product, qty = 1) {
     setLines((prev) => {
@@ -750,13 +766,7 @@ export default function POS() {
           // Only mentioned when something in the basket is actually capped;
           // otherwise the ceiling is just the subtotal and saying so is noise.
           ceiling={anyCapped ? saleCeiling : null}
-          approvalFreeUpTo={
-            ownCeiling === undefined
-              ? undefined
-              : ownCeiling == null
-                ? null
-                : Math.max(0, ownCeiling - itemsDiscount)
-          }
+          approvalFreeUpTo={limited ? saleFreeUpTo : undefined}
           onCancel={() => setShowDiscount(false)}
           onApply={(amount, reason) => {
             setDiscount(amount);
@@ -765,7 +775,7 @@ export default function POS() {
             // Managers approve their own; so does anybody inside their standing
             // limit. Everyone else needs a PIN now, so the sale completes at the
             // counter instead of parking for later.
-            if (needsApprovalFor(itemsDiscount + amount)) setNeedsApproval(true);
+            if (overCeiling(amount, saleFreeUpTo)) setNeedsApproval(true);
           }}
         />
       )}
@@ -788,16 +798,7 @@ export default function POS() {
             const l = lines.find((x) => x.product.id === discountLine);
             return l ? cartLineCap(l, priceOf(l.product)) : null;
           })()}
-          approvalFreeUpTo={(() => {
-            if (ownCeiling === undefined) return undefined;
-            if (ownCeiling == null) return null;
-            // What is left of the allowance once everything already coming off
-            // this sale is counted — including the other lines' discounts.
-            const others = lines
-              .filter((x) => x.product.id !== discountLine)
-              .reduce((sum, x) => sum + (x.discount ?? 0), 0);
-            return Math.max(0, ownCeiling - others - discount);
-          })()}
+          approvalFreeUpTo={limited ? lineFreeUpTo : undefined}
           onCancel={() => setDiscountLine(null)}
           onApply={(amount, reason) => {
             // The percentage is recovered from the reason the modal writes, so
@@ -816,10 +817,7 @@ export default function POS() {
               )
             );
             setDiscountLine(null);
-            const others = lines
-              .filter((x) => x.product.id !== discountLine)
-              .reduce((sum, x) => sum + (x.discount ?? 0), 0);
-            if (needsApprovalFor(others + amount + discount)) setNeedsApproval(true);
+            if (overCeiling(amount, lineFreeUpTo)) setNeedsApproval(true);
           }}
         />
       )}

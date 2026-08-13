@@ -5,6 +5,7 @@
 // cached on the device because the invoice header has to print during an
 // outage, when the settings table is unreachable.
 import { fetchSettings } from "./api";
+import { VAT_RATE } from "./config";
 import { cacheGet, cacheSet } from "./localCache";
 import type { ShopSettings } from "./types";
 
@@ -18,7 +19,26 @@ const FALLBACK: ShopSettings = {
   vat_number: "",
   currency: "R",
   registration_number: "",
+  email: "",
+  bank_name: "",
+  bank_account_name: "",
+  bank_account_number: "",
+  bank_branch_code: "",
+  vat_rate: null,
 };
+
+/**
+ * The VAT rate to show, as a fraction.
+ *
+ * Falls back to the build's constant only when the till has never reached the
+ * server — a brand-new device on its first sale. Everywhere else this is the
+ * figure the database will actually charge, so the screen and the invoice
+ * cannot disagree the day a new rate takes effect.
+ */
+export function vatRate(): number {
+  const r = shopSettings().vat_rate;
+  return typeof r === "number" ? r : VAT_RATE;
+}
 
 /** The cached shop settings. Safe to call offline and before the first fetch. */
 export function shopSettings(): ShopSettings {

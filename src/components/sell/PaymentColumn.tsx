@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { VAT_RATE } from "../../lib/config";
+import { vatRate } from "../../lib/settings";
 import { cashRounding, money, quantity, vatWithin } from "../../lib/money";
 import type { CartLine, Customer, Payment, PaymentMethod } from "../../lib/types";
 import {
@@ -119,7 +119,10 @@ export default function PaymentColumn({
   }, [customer]);
 
   const units = lines.reduce((s, l) => s + l.qty, 0);
-  const vat = vatWithin(total, VAT_RATE);
+  // Served, not compiled in: the rate on screen has to be the rate the
+  // server will charge, or the two disagree the day a new one takes effect.
+  const rate = vatRate();
+  const vat = vatWithin(total, rate);
 
   const nonCashTaken = taken
     .filter((t) => t.payment.method !== "cash")
@@ -326,7 +329,7 @@ export default function PaymentColumn({
         )}
 
         <div className="totals-row">
-          <span>VAT at {Math.round(VAT_RATE * 100)}%</span>
+          <span>VAT at {+(rate * 100).toFixed(2)}%</span>
           <span>{money(vat, { currency: false })}</span>
         </div>
 

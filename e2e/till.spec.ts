@@ -657,9 +657,9 @@ test("backing out of manager approval drops the discount", async ({ page }) => {
 });
 
 test("a cashier inside their limit does not have to fetch anybody", async ({ page }) => {
-  // The manager gives Sam ten percent of standing authority. Under 0037 this
-  // is the difference between closing a small sale and leaving the counter to
-  // find somebody for R11.50.
+  // The manager gives Sam ten percent of standing authority. This is the
+  // difference between closing a small sale and leaving the counter to find
+  // somebody for R11.50.
   be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 10;
 
   await pairAndSignIn(page, USERS.employee.pin);
@@ -679,7 +679,75 @@ test("a cashier inside their limit does not have to fetch anybody", async ({ pag
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
   expect(be.storedSales[0].discount_amount).toBe(11.5);
-  // Nobody was asked, so nobody is recorded as having approved it.
+  // Nobody was asked, so nobody is recorded as having approved it — and the
+  // sale completes rather than parking.
+  expect(be.storedSales[0].approved_by).toBeNull();
+  await expect(page.locator("#print-area")).toContainText("INV-");
+});
+
+test("a percent limit is a rate on the line, not a sum against the sale", async ({ page }) => {
+  // The bug the shop found. Sam is on 5%, rings up R1,710 across two lines and
+  // takes 10% off one of them. The money involved — R71.40 — is under 5% of
+  // the sale, which is R85.50, so the old rule let it through unasked: 10%
+  // given on a 5% limit, with nobody consulted.
+  const sam = be.staff.find((s) => s.id === "u2")!;
+  sam.discount_limit_percent = 5;
+  sam.discount_limit_amount = 100;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await expect(page.getByText(/manager will need to approve/i)).toBeVisible();
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toBeVisible();
+});
+
+test("a limit stops a cheap line being given away inside a big sale", async ({ page }) => {
+  // The same flaw at its extreme: 100% off a R115 line is small money beside a
+  // R1,450 roll of cable, so measuring the percentage against the sale total
+  // let a cashier hand an item over free.
+  const sam = be.staff.find((s) => s.id === "u2")!;
+  sam.discount_limit_percent = 5;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("100");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toBeVisible();
+});
+
+test("at the rate, a line discount goes through on the cashier's own say-so", async ({ page }) => {
+  const sam = be.staff.find((s) => s.id === "u2")!;
+  sam.discount_limit_percent = 5;
+  sam.discount_limit_amount = 100;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  // 5% of the R115 cement line is R5.75 — at the rate, and well under the
+  // R100 the sale as a whole is allowed.
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("5");
+  await expect(page.getByText(/manager will need to approve/i)).toHaveCount(0);
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].discount_amount).toBe(5.75);
   expect(be.storedSales[0].approved_by).toBeNull();
 });
 
@@ -693,7 +761,9 @@ test("a cent past the limit and the manager is still fetched", async ({ page }) 
   await page.getByLabel("Discount amount").fill("20");
 
   // Said before Apply, not after: the cashier can decide to offer less rather
-  // than discovering at the tender screen that somebody has to be found.
+  // than discovering at the tender screen that somebody has to be found. On a
+  // single-line sale a blanket discount is the whole line, so 10% of R115 is
+  // the ceiling either way.
   await expect(page.getByText(/Over your R11.50/i)).toBeVisible();
   await page.getByRole("button", { name: /^Apply$/ }).click();
   await expect(page.getByText(/Manager approval/i)).toBeVisible();
@@ -784,7 +854,7 @@ test("the manager sets a limit on one person and a cap on one item", async ({ pa
   // Both are visible from the staff screen — the limits on the row, and the
   // capped items underneath, because a cap binds everybody on this list and
   // leaving it out would make the screen quietly wrong.
-  await expect(page.getByText(/may discount 10% or R200/i)).toBeVisible();
+  await expect(page.getByText(/may discount 10% a line and R200 a sale/i)).toBeVisible();
   await expect(page.getByText(/Items with a discount cap/i)).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Cement 42.5N 50kg" }).last()
@@ -808,6 +878,64 @@ test("clearing the box takes a limit away", async ({ page }) => {
   await expect
     .poll(() => be.staff.find((s) => s.id === "u2")?.discount_limit_percent)
     .toBeNull();
+});
+
+test("an EFT slip says where to pay, and a cash slip does not", async ({ page }) => {
+  // The till took EFT and printed nothing about where the money goes, so the
+  // customer had to phone the shop before they could settle. Cash slips still
+  // say nothing: that customer has already paid, and the shop's account number
+  // does not belong on a hundred till slips a day.
+  Object.assign(be.orgSettings, {
+    bank_name: "First National Bank",
+    bank_account_name: "Ladybrand Hardware CC",
+    bank_account_number: "62012345678",
+    bank_branch_code: "250655",
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator("#print-area")).not.toContainText("PAYMENT DETAILS");
+  await page.getByLabel("Close").click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^EFT$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("PAYMENT DETAILS");
+  await expect(slip).toContainText("62012345678");
+  await expect(slip).toContainText("250655");
+  await expect(slip).toContainText("Ladybrand Hardware CC");
+});
+
+test("the VAT rate on screen is the one the server will charge", async ({ page }) => {
+  // Only the display was ever a build constant — what gets charged has always
+  // been a dated row the sale resolves and stores. Serving it means the two
+  // cannot disagree on the day a new rate takes effect.
+  await pairAndSignIn(page);
+  await expect(page.locator(".pay")).toContainText("VAT at 15%");
+});
+
+test("the shop's banking details are editable and reach the next invoice", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+
+  await page.getByLabel("Bank", { exact: true }).fill("Capitec");
+  await page.getByLabel("Account number").fill("1051234567");
+  await page.getByLabel("Branch code").fill("470010");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  await expect.poll(() => be.orgSettings.bank_account_number).toBe("1051234567");
+  expect(be.orgSettings.bank_branch_code).toBe("470010");
+
+  // The rate is shown, not offered as a box: it is national, and the table it
+  // comes from is shared by every shop on this system.
+  await expect(page.getByText("15%", { exact: true })).toBeVisible();
 });
 
 test("an employee is not offered the back office", async ({ page }) => {

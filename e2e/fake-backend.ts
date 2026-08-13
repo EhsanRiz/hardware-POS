@@ -98,6 +98,12 @@ export interface RecordedSale {
   customer_vat_number: string | null;
   rounding: number;
   /**
+   * Whether the discount sat inside what this cashier may give unasked. The
+   * server decides this from their limit; carrying it here is what lets the
+   * fake tell a sale that completes on its own authority from one that parks.
+   */
+  within_limit: boolean;
+  /**
    * The notes handed over, and what the drawer owes back. The fake used to
    * hardcode both to null, so no test could see the change line on a slip —
    * which is how a settled sale came to report R0.00 change on a R1 000 note.
@@ -193,6 +199,11 @@ export class Backend {
     vat_number: "4001234567",
     currency: "R",
     registration_number: "",
+    email: "",
+    bank_name: "",
+    bank_account_name: "",
+    bank_account_number: "",
+    bank_branch_code: "",
   };
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
             customer_id: string | null;
@@ -317,15 +328,25 @@ export class Backend {
     const discount = Math.round((itemsDiscount + saleDiscount) * 100) / 100;
     const total = Math.round((subtotal - discount) * 100) / 100;
 
-    // The item caps, exactly as pos_create_sale checks them: what is measured
-    // is everything the line loses — its own discount plus its share of the
-    // sale-level one — so the cap cannot be walked around by discounting the
-    // whole sale instead. This refuses; it never parks.
+    // Both ceilings walk the lines together, exactly as pos_create_sale does,
+    // because both need the same figure: what the line actually loses, its own
+    // discount plus its share of the sale-level one.
+    //
+    //   the item cap      refuses, whoever asks
+    //   the percent limit is a RATE and holds on every line
+    //   the rand limit    is a ceiling on the whole sale
+    //
+    // Either half of a limit exceeded sends the sale for approval.
+    const cashier = this.staff.find((u) => u.id === body.p_cashier_id);
+    const limitPct = cashier?.discount_limit_percent ?? null;
+    const limitAmt = cashier?.discount_limit_amount ?? null;
+    let within = limitPct != null || limitAmt != null;
+    if (limitAmt != null && discount > limitAmt + 0.005) within = false;
+
     const netSubtotal = Math.round((subtotal - itemsDiscount) * 100) / 100;
     if (discount > 0) {
       for (const it of items) {
         const p = PRODUCTS.find((x) => x.id === it.product_id)!;
-        if (p.max_discount_percent == null && p.max_discount_amount == null) continue;
         const line = Math.round(this.price(p, false) * it.qty * 100) / 100;
         const lineDisc =
           it.discount_percent != null
@@ -336,6 +357,16 @@ export class Backend {
             ? Math.round(((line - lineDisc) * total * 100) / netSubtotal) / 100
             : 0;
         const taken = Math.round((line - share) * 100) / 100;
+
+        if (
+          within &&
+          limitPct != null &&
+          taken > Math.round(line * (limitPct / 100) * 100) / 100 + 0.005
+        ) {
+          within = false;
+        }
+
+        if (p.max_discount_percent == null && p.max_discount_amount == null) continue;
         const caps: number[] = [];
         if (p.max_discount_percent != null) {
           caps.push(Math.round(line * (p.max_discount_percent / 100) * 100) / 100);
@@ -386,6 +417,7 @@ export class Backend {
       po_number: (body.p_po_number as string) ?? null,
       customer_vat_number: (body.p_customer_vat_number as string) ?? null,
       rounding,
+      within_limit: within,
       amount_tendered: tendered,
       // Mirrors the server: change comes off the settled figure, so a cash
       // sale rounded down to the nearest 10c gives back the rounding too.
@@ -400,7 +432,12 @@ export class Backend {
 
   private saleRow(sale: RecordedSale, fresh: boolean) {
     if (fresh) this.seq += 1;
-    const pending = sale.discount_amount > 0 && !sale.approved_by;
+    // A discount inside what the cashier may give on their own authority
+    // completes with no approver recorded — nobody was asked. The fake used to
+    // park every unapproved discount, which is what the shop did before limits
+    // existed and would have hidden the whole feature from these tests.
+    const pending =
+      sale.discount_amount > 0 && !sale.approved_by && !sale.within_limit;
     return {
       id: "s" + this.seq,
       doc_number: pending ? null : "INV-" + String(this.seq).padStart(6, "0"),
@@ -780,7 +817,9 @@ export async function installBackend(page: Page): Promise<Backend> {
       }
       case "rpc/pos_org_settings":
         if (!tokenOk) return fail("Register not paired or revoked");
-        return json([{ ...be.orgSettings }]);
+        // The rate the till displays comes from the server, as it does in
+        // 0038 — the screen must not be able to outlive what is charged.
+        return json([{ ...be.orgSettings, vat_rate: 0.15 }]);
 
       case "rpc/pos_admin_save_settings": {
         if (!tokenOk) return fail("Register not paired or revoked");

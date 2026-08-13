@@ -959,4 +959,180 @@ begin
   update public.app_users set name = 'Cashier' where id = v_emp;
 end $$;
 
+-- 0038: a percent limit is a rate, not a sum of money --------------------------
+--
+-- 0037 measured the percentage against the whole sale, so a cashier on 5% could
+-- take 10% off one line inside a bigger sale and complete it unasked. These are
+-- the shop's own figures from the day it was spotted.
+
+do $$
+declare v_tok text; v_emp uuid; v_a uuid; v_b uuid; v_pa numeric; v_pb numeric;
+        v_sale public.sales;
+begin
+  select token into v_tok from till;
+  select employee_id into v_emp from fixture;
+  select id, price_retail into v_a, v_pa from public.products
+   where active and price_retail > 0 order by price_retail limit 1;
+  select id, price_retail into v_b, v_pb from public.products
+   where active and price_retail > 0 and id <> v_a order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  update public.app_users set active = true, status = 'active' where id = v_emp;
+  -- Put stock back. The blocks above have been selling these two lines all
+  -- file, and this one rings up a dozen more sales; running out here would be
+  -- a stock check failing, not a discount rule.
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null, stock_qty = 1000
+   where id in (v_a, v_b);
+
+  -- Five percent, and a rand ceiling loose enough that it is never the thing
+  -- doing the work — the percentage has to hold on its own.
+  update public.app_users
+     set discount_limit_percent = 5, discount_limit_amount = 100000
+   where id = v_emp;
+
+  -- THE BUG. Ten percent off the dear line, inside a sale big enough that the
+  -- money involved is under five percent of the whole. This completed.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 10)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'ten percent off a line is past a five percent limit, whatever the sale totals');
+
+  -- The extreme the old rule allowed: a whole line given away free, because the
+  -- money it came to was small next to the rest of the basket.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_b, 'qty', 1),
+      jsonb_build_object('product_id', v_a, 'qty', 1, 'discount_percent', 100)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'and a line given away free is never inside a five percent limit');
+
+  -- At the rate, it still goes through on the cashier's own authority.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 5)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'five percent off a line is inside a five percent limit');
+  perform assert(v_sale.approved_by is null,
+    'and nobody is recorded as approving what nobody was asked about');
+
+  -- A blanket discount spreads evenly, so the rate is the same on every line
+  -- and the limit behaves exactly as it always did for this shape of discount.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => round((v_pa + v_pb) * 0.05, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'five percent off the whole sale is still five percent');
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => round((v_pa + v_pb) * 0.06, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'and six percent off the whole sale is past it');
+
+  -- Line and blanket together land on the same line, and are counted once,
+  -- against the same rate. Neither route is a way around the other.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 4)),
+    p_discount_amount => round(v_pb * 0.03, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'four percent off the line plus three off the sale is seven, not four');
+
+  -- ---- the rand half is still a ceiling on the sale ------------------------
+  update public.app_users
+     set discount_limit_percent = 100, discount_limit_amount = 10
+   where id = v_emp;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 10, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'the rand half holds at its figure');
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 11, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'and a rand past it fetches a manager, whatever the rate came to');
+
+  -- Either exceeded is enough. Here the rate is fine and the money is not.
+  update public.app_users
+     set discount_limit_percent = 50, discount_limit_amount = 1
+   where id = v_emp;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_b, 'qty', 1, 'discount_percent', 10)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'whichever of the two is exceeded is the one that decides');
+
+  -- No limit at all is still no standing authority.
+  update public.app_users
+     set discount_limit_percent = null, discount_limit_amount = null
+   where id = v_emp;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 1, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'somebody with no limit still has nothing they may give unasked');
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
+-- 0038: where to pay the shop, and the rate it charges -------------------------
+
+do $$
+declare v_tok text; v_row record;
+begin
+  select token into v_tok from till;
+
+  perform public.pos_admin_save_settings(v_tok, '1234', jsonb_build_object(
+    'bank_name', 'First National Bank',
+    'bank_account_name', '5 Star Hardware CC',
+    'bank_account_number', '62012345678',
+    'bank_branch_code', '250655',
+    'email', 'accounts@5star.co.za'));
+
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.bank_account_number, '62012345678',
+    'the shop can say where its money goes');
+  perform assert_eq(v_row.bank_branch_code, '250655', 'branch code and all');
+  perform assert_eq(v_row.email, 'accounts@5star.co.za', 'and where to write to it');
+
+  -- The rate the till shows comes from the table the sale reads, so the two
+  -- cannot disagree the day a new rate takes effect.
+  perform assert_eq(v_row.vat_rate, public.tax_rate_at('standard', current_date),
+    'the VAT rate on screen is the one that will be charged');
+
+  -- Saving something else leaves the banking alone — the settings screen sends
+  -- one field at a time when a manager edits one field at a time.
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('phone', '065 735 2766'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.bank_account_number, '62012345678',
+    'and editing the phone number does not lose the bank account');
+end $$;
+
 select 'all database tests passed' as result;
