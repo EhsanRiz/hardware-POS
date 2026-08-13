@@ -87,6 +87,13 @@ export interface RecordedSale {
   po_number: string | null;
   customer_vat_number: string | null;
   rounding: number;
+  /**
+   * The notes handed over, and what the drawer owes back. The fake used to
+   * hardcode both to null, so no test could see the change line on a slip —
+   * which is how a settled sale came to report R0.00 change on a R1 000 note.
+   */
+  amount_tendered: number | null;
+  change_due: number | null;
 }
 
 /** A buyer on file, in the shape pos_list_customers returns. */
@@ -210,6 +217,7 @@ export class Backend {
       ? (Math.ceil(Math.round((total - nonCash) * 100) / 10 - 0.5) * 10 -
           Math.round((total - nonCash) * 100)) / 100
       : 0;
+    const tendered = (body.p_amount_tendered as number) ?? null;
     const paid = payments.reduce((s, x) => s + x.amount, 0);
     if (payments.length > 0 && Math.abs(paid - (total + rounding)) > 0.005) {
       throw new Error(
@@ -231,6 +239,13 @@ export class Backend {
       po_number: (body.p_po_number as string) ?? null,
       customer_vat_number: (body.p_customer_vat_number as string) ?? null,
       rounding,
+      amount_tendered: tendered,
+      // Mirrors the server: change comes off the settled figure, so a cash
+      // sale rounded down to the nearest 10c gives back the rounding too.
+      change_due:
+        tendered != null
+          ? Math.max(0, Math.round((tendered - (total + rounding)) * 100) / 100)
+          : null,
     };
     this.sales.push(sale);
     return this.saleRow(sale, true);
@@ -256,8 +271,8 @@ export class Backend {
       approved_by: sale.approved_by,
       approved_by_name: sale.approved_by ? "Manager" : null,
       payment_method: sale.payment_method,
-      amount_tendered: null,
-      change_due: null,
+      amount_tendered: sale.amount_tendered,
+      change_due: sale.change_due,
       paid_cash: null,
       paid_card: null,
       rounding: sale.rounding,

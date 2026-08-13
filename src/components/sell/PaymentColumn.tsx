@@ -132,6 +132,32 @@ export default function PaymentColumn({
   const typed = Number(entry.replace(",", ".")) || 0;
   const hasTyped = entry.trim() !== "";
 
+  /**
+   * The notes physically handed over.
+   *
+   * A cash tender records what was offered when it was added, which covers the
+   * cashier who counts the notes first and then taps Cash. But the natural
+   * order at a counter is the other way round — pick the tender, then count
+   * what is in your hand — and typing R1 000 against a settled R945 sale used
+   * to sit dead in the box: every tender button is disabled once nothing is
+   * outstanding, so the figure was never recorded and the slip said no change
+   * was owed. The customer's R55 went unmentioned at the one moment anybody
+   * would have noticed.
+   *
+   * So the box keeps meaning "cash received" after the tender is added. It only
+   * ever raises the figure: correcting one downwards is done by removing the
+   * tender and taking it again, which is the safer way round when the number
+   * decides what comes out of the drawer.
+   */
+  const handedOver = useMemo(() => {
+    // No cash in the sale, no change to give — a card sale must not invent
+    // change from a stray figure left in the box.
+    if (cashTaken <= 0.005) return cashTendered;
+    return Math.max(cashTendered, hasTyped ? typed : 0);
+  }, [cashTaken, cashTendered, hasTyped, typed]);
+
+  const changeDue = Math.max(0, Math.round((handedOver - cashTaken) * 100) / 100);
+
   const ready = !busy && canPay && lines.length > 0 && outstanding <= 0.005;
 
   /**
@@ -221,7 +247,7 @@ export default function PaymentColumn({
     onComplete({
       payments: taken,
       // The notes handed over, so the server can work out the change.
-      amountTendered: cashTendered > 0 ? cashTendered : null,
+      amountTendered: handedOver > 0 ? handedOver : null,
       rounding,
       poNumber: poNumber.trim() || null,
       customerVatNumber: vatNumber.trim() || null,
@@ -323,11 +349,7 @@ export default function PaymentColumn({
                 {outstanding > 0.005 ? "Still owing" : "Change due"}
               </span>
               <span className="taken-amt">
-                {money(
-                  outstanding > 0.005
-                    ? outstanding
-                    : Math.max(0, Math.round((cashTendered - cashTaken) * 100) / 100)
-                )}
+                {money(outstanding > 0.005 ? outstanding : changeDue)}
               </span>
               <span />
             </div>

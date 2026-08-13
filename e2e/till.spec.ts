@@ -124,6 +124,52 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
   await expect(slip).toContainText(/tax invoice/i);
 });
 
+test("counting the notes after tapping Cash still gives change", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  // The other order round, and the more natural one: pick the tender, then
+  // count what is in your hand. Cash with nothing typed settles the sale, so
+  // every tender button goes dead — and the figure typed next used to sit in a
+  // box that no longer did anything. The slip said no change was owed and the
+  // customer's R55 was never mentioned.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  const change = page.locator(".taken-row.is-outstanding");
+  await expect(change).toContainText(/Change due/i);
+  await expect(change).toContainText("0.00");
+
+  await page.getByLabel("Cash received").fill("200");
+  // Live, without pressing anything further: there is nothing left to press.
+  await expect(change).toContainText("85.00");
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // The payment is still the sale, not the note. What the note changes is the
+  // tendered figure the server takes the change from.
+  expect(be.storedSales[0].payments).toEqual([{ method: "cash", amount: 115 }]);
+  expect(be.storedSales[0].amount_tendered).toBe(200);
+  expect(be.storedSales[0].change_due).toBe(85);
+  await expect(page.locator("#print-area")).toContainText("Change");
+});
+
+test("a stray figure in the amount box invents no change on a card sale", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Card$/ }).click();
+
+  // Left over from a previous customer, or a mis-tap. No cash is in this sale,
+  // so there is nothing for the drawer to give back.
+  await page.getByLabel("Cash received").fill("500");
+  await expect(page.locator(".taken-row.is-outstanding")).toContainText("0.00");
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].amount_tendered).toBeNull();
+});
+
 test("the server's refusal reaches the cashier, and nothing is charged", async ({ page }) => {
   await pairAndSignIn(page);
 
