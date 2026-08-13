@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { shopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
 import { errorMessage } from "../lib/errors";
+import { roleTitle } from "../lib/permissions";
 import { isOnline } from "../lib/offline";
 import { usePendingSync } from "../lib/sync";
 import PinPad from "./PinPad";
@@ -35,12 +36,6 @@ import type { LoginCandidate } from "../lib/types";
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
  */
-const ROLE_LABEL: Record<LoginCandidate["role"], string> = {
-  admin: "Owner",
-  manager: "Manager",
-  employee: "Counter",
-};
-
 export default function Login() {
   const { setUser } = useAuth();
   const { pending } = usePendingSync();
@@ -114,7 +109,7 @@ export default function Login() {
                   <li key={c.id}>
                     <button onClick={() => { setWho(c); setError(null); }}>
                       <span className="login-who-name">{c.name}</span>
-                      <span className="login-who-role">{ROLE_LABEL[c.role]}</span>
+                      <span className="login-who-role">{roleTitle(c.role)}</span>
                     </button>
                   </li>
                 ))}

@@ -158,7 +158,25 @@
   white-space: nowrap;
 }
 .sell-divider-v { width: 1px; height: 22px; background: var(--divider); }
-.sell-cashier { font-size: 14px; font-weight: 500; white-space: nowrap; }
+/* Name over title. The title is deliberately quiet — it answers "in what
+   capacity", which matters at a handover and never at any other moment. */
+.sell-cashier {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.sell-cashier-name { font-size: 14px; font-weight: 500; }
+.sell-cashier-role {
+  font-size: 11px;
+  font-weight: 400;
+  /* neutral-700 is the palette's stated floor for secondary text on cream, and
+     going lighter to look "faded" would cross a contrast line somebody drew on
+     purpose. The recession comes from size and weight instead, against a
+     heavier name directly above it. */
+  color: var(--color-neutral-700);
+  letter-spacing: 0.02em;
+}
 
 /* ---- Scan bar ---------------------------------------------------------- */
 
