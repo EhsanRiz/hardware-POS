@@ -38,7 +38,7 @@
      shipped: an iPad is 1194 or 1180 CSS px in landscape and 820 or 768 in
      portrait, so a hard minimum guarantees the one thing a counter cannot
      use — a screen that scrolls sideways while someone is being served. */
-  --line-cols: 44px 1fr 130px 120px 130px 44px;
+  --line-cols: 44px 1fr 130px 120px 130px 40px 44px;
   --line-gap: 16px;
   --sell-pad: 26px;
   --pay-w: 420px;
@@ -321,17 +321,28 @@
   color: var(--color-owing);
   margin-top: 2px;
 }
-.line-amt-btn {
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
+/* The per-line discount key. Outlined so it reads as something to press on a
+   tablet, where nothing hovers and a bare glyph reads as decoration. */
+.line-off {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: var(--color-neutral-700);
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  text-align: right;
-  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.line-amt-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.line-off:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.line-off.is-set {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-neutral-100);
+}
 
 .line-amt { text-align: right; }
 .line-unit { font-size: 15px; color: var(--color-neutral-700); }
@@ -1112,7 +1123,7 @@
    1360px frame. Every tablet in landscape lands here. */
 @media (max-width: 1359px) {
   .sell {
-    --line-cols: 34px 1fr 96px 96px 112px 40px;
+    --line-cols: 34px 1fr 96px 96px 112px 38px 40px;
     --line-gap: 12px;
     --sell-pad: 18px;
     --pay-w: 344px;
@@ -1131,7 +1142,7 @@
   .sell {
     /* The unit price leaves the table here and moves under the description:
        of the two numbers, the cashier is reading the amount. */
-    --line-cols: 30px 1fr 84px 108px 38px;
+    --line-cols: 30px 1fr 84px 108px 36px 38px;
     --sell-pad: 14px;
   }
   .line-unit { display: none; }
