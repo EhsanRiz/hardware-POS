@@ -66,6 +66,23 @@ function itemsPayload(lines: CartLine[]) {
 }
 
 /**
+ * Whether this sale has any discount on it at all.
+ *
+ * `discountAmount` is the discount taken off the SALE. Money taken off a single
+ * line rides on the line, and for a long time this was the only figure the
+ * approver was resolved against — so a per-line discount approved at the
+ * counter had the manager's PIN dropped on the way out, and the server, which
+ * counts both kinds, parked a sale a manager had just stood there and released.
+ * The manager saw the prompt, typed their PIN, and the invoice never issued.
+ */
+function anyDiscount(p: SaleInput): boolean {
+  return (
+    p.discountAmount > 0 ||
+    (p.lines ?? []).some((l) => (l.discount ?? 0) > 0)
+  );
+}
+
+/**
  * Resolve a discount approver.
  *
  * Online we still want the manager's *identity*, not just their PIN, because
@@ -102,7 +119,7 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
       : null;
 
   const approver =
-    p.discountAmount > 0 ? await resolveApprover(p.approverPin) : null;
+    anyDiscount(p) ? await resolveApprover(p.approverPin) : null;
 
   if (isOnline()) {
     try {

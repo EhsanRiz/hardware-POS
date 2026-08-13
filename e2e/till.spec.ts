@@ -625,6 +625,94 @@ test("the till says where to put the buyer's details", async ({ page }) => {
   await expect(page.getByPlaceholder(/Name, account code or phone/i)).toBeVisible();
 });
 
+/**
+ * Sign the manager in, then hand the till to Sam.
+ *
+ * A manager can only approve at somebody else's till if this device has seen
+ * them sign in — approval is checked against the device credential cache, so
+ * it keeps working during an outage. This is also the real shift handover.
+ */
+async function handOverToSam(page: import("@playwright/test").Page) {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = page.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}
+
+test("a manager's PIN releases a LINE discount, not only a blanket one", async ({ page }) => {
+  // The bug the shop hit. Money off a line rides on the line, and the approver
+  // was only ever resolved when money came off the SALE — so a manager stood at
+  // the till, typed their PIN, and the sale still filed itself awaiting
+  // approval with no invoice number. Every test here stopped at the prompt
+  // appearing, so nothing noticed that approving it did nothing.
+  await handOverToSam(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // The figure named is the discount actually given, not the blanket total —
+  // which for a line discount was R0.00.
+  // A thin space sits between the R and the figure, so match around it.
+  await expect(page.getByText(/Discount of R.20\.00 needs a manager/i)).toBeVisible();
+  // Scoped to the dialog: the till's own keypad is still on the page behind it.
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  for (const d of USERS.manager.pin.split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = approval.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Released, so it takes an invoice number and names who released it.
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales[0].approved_by).toBe(USERS.manager.row.id);
+  expect(be.storedSales[0].discount_amount).toBe(20);
+});
+
+test("backing out drops the discount that asked, and leaves the one that did not", async ({ page }) => {
+  // Sam may give 5%. Five percent off the cement is his to give; twenty off the
+  // cable is not. Cancelling the second must not take the first with it.
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 5;
+  await handOverToSam(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("5");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toBeVisible();
+  await page.getByRole("button", { name: /^Cancel$/ }).last().click();
+
+  // The cable is back at full price; the cement keeps the discount Sam was
+  // entitled to give. Cancelling used to clear the sale-level discount only,
+  // which on a line discount meant clearing nothing at all.
+  const cable = page.locator(".line-row", { hasText: "Twin & Earth" });
+  await expect(cable.locator(".line-disc")).toHaveCount(0);
+  await expect(
+    page.locator(".line-row", { hasText: "Cement" }).locator(".line-disc")
+  ).toContainText("5.75");
+});
+
 test("an employee's discount parks until a manager releases it", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
 
