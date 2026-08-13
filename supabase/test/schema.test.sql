@@ -451,4 +451,85 @@ begin
   delete from public.app_users where id = v_invited;
 end $$;
 
+-- 0034: looking back at what was sold ----------------------------------------
+
+do $$
+declare v_tok text; v_emp uuid; v_prod uuid; v_price numeric;
+        v_today jsonb; v_old jsonb;
+begin
+  select token into v_tok from till;
+  -- The manager, not the seeded cashier: the staff checks above disable that
+  -- one, and a disabled cashier cannot ring anything up.
+  select manager_id into v_emp from fixture;
+  select id, price_retail into v_prod, v_price
+    from public.products where active and price_retail > 0 limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+
+  -- One today, one a fortnight ago. The old one is what proves the window has
+  -- ends rather than simply returning everything.
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'card', p_created_at => now() - interval '14 days',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'card', 'amount', v_price)));
+
+  v_today := public.pos_sales_history(v_tok, '1234',
+    date_trunc('day', now()), date_trunc('day', now()) + interval '1 day');
+  perform assert_eq(jsonb_array_length(v_today -> 'rows'), 1,
+    'today shows today, and not a fortnight ago');
+  perform assert_eq((v_today -> 'totals' ->> 'gross')::numeric, v_price,
+    'and the takings are the day''s, not the whole ledger''s');
+  perform assert_eq((v_today -> 'totals' -> 'tenders' ->> 'cash')::numeric, v_price,
+    'broken down by how it was paid');
+
+  -- A wider window reaches the older one.
+  v_old := public.pos_sales_history(v_tok, '1234',
+    now() - interval '30 days', now() + interval '1 day');
+  perform assert_eq(jsonb_array_length(v_old -> 'rows'), 2, 'a month reaches both');
+  perform assert_eq((v_old -> 'totals' ->> 'gross')::numeric, v_price * 2,
+    'and totals both');
+
+  -- Everything a reprint needs comes back, or the slip prints blanks where the
+  -- figures should be. subtotal was missing on the first cut of this.
+  perform assert(v_old -> 'rows' -> 0 ? 'subtotal', 'a row carries its subtotal');
+  perform assert(v_old -> 'rows' -> 0 ? 'paid_cash', 'and the cash/card split');
+  perform assert(v_old -> 'rows' -> 0 ? 'trade_pricing', 'and which price list it was on');
+
+  -- The wrong way round is a mistake worth naming rather than an empty list.
+  perform assert_refuses(
+    format('select public.pos_sales_history(%L, %L, now(), now() - interval ''1 day'')',
+           v_tok, '1234'),
+    'a range that ends before it starts');
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
+-- The shop's takings are not for everybody who can work a till.
+do $$
+declare v_tok text; v_emp uuid;
+begin
+  select token into v_tok from till;
+  select id into v_emp from public.pos_admin_invite_user(
+    v_tok, '1234', 'Counter only 2', '+27820000011', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9911', gen_salt('bf')) where id = v_emp;
+
+  perform assert_refuses(
+    format('select public.pos_sales_history(%L, %L, now() - interval ''1 day'', now())',
+           v_tok, '9911'),
+    'a cashier reading the shop takings');
+
+  delete from public.app_users where id = v_emp;
+end $$;
+
 select 'all database tests passed' as result;

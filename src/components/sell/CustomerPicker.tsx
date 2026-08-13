@@ -45,6 +45,7 @@ export default function CustomerPicker({
     | { kind: "new" }
     | { kind: "history"; customer: Customer }>({ kind: "list" });
   const [newName, setNewName] = useState("");
+  const [newAddress, setNewAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,7 +69,13 @@ export default function CustomerPicker({
     setBusy(true);
     setError(null);
     try {
-      const c = await quickCustomer(cashierId, term, newName || null);
+      const c = await quickCustomer(
+        cashierId,
+        term,
+        newName || null,
+        null,
+        newAddress || null
+      );
       onAdded?.(c);
       onPick(c);
     } catch (e) {
@@ -179,9 +186,23 @@ export default function CustomerPicker({
                   if (e.key === "Enter" && !busy) void record();
                 }}
               />
+              <label className="modal-row-meta" htmlFor="buyer-address">
+                Delivery address, if there is one (optional)
+              </label>
+              <input
+                id="buyer-address"
+                value={newAddress}
+                onChange={(e) => setNewAddress(e.target.value)}
+                placeholder="e.g. 14 Mabille Rd, Maseru"
+                className="modal-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy) void record();
+                }}
+              />
               <p className="modal-row-meta">
                 Kept for invoices, returns and warranty claims only. Never
-                required to complete a sale.
+                required to complete a sale — and once it is here, this buyer is
+                found again by name or number, so the next slip carries it too.
               </p>
               <div className="modal-actions">
                 {/* "Back", not "Cancel": the modal already has a Cancel that

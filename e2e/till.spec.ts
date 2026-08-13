@@ -585,6 +585,88 @@ test("cashing up over unsynced sales is warned about, not silently wrong", async
   await expect(page.getByText("Expected in drawer").locator("..")).toContainText("0.00");
 });
 
+test("a sale can be found again, and the day's takings add up", async ({ page }) => {
+  // Two sales today, one of them a week old. The week-old one is what proves a
+  // window has ends rather than just showing everything.
+  const weekAgo = new Date(Date.now() - 6 * 864e5).toISOString();
+  be.sales.push({
+    client_ref: null, cashier_id: USERS.employee.row.id, customer_id: null,
+    items: [{ product_id: "p1", qty: 1 }], payment_method: "card",
+    discount_amount: 0, approved_by: null, created_at: weekAgo, total: 500,
+    payments: [{ method: "card", amount: 500 }], po_number: null,
+    customer_vat_number: null, rounding: 0, amount_tendered: null, change_due: null,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // Today: the sale just rung up, and nothing from last week.
+  await expect(page.getByText("Taken")).toBeVisible();
+  const rows = page.locator("li", { has: page.getByRole("button", { name: /Reprint/ }) });
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("115.00");
+
+  // Yesterday: nothing happened.
+  await page.getByRole("button", { name: /^Yesterday$/ }).click();
+  await expect(page.getByText(/Nothing sold in that stretch/i)).toBeVisible();
+
+  // Seven days reaches back far enough to catch the older one, and the takings
+  // are both sales together.
+  await page.getByRole("button", { name: /^Last 7 days$/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByText("R615.00")).toBeVisible();
+});
+
+test("an old slip reprints from the sales list", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // "Can I have another copy of that slip" is the reason most people go looking
+  // for an old sale at all, so it is one tap from the row.
+  await page.getByRole("button", { name: /Reprint/ }).first().click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Cement 42.5N 50kg");
+  await expect(slip).toContainText(/tax invoice/i);
+});
+
+test("a buyer's address is kept, and the slip carries their name next time", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByPlaceholder(/Name, account code or phone/i).fill("083 555 0199");
+  await page.getByRole("button", { name: /Record .* as a new buyer/i }).click();
+
+  // All three optional, and all three worth having: the name puts them on the
+  // invoice, the number finds them again, the address goes on a delivery note.
+  await page.getByLabel(/Their name/i).fill("T. Mokoena");
+  await page.getByLabel(/Delivery address/i).fill("14 Mabille Rd, Maseru");
+  await page.getByRole("button", { name: /^Save 083/ }).click();
+
+  const saved = be.customers.find((c) => c.name === "T. Mokoena");
+  expect(saved).toBeTruthy();
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("T. Mokoena");
+});
+
 test("staff are invited by phone, and nobody's PIN is set for them", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
