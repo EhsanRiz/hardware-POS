@@ -488,6 +488,58 @@ test("a sale taken offline still prints, then syncs exactly once", async ({ page
   expect(be.storedSales[0].created_at).toBeTruthy();
 });
 
+test("a discount can be given as a percentage, and the slip says so", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // R115 of cement. Ten percent off is R11.50 — a figure nobody should have to
+  // work out in their head before agreeing to it.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await expect(page.getByRole("status")).toContainText("11.50");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // It comes off the sale, not just the screen.
+  await expect(page.locator(".total-row .fig")).toContainText("103.50");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // The percentage reaches the paper. An amount alone would leave the customer
+  // unable to check the 10% they were promised.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Discount");
+  await expect(slip).toContainText("10% off");
+  expect(be.storedSales[0].discount_amount).toBe(11.5);
+});
+
+test("a discount cannot be more than the whole thing", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("120");
+
+  await expect(page.getByText(/cannot be more than the whole thing/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
+});
+
+test("the till says where to put the buyer's details", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  // The name, number and address were always one tap away, behind a button
+  // whose second line only reported the price band.
+  const pick = page.getByRole("button", { name: /Walk-in customer/i });
+  await expect(pick).toContainText(/tap to add their details/i);
+
+  await pick.click();
+  await expect(page.getByPlaceholder(/Name, account code or phone/i)).toBeVisible();
+});
+
 test("an employee's discount parks until a manager releases it", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
 
@@ -645,7 +697,7 @@ test("a sale can be found again, and the day's takings add up", async ({ page })
   be.sales.push({
     client_ref: null, cashier_id: USERS.employee.row.id, customer_id: null,
     items: [{ product_id: "p1", qty: 1 }], payment_method: "card",
-    discount_amount: 0, approved_by: null, created_at: weekAgo, total: 500,
+    discount_amount: 0, discount_reason: null, approved_by: null, created_at: weekAgo, total: 500,
     payments: [{ method: "card", amount: 500 }], po_number: null,
     customer_vat_number: null, rounding: 0, amount_tendered: null, change_due: null,
   });
@@ -777,7 +829,7 @@ test("a cashier who has rung up sales is signed out rather than deleted", async 
   be.sales.push({
     client_ref: null, cashier_id: USERS.employee.row.id, customer_id: null,
     items: [{ product_id: "p1", qty: 1 }], payment_method: "cash",
-    discount_amount: 0, approved_by: null, created_at: null, total: 115,
+    discount_amount: 0, discount_reason: null, approved_by: null, created_at: null, total: 115,
     payments: [{ method: "cash", amount: 115 }], po_number: null,
     customer_vat_number: null, rounding: 0, amount_tendered: null, change_due: null,
   });
