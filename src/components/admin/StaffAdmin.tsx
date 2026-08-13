@@ -270,12 +270,16 @@ function discountAllowance(s: StaffUser): string | null {
     return "approves discounts";
   }
   const parts: string[] = [];
-  if (s.discount_limit_percent != null) parts.push(`${s.discount_limit_percent}%`);
+  if (s.discount_limit_percent != null) {
+    parts.push(`${s.discount_limit_percent}% a line`);
+  }
   if (s.discount_limit_amount != null) {
-    parts.push(`${CURRENCY}${s.discount_limit_amount}`);
+    parts.push(`${CURRENCY}${s.discount_limit_amount} a sale`);
   }
   if (!parts.length) return null;
-  return `may discount ${parts.join(" or ")}`;
+  // "and", not "or": both are checked, and either one exceeded fetches a
+  // manager. "or" read as though the cashier picked whichever suited them.
+  return `may discount ${parts.join(" and ")}`;
 }
 
 /**
@@ -545,7 +549,12 @@ function StaffEditor({
             </p>
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-xs text-stone-500">Percent of the sale</span>
+                {/* A rate, not a sum of money — it holds on every line, so 5%
+                    means no single item goes out at more than 5% off however
+                    big the rest of the basket is. Measuring it against the
+                    sale total instead let 10% off one line pass as long as
+                    the sale was large enough. */}
+                <span className="text-xs text-stone-500">Percent off any one line</span>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     className="w-full border border-stone-300 rounded-lg px-3 py-2"
@@ -559,7 +568,7 @@ function StaffEditor({
                 </div>
               </label>
               <label className="block">
-                <span className="text-xs text-stone-500">Or, at most</span>
+                <span className="text-xs text-stone-500">And, per sale, at most</span>
                 <div className="mt-1 flex items-center gap-2">
                   <span className="text-stone-500">{CURRENCY}</span>
                   <input
@@ -575,7 +584,9 @@ function StaffEditor({
             </div>
             {limitPct.trim() !== "" && limitAmt.trim() !== "" && (
               <p className="text-xs text-stone-500 mt-2">
-                Both set — whichever comes to less is the one that holds.
+                Both are checked. Whichever is exceeded first sends the sale for
+                approval — {limitPct}% off any single line, or {CURRENCY}
+                {limitAmt} across the whole sale.
               </p>
             )}
             {/* Somebody who can approve discounts cannot be limited by one:

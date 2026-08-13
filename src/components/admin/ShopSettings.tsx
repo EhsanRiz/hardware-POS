@@ -3,16 +3,19 @@ import { adminSaveSettings, type ShopDetails } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { refreshSettings, shopSettings } from "../../lib/settings";
 
-const FIELDS: {
+interface Field {
   key: keyof ShopDetails;
   label: string;
   hint?: string;
   inputMode?: "tel" | "numeric";
-}[] = [
+}
+
+const FIELDS: Field[] = [
   { key: "shop_name", label: "Shop name" },
   { key: "address_line1", label: "Street address" },
   { key: "address_line2", label: "Town & province" },
   { key: "phone", label: "Phone", inputMode: "tel" },
+  { key: "email", label: "Email", hint: "Where customers ask for a copy of an invoice." },
   {
     key: "vat_number",
     label: "VAT number",
@@ -20,6 +23,20 @@ const FIELDS: {
   },
   { key: "registration_number", label: "Company registration number" },
   { key: "currency", label: "Currency symbol" },
+];
+
+// Where the money goes. Kept as its own card rather than seven more boxes
+// under the address: these are only read by somebody about to pay, and they
+// have their own failure — a wrong digit here is an invoice nobody can settle.
+const BANK_FIELDS: Field[] = [
+  { key: "bank_name", label: "Bank" },
+  {
+    key: "bank_account_name",
+    label: "Account name",
+    hint: "The name the account is held in, which is not always the trading name.",
+  },
+  { key: "bank_account_number", label: "Account number", inputMode: "numeric" },
+  { key: "bank_branch_code", label: "Branch code", inputMode: "numeric" },
 ];
 
 /**
@@ -32,10 +49,12 @@ const FIELDS: {
  * it stale and the next power cut prints the old address.
  */
 export default function ShopSettings({ pin }: { pin: string }) {
-  const [f, setF] = useState<ShopDetails>(() => shopSettings());
+  const [f, setF] = useState<ShopDetails>(() => toDetails(shopSettings()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Read-only, and served rather than compiled in — see the note beside it.
+  const [vat, setVat] = useState<number | null>(() => shopSettings().vat_rate ?? null);
 
   // The cache is what the till prints from; the server is what is true. Take
   // the server's version on the way in so an edit is never made against a
@@ -49,7 +68,8 @@ export default function ShopSettings({ pin }: { pin: string }) {
   const touched = useRef(false);
   useEffect(() => {
     void refreshSettings().then((server) => {
-      if (!touched.current) setF(server);
+      if (!touched.current) setF(toDetails(server));
+      setVat(server.vat_rate ?? null);
     });
   }, []);
 
@@ -101,17 +121,91 @@ export default function ShopSettings({ pin }: { pin: string }) {
           </label>
         ))}
 
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
-            disabled={busy || !f.shop_name.trim()}
-            onClick={save}
-          >
-            {busy ? "Saving…" : "Save"}
-          </button>
-          {saved && <span className="text-sm text-emerald-700">Saved.</span>}
+        {/* Not editable, and worth saying why rather than leaving a greyed box
+            to look broken. What is CHARGED has never been a build constant —
+            every sale line resolves the rate on the day and stores it, so a
+            reprint restates what was actually charged. The rate itself is a
+            national fact shared by every shop on this system, so a box here
+            would quietly change other people's invoices. */}
+        <div className="pt-1">
+          <span className="text-sm text-stone-600">VAT rate</span>
+          <p className="mt-1 text-lg tabular-nums">
+            {vat == null ? "—" : `${+(vat * 100).toFixed(2)}%`}
+          </p>
+          <span className="text-xs text-stone-500">
+            Set nationally, not per shop, and applied by date — old invoices keep
+            the rate they were charged at. Ask us to change it when SARS does.
+          </span>
         </div>
+
+      </div>
+
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
+          <h2 className="font-medium">Banking details</h2>
+          {/* The till takes EFT and the slip said nothing about where to pay,
+              so an EFT customer had to phone the shop before they could settle
+              — which is how an invoice becomes an old invoice. */}
+          <p className="text-sm text-stone-500">
+            Printed on any invoice that leaves with the money still owed — EFT
+            and account sales. Leave blank and those slips say nothing about
+            where to pay.
+          </p>
+        </div>
+
+        {BANK_FIELDS.map((field) => (
+          <label key={field.key} className="block">
+            <span className="text-sm text-stone-600">{field.label}</span>
+            <input
+              className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
+              value={f[field.key] ?? ""}
+              inputMode={field.inputMode}
+              onChange={(e) => set(field.key, e.target.value)}
+              aria-label={field.label}
+            />
+            {field.hint && <span className="text-xs text-stone-500">{field.hint}</span>}
+          </label>
+        ))}
+
+      </div>
+
+      {/* One Save for the page, not one per card. Both cards edit the same
+          record and a single save writes all of it, so two identical buttons
+          would only raise the question of which one this field belongs to. */}
+      <div className="max-w-xl flex items-center gap-3 mt-4">
+        <button
+          className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+          disabled={busy || !f.shop_name.trim()}
+          onClick={save}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && <span className="text-sm text-emerald-700">Saved.</span>}
       </div>
     </div>
   );
+}
+
+/**
+ * The cached settings, as the form's own shape.
+ *
+ * ShopSettings carries what the till reads — including the served VAT rate,
+ * which is not editable — and the form edits strings. Nulls become empty boxes
+ * rather than the word "null" in an input.
+ */
+function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
+  return {
+    shop_name: s.shop_name,
+    address_line1: s.address_line1,
+    address_line2: s.address_line2,
+    phone: s.phone,
+    vat_number: s.vat_number,
+    currency: s.currency,
+    registration_number: s.registration_number,
+    email: s.email ?? "",
+    bank_name: s.bank_name ?? "",
+    bank_account_name: s.bank_account_name ?? "",
+    bank_account_number: s.bank_account_number ?? "",
+    bank_branch_code: s.bank_branch_code ?? "",
+  };
 }

@@ -269,6 +269,22 @@ export interface ShopSettings {
   vat_number: string;
   currency: string;
   registration_number: string;
+  email?: string | null;
+  /**
+   * Where the money goes. Printed when a slip leaves the shop with the amount
+   * still owed — an EFT or account invoice with no account number on it makes
+   * the customer phone up before they can pay.
+   */
+  bank_name?: string | null;
+  bank_account_name?: string | null;
+  bank_account_number?: string | null;
+  bank_branch_code?: string | null;
+  /**
+   * The standard VAT rate as a fraction, served from the same table the sale
+   * reads. What is CHARGED has always come from there and is stored per line at
+   * the moment of sale; this is so the rate shown on screen cannot outlive it.
+   */
+  vat_rate?: number | null;
 }
 
 /** Minimal shape the receipt builder needs (live carts and past sales alike). */

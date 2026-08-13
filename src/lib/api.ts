@@ -163,6 +163,15 @@ export async function fetchSettings(): Promise<ShopSettings> {
     vat_number: row?.vat_number ?? "",
     currency: row?.currency ?? "R",
     registration_number: row?.registration_number ?? "",
+    email: row?.email ?? "",
+    bank_name: row?.bank_name ?? "",
+    bank_account_name: row?.bank_account_name ?? "",
+    bank_account_number: row?.bank_account_number ?? "",
+    bank_branch_code: row?.bank_branch_code ?? "",
+    // Null rather than a stand-in: settings.vatRate() falls back to the
+    // build's constant only when the server has never been reached, and a
+    // zero here would print "VAT at 0%" on a brand-new till.
+    vat_rate: typeof row?.vat_rate === "number" ? row.vat_rate : null,
   };
 }
 

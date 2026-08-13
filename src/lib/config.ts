@@ -34,8 +34,14 @@ export const RECEIPT_WIDTH = Math.max(16, Math.floor(BASE_COLS / PRINT_WIDTH_SCA
  *
  * The rate is a build constant rather than a shop setting because it is set by
  * the Minister of Finance, not by the shop, and a till that lets a cashier
- * change it is a till that can print an invalid tax invoice. When it changes,
- * it changes here and the server's own constant moves in the same release.
+ * change it is a till that can print an invalid tax invoice.
+ *
+ * This is now only the LAST RESORT. What gets charged has always come from
+ * public.tax_rates, resolved by date and stored on the sale line, and 0038
+ * serves that same rate to the till with the rest of the shop's settings — so
+ * settings.vatRate() is what anything on screen should ask. This constant is
+ * reached only on a device that has never once heard from the server, which is
+ * a till that has not made a sale yet.
  */
 export const VAT_RATE = 0.15;
 

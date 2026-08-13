@@ -362,6 +362,12 @@ export interface ShopDetails {
   vat_number: string;
   currency: string;
   registration_number: string;
+  email: string;
+  /** Where an EFT or account customer actually sends the money. */
+  bank_name: string;
+  bank_account_name: string;
+  bank_account_number: string;
+  bank_branch_code: string;
 }
 
 // Units are global reference data (kg, ea, m) with nothing tenant-specific in

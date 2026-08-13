@@ -16,9 +16,8 @@ const src = readFileSync(new URL("../src/lib/discountLimits.ts", import.meta.url
 const js = ts.transpileModule(src, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText;
-const { lineCap, saleDiscountCeiling, staffCeiling } = await import(
-  "data:text/javascript;base64," + Buffer.from(js).toString("base64")
-);
+const { lineCap, saleDiscountCeiling, staffLineCeiling, staffSaleCeiling } =
+  await import("data:text/javascript;base64," + Buffer.from(js).toString("base64"));
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -104,36 +103,78 @@ check(
 );
 
 console.log("\n--- what a person may give without asking ---");
-check("nobody", staffCeiling(null, 1000), null);
-check("no limit set", staffCeiling({ id: "u", name: "Sam", role: "employee" }, 1000), null);
+const sam = (extra) => ({ id: "u", name: "Sam", role: "employee", ...extra });
+
+check("nobody", staffLineCeiling(null, 1000), null);
+check("no limit set", staffLineCeiling(sam({}), 1000), null);
+
+// THE RULE THAT CHANGED. A percent limit is a rate and holds on the LINE, so
+// five percent means five percent of what this line sells for — not five
+// percent of whatever else happens to be in the basket beside it.
+check("five percent of the line", staffLineCeiling(sam({ discount_limit_percent: 5 }), 714), 35.7);
+// The old rule measured it against the sale, so on a R1,710 sale a 5% limit
+// came to R85.50 — and R71.40, a full TEN percent of the R714 line, slipped
+// under it. The line ceiling is below that figure, which is the whole fix.
 check(
-  "ten percent of the sale",
-  staffCeiling({ id: "u", name: "Sam", role: "employee", discount_limit_percent: 10 }, 1000),
-  100
+  "and it is under what the old sale-wide figure allowed",
+  staffLineCeiling(sam({ discount_limit_percent: 5 }), 714) < 1710 * 0.05,
+  true
 );
 check(
-  "a rand figure",
-  staffCeiling({ id: "u", name: "Sam", role: "employee", discount_limit_amount: 50 }, 1000),
+  "so ten percent of the line is now over it",
+  714 * 0.1 > staffLineCeiling(sam({ discount_limit_percent: 5 }), 714),
+  true
+);
+
+// The rand half is a ceiling on the SALE, so what is already off elsewhere
+// eats into it — that is what stops a cashier splitting one discount across
+// several lines to stay under it.
+check("a rand ceiling on the sale", staffLineCeiling(sam({ discount_limit_amount: 100 }), 714), 100);
+check(
+  "less whatever is already off elsewhere",
+  staffLineCeiling(sam({ discount_limit_amount: 100 }), 714, 60),
+  40
+);
+// Both set: whichever is exceeded first decides, so the ceiling is the lower.
+check(
+  "both — the rate binds on a dear line",
+  staffLineCeiling(sam({ discount_limit_percent: 5, discount_limit_amount: 100 }), 714),
+  35.7
+);
+check(
+  "both — the rand binds on a dearer one",
+  staffLineCeiling(sam({ discount_limit_percent: 5, discount_limit_amount: 100 }), 5000),
+  100
+);
+
+console.log("\n--- and for a discount taken off the whole sale ---");
+const basket = [
+  { qty: 6, price: 119 },   // R714 of cement
+  { qty: 4, price: 249 },   // R996 of water meters
+];
+// A blanket discount spreads pro-rata, so every line takes the same rate — and
+// five percent of the sale is five percent of each line. The rate ceiling and
+// the old sale-total ceiling agree for this shape of discount, which is why
+// the change costs nothing for the ordinary "give him five percent" case.
+check("five percent across the sale", staffSaleCeiling(sam({ discount_limit_percent: 5 }), basket), 85.5);
+check("a rand ceiling", staffSaleCeiling(sam({ discount_limit_amount: 50 }), basket), 50);
+check(
+  "both — the tighter holds",
+  staffSaleCeiling(sam({ discount_limit_percent: 5, discount_limit_amount: 50 }), basket),
   50
 );
-// The limit is per sale, so the percentage half moves with the basket while
-// the rand half does not — which is the whole reason a shop would set both.
+// A line already discounted to the rate has no room left for a share of a
+// blanket one, so there is none to give.
 check(
-  "both — on a small sale the percentage binds",
-  staffCeiling(
-    { id: "u", name: "Sam", role: "employee", discount_limit_percent: 10, discount_limit_amount: 200 },
-    1000
+  "a line already at the rate shuts the blanket discount",
+  staffSaleCeiling(
+    sam({ discount_limit_percent: 5 }),
+    [{ qty: 6, price: 119, discount: 35.7 }, { qty: 4, price: 249 }],
+    35.7
   ),
-  100
+  0
 );
-check(
-  "both — on a large sale the rand figure binds",
-  staffCeiling(
-    { id: "u", name: "Sam", role: "employee", discount_limit_percent: 10, discount_limit_amount: 200 },
-    5000
-  ),
-  200
-);
+check("no limit is no authority", staffSaleCeiling(sam({}), basket), null);
 
 console.log(`\n${failures} failure(s)`);
 process.exit(failures ? 1 : 0);

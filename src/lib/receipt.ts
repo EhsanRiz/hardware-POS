@@ -256,12 +256,41 @@ export function buildReceiptText(
     out.push(lineItem("Account balance", amount(customer.balance)));
   }
 
+  // Where to pay, but only on a slip that leaves with the money still owed.
+  // A cash customer has already paid and does not need the shop's account
+  // number; an EFT or account customer cannot settle without it, and printing
+  // it on every till slip would put the shop's banking on the floor of the car
+  // park a hundred times a day.
+  const owed =
+    sale.payment_method === "account" ||
+    sale.payment_method === "eft" ||
+    taken.some((p) => p.method === "account" || p.method === "eft");
+  if (owed) bankingBlock(out);
+
   out.push("");
   out.push(center("Thank you"));
   out.push("");
   out.push("");
   out.push("");
   return out.join("\n");
+}
+
+/** The shop's account, for somebody who still has to pay it. */
+function bankingBlock(out: string[]): void {
+  const s = shopSettings();
+  const rows: [string, string][] = [
+    ["Bank", s.bank_name ?? ""],
+    ["Account name", s.bank_account_name ?? ""],
+    ["Account no", s.bank_account_number ?? ""],
+    ["Branch code", s.bank_branch_code ?? ""],
+  ];
+  const filled = rows.filter(([, v]) => v.trim() !== "");
+  // Nothing set is not a heading with nothing under it.
+  if (filled.length === 0) return;
+  out.push("");
+  out.push(divider());
+  out.push(bold("PAYMENT DETAILS"));
+  for (const [label, value] of filled) out.push(lineItem(label, value));
 }
 
 /**
