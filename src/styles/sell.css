@@ -1609,3 +1609,69 @@ tr.is-void td:last-child { text-decoration: none; }
   .detail-photo { height: 220px; }
   .detail-figures { gap: 18px; }
 }
+
+/* ---- Phone -------------------------------------------------------------- */
+/*
+   Below 600px the line stops being a table.
+ 
+   The tablet tiers narrow the columns and drop the unit price, which works
+   down to about 700px and then quietly fails: `1fr` will not shrink past the
+   product name's min-content, so the row grows wider than the screen and the
+   two controls on its right — the discount key and the delete — are pushed off
+   the edge. The page does not scroll, because the row is clipped, so there is
+   nothing to say they are there. On a phone you simply could not remove a line
+   or take money off one.
+ 
+   So the row reflows into two, and each control gets a real target:
+ 
+       1   Cement 42.5N 50kg                      ×
+           CEM-425-50 · bin A1 · stock 237 → 231
+       [6]                             714.00     %
+ */
+@media (max-width: 599px) {
+  .sell { --sell-pad: 12px; --line-gap: 10px; }
+
+  /* Column headings describe tracks that no longer exist. */
+  .lines-head { display: none; }
+
+  .line-row {
+    grid-template-columns: 64px minmax(0, 1fr) 44px;
+    grid-template-areas:
+      "n   main del"
+      "qty amt  off";
+    row-gap: 8px;
+    align-items: center;
+    padding: 12px var(--sell-pad);
+  }
+  .line-n    { grid-area: n; align-self: start; padding-top: 2px; }
+  .line-main { grid-area: main; }
+  .line-qty  { grid-area: qty; margin-top: 0; }
+  .line-amt  { grid-area: amt; }
+  .line-off  { grid-area: off; }
+  .line-del  { grid-area: del; justify-self: end; margin: 0; }
+
+  /* The quantity is an input, not a caption, so it needs the room the grid
+     area gives it rather than the 12px the metadata line uses. */
+  .line-qty input { font-size: 16px; min-height: 40px; padding: 4px 8px; }
+  .line-amt { font-size: 17px; }
+  .line-off { min-width: 44px; min-height: 40px; }
+
+  /* 16px, because Safari zooms the page when a focused input is smaller and a
+     till that jumps on every quantity edit is unusable. */
+  .scan-field input { font-size: 16px; }
+
+  /* The header gives ground in the order it can afford to. The wordmark goes
+     first — the mark alone still says whose till this is, and the shop already
+     knows. The sync chip keeps its icon and drops its word, because on a phone
+     the state is worth a glance and not a sentence; the queue count stays,
+     since "how many are waiting" is the part a cashier acts on. What does not
+     shrink is Manage and Sign out: they are the two things a manager opened
+     the phone to reach. */
+  .sell-head { gap: 8px; padding-left: 12px; padding-right: 12px; }
+  .sell-wordmark, .sell-rule-v { display: none; }
+  .sell-head-right { gap: 8px; }
+  .sync-chip { gap: 4px; padding: 4px 8px; font-size: 0; }
+  .sync-chip svg { font-size: initial; }
+  .sync-chip.is-failed { font-size: 12px; }
+  .sell-head-right .btn-line { padding: 0 10px; font-size: 13px; }
+}

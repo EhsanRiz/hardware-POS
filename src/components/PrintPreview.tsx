@@ -97,7 +97,11 @@ export default function PrintPreview() {
             </button>
           </div>
 
-          <div className="overflow-y-auto p-4 bg-stone-50">
+          {/* overflow-x too: the slip is a fixed 48-column document and must
+              not be reflowed to fit — what is previewed has to be what the
+              printer puts on paper. On a phone that is wider than the screen,
+              so it scrolls inside its own box rather than pushing the page. */}
+          <div className="overflow-y-auto overflow-x-auto p-4 bg-stone-50">
             <pre className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-stone-900">
               {renderMarkup(text)}
             </pre>
