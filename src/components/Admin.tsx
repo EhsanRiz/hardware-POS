@@ -341,7 +341,7 @@ export default function Admin({
 
       {tab === "cashup" && <CashUp pin={pin} />}
 
-      {tab === "staff" && <StaffAdmin user={user} pin={pin} />}
+      {tab === "staff" && <StaffAdmin user={user} pin={pin} products={products} />}
 
       {tab === "shop" && <ShopSettings pin={pin} />}
 

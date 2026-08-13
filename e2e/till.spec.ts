@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { Backend, installBackend, pairAndSignIn, USERS } from "./fake-backend";
+import { Backend, installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
 const banner = (page: import("@playwright/test").Page) =>
@@ -654,6 +654,160 @@ test("backing out of manager approval drops the discount", async ({ page }) => {
   // not the word — the left column also holds a button labelled "Discount".
   await expect(page.locator(".total-row .fig")).toContainText("115.00");
   await expect(page.locator(".pay")).not.toContainText("−");
+});
+
+test("a cashier inside their limit does not have to fetch anybody", async ({ page }) => {
+  // The manager gives Sam ten percent of standing authority. Under 0037 this
+  // is the difference between closing a small sale and leaving the counter to
+  // find somebody for R11.50.
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 10;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+
+  // R115 of cement, so ten percent is R11.50. The dialog says how far the
+  // authority goes before it is reached, not after.
+  await page.getByLabel("Discount amount").fill("11.50");
+  await expect(page.getByText(/manager will need to approve/i)).toHaveCount(0);
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+  await expect(page.locator(".total-row .fig")).toContainText("103.50");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].discount_amount).toBe(11.5);
+  // Nobody was asked, so nobody is recorded as having approved it.
+  expect(be.storedSales[0].approved_by).toBeNull();
+});
+
+test("a cent past the limit and the manager is still fetched", async ({ page }) => {
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 10;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+
+  // Said before Apply, not after: the cashier can decide to offer less rather
+  // than discovering at the tender screen that somebody has to be found.
+  await expect(page.getByText(/Over your R11.50/i)).toBeVisible();
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.getByText(/Manager approval/i)).toBeVisible();
+});
+
+test("a line discount counts against the same limit as a blanket one", async ({ page }) => {
+  // Ten percent off the ladder is the same money as ten percent off a sale
+  // with only the ladder in it, so it cannot be a way around the limit.
+  be.staff.find((s) => s.id === "u2")!.discount_limit_amount = 10;
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("25");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  await expect(page.getByText(/Manager approval/i)).toBeVisible();
+});
+
+test("an item cap refuses the owner, not only the counter", async ({ page }) => {
+  // The whole difference between a cap and a limit: a limit decides whether a
+  // manager is fetched, a cap has nobody to fetch. The manager here approves
+  // their own discounts and is still held.
+  PRODUCTS.find((p) => p.id === "p1")!.max_discount_percent = 5;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+
+  // R115 of cement, capped at 5% — R5.75. The ceiling is stated up front, so
+  // nobody promises 20% and then takes it back.
+  await expect(page.getByText(/Capped at R5.75 off/i)).toBeVisible();
+  await page.getByLabel("Discount amount").fill("10");
+  await expect(page.getByText(/no PIN will lift it/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
+
+  // And at the cap it goes through.
+  await page.getByLabel("Discount amount").fill("5.75");
+  await expect(page.getByRole("button", { name: /^Apply$/ })).toBeEnabled();
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  // R115 less R5.75 is R109.25, which cannot be paid in coins — so the figure
+  // to pay is the cash-rounded R109.20 and the row says "To pay" rather than
+  // "Total". The cap comes off before the rounding, not instead of it.
+  await expect(page.locator(".total-row .lbl")).toHaveText("To pay");
+  await expect(page.locator(".total-row .fig")).toContainText("109.20");
+});
+
+test("a blanket discount cannot walk around an item cap", async ({ page }) => {
+  // The route that would otherwise defeat the whole feature: cap the line, then
+  // take the money off the sale instead and let it spread back onto the line.
+  PRODUCTS.find((p) => p.id === "p1")!.max_discount_percent = 5;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+
+  await expect(page.getByText(/Capped at R5.75 off/i)).toBeVisible();
+  await page.getByLabel("Discount amount").fill("20");
+  await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
+});
+
+test("the manager sets a limit on one person and a cap on one item", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  // The cap lives on the product, because that is what it is about.
+  // The catalogue is a table; a row opens the editor.
+  await page.locator("tr", { hasText: "Cement 42.5N 50kg" }).first().click();
+  await page.getByLabel("Maximum discount percent").fill("5");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect.poll(() => PRODUCTS.find((p) => p.id === "p1")?.max_discount_percent).toBe(5);
+
+  // The limit lives on the person.
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Sam/ }).click();
+  await page.getByLabel("Discount limit percent").fill("10");
+  await page.getByLabel("Discount limit amount").fill("200");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  await expect
+    .poll(() => be.staff.find((s) => s.id === "u2")?.discount_limit_percent)
+    .toBe(10);
+  expect(be.staff.find((s) => s.id === "u2")?.discount_limit_amount).toBe(200);
+
+  // Both are visible from the staff screen — the limits on the row, and the
+  // capped items underneath, because a cap binds everybody on this list and
+  // leaving it out would make the screen quietly wrong.
+  await expect(page.getByText(/may discount 10% or R200/i)).toBeVisible();
+  await expect(page.getByText(/Items with a discount cap/i)).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Cement 42.5N 50kg" }).last()
+  ).toContainText("5% max");
+});
+
+test("clearing the box takes a limit away", async ({ page }) => {
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 10;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Sam/ }).click();
+
+  // The editor opens on what is stored, and emptying it means none — not
+  // "leave it alone", which would make a limit impossible to remove.
+  await expect(page.getByLabel("Discount limit percent")).toHaveValue("10");
+  await page.getByLabel("Discount limit percent").fill("");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  await expect
+    .poll(() => be.staff.find((s) => s.id === "u2")?.discount_limit_percent)
+    .toBeNull();
 });
 
 test("an employee is not offered the back office", async ({ page }) => {

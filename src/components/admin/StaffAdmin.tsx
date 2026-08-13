@@ -6,7 +6,7 @@ import {
   adminUpdateUser,
   type StaffUser,
 } from "../../lib/adminApi";
-import { ENROL_URL } from "../../lib/config";
+import { CURRENCY, ENROL_URL } from "../../lib/config";
 import { errorMessage } from "../../lib/errors";
 import {
   ADMIN_LEVEL_PERMS,
@@ -15,7 +15,7 @@ import {
   type PermKey,
   type RoleKey,
 } from "../../lib/permissions";
-import type { User } from "../../lib/types";
+import type { AdminProduct, User } from "../../lib/types";
 
 const ROLES: { key: RoleKey; label: string; blurb: string }[] = [
   { key: "employee", label: "Counter", blurb: "Sells and takes payment." },
@@ -36,7 +36,16 @@ const ROLES: { key: RoleKey; label: string; blurb: string }[] = [
  * already covers are shown ticked and fixed, because pretending they could be
  * unticked would be a lie — the server unions the two.
  */
-export default function StaffAdmin({ user, pin }: { user: User | null; pin: string }) {
+export default function StaffAdmin({
+  user,
+  pin,
+  products,
+}: {
+  user: User | null;
+  pin: string;
+  /** The catalogue the Manage area has already loaded — see CappedItems. */
+  products: AdminProduct[];
+}) {
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +138,16 @@ export default function StaffAdmin({ user, pin }: { user: User | null; pin: stri
                         <span className="ml-2 text-xs text-stone-500">(you)</span>
                       )}
                     </span>
-                    <span className="block text-sm text-stone-500">{s.phone}</span>
+                    <span className="block text-sm text-stone-500">
+                      {s.phone}
+                      {/* Said on the row, not only inside the editor: "who can
+                          give what away" is the question an owner opens this
+                          screen to answer, and opening five people one at a
+                          time to answer it is the slow way. */}
+                      {discountAllowance(s) && (
+                        <span className="text-stone-400"> · {discountAllowance(s)}</span>
+                      )}
+                    </span>
                   </span>
                   <span className="text-sm text-stone-600">
                     {ROLES.find((r) => r.key === s.role)?.label ?? s.role}
@@ -143,6 +161,11 @@ export default function StaffAdmin({ user, pin }: { user: User | null; pin: stri
             )}
           </ul>
         )}
+        {/* Not shown when the catalogue could not be read — "nothing is
+            capped" and "we could not find out" are different statements, and
+            only one of them is safe to make about a rule that binds the
+            owner. An empty catalogue has nothing to cap either way. */}
+        {!loading && products.length > 0 && <CappedItems products={products} />}
       </div>
 
       {editing && (
@@ -234,6 +257,83 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
   );
 }
 
+/**
+ * How much this person may take off before a manager is needed, in a phrase.
+ *
+ * Empty for anybody a limit does not apply to — somebody who can approve
+ * discounts is not held by one, and saying "up to 10%" next to a manager who
+ * can wave through 100% would be worse than saying nothing.
+ */
+function discountAllowance(s: StaffUser): string | null {
+  const byRole = new Set(ROLE_DEFAULTS[(s.role as RoleKey) ?? "employee"]);
+  if (byRole.has("approve_discount") || s.permissions.includes("approve_discount")) {
+    return "approves discounts";
+  }
+  const parts: string[] = [];
+  if (s.discount_limit_percent != null) parts.push(`${s.discount_limit_percent}%`);
+  if (s.discount_limit_amount != null) {
+    parts.push(`${CURRENCY}${s.discount_limit_amount}`);
+  }
+  if (!parts.length) return null;
+  return `may discount ${parts.join(" or ")}`;
+}
+
+/**
+ * The lines the shop has put a floor under.
+ *
+ * These belong to the catalogue and are edited there, but they are read here
+ * because this is the screen about who may give money away — and an item cap
+ * is the one thing on that subject that binds everybody, the owner included.
+ * Leaving it out would make this screen quietly wrong: it would look like the
+ * limits above were the whole story.
+ */
+function CappedItems({ products }: { products: AdminProduct[] }) {
+  const capped = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          p.active &&
+          (p.max_discount_percent != null || p.max_discount_amount != null)
+      ),
+    [products]
+  );
+
+  return (
+    <div className="max-w-3xl mt-6 bg-white rounded-xl border border-stone-200 p-4">
+      <h3 className="font-medium">Items with a discount cap</h3>
+      <p className="text-sm text-stone-500 mt-0.5">
+        Nobody gets past these — not a manager, not the owner. Set them on the
+        product in Catalogue.
+      </p>
+      {capped.length === 0 ? (
+        <p className="text-sm text-stone-500 mt-3">
+          Nothing is capped. Every line can be discounted as far as the person
+          serving is allowed to go.
+        </p>
+      ) : (
+        <ul className="mt-3 divide-y divide-stone-100">
+          {capped.map((p) => (
+            <li key={p.id} className="py-2 flex items-baseline gap-3 text-sm">
+              <span className="flex-1 min-w-0 truncate">{p.name}</span>
+              <span className="text-stone-600 tabular-nums">
+                {[
+                  p.max_discount_percent != null ? `${p.max_discount_percent}%` : null,
+                  p.max_discount_amount != null
+                    ? `${CURRENCY}${p.max_discount_amount} per ${p.unit_code}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" or ")}{" "}
+                max
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function StatusChip({ status, active }: { status: StaffUser["status"]; active: boolean }) {
   // "Invited" is the one worth calling out: that person cannot sign in yet, and
   // the manager standing there wondering why is owed the reason.
@@ -269,6 +369,14 @@ function StaffEditor({
   const [role, setRole] = useState<RoleKey>((staff?.role as RoleKey) ?? "employee");
   const [grants, setGrants] = useState<PermKey[]>((staff?.permissions ?? []) as PermKey[]);
   const [active, setActive] = useState(staff?.active ?? true);
+  // Kept as typed text rather than numbers: an empty box has to be tellable
+  // from a zero, and "" is the only thing that says "no limit" cleanly.
+  const [limitPct, setLimitPct] = useState(
+    staff?.discount_limit_percent != null ? String(staff.discount_limit_percent) : ""
+  );
+  const [limitAmt, setLimitAmt] = useState(
+    staff?.discount_limit_amount != null ? String(staff.discount_limit_amount) : ""
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -287,7 +395,16 @@ function StaffEditor({
       // stored twice and, worse, would stay behind if the role later changed.
       const extras = grants.filter((g) => !fromRole.has(g));
       if (staff) {
-        await adminUpdateUser(pin, staff.id, { name, role, permissions: extras, active });
+        await adminUpdateUser(pin, staff.id, {
+          name,
+          role,
+          permissions: extras,
+          active,
+          // Zero is how the server is told to clear one, so an emptied box
+          // sends 0 rather than null — null means "not editing this".
+          discount_limit_percent: limitPct.trim() === "" ? 0 : Number(limitPct),
+          discount_limit_amount: limitAmt.trim() === "" ? 0 : Number(limitAmt),
+        });
         await onSaved(null);
       } else {
         const added = await adminInviteUser(pin, name, phone, role, extras);
@@ -411,6 +528,72 @@ function StaffEditor({
                 </div>
               </div>
             ))}
+          </fieldset>
+
+          <fieldset>
+            <legend className="text-sm text-stone-600 mb-1">
+              May discount without asking
+            </legend>
+            {/* The limit is not a ban. Past it the sale still happens — it
+                waits for a manager's PIN, exactly as every discount does
+                today. Setting one only buys this person the room to close a
+                small sale without leaving the counter. */}
+            <p className="text-xs text-stone-500 mb-2">
+              Up to this much comes off on {name.trim() || "their"} own authority.
+              Anything more still goes to a manager for approval. Leave both
+              empty and every discount needs approving.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-xs text-stone-500">Percent of the sale</span>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                    value={limitPct}
+                    onChange={(e) => setLimitPct(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="—"
+                    aria-label="Discount limit percent"
+                  />
+                  <span className="text-stone-500">%</span>
+                </div>
+              </label>
+              <label className="block">
+                <span className="text-xs text-stone-500">Or, at most</span>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="text-stone-500">{CURRENCY}</span>
+                  <input
+                    className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                    value={limitAmt}
+                    onChange={(e) => setLimitAmt(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="—"
+                    aria-label="Discount limit amount"
+                  />
+                </div>
+              </label>
+            </div>
+            {limitPct.trim() !== "" && limitAmt.trim() !== "" && (
+              <p className="text-xs text-stone-500 mt-2">
+                Both set — whichever comes to less is the one that holds.
+              </p>
+            )}
+            {/* Somebody who can approve discounts cannot be limited by one:
+                they would simply approve themselves. Saying so here is
+                cheaper than letting an owner set a figure that does nothing
+                and wonder later why it never bit. */}
+            {(fromRole.has("approve_discount") || grants.includes("approve_discount")) && (
+              <p className="text-xs text-amber-700 mt-2">
+                {name.trim() || "This person"} can approve discounts, so no limit
+                binds them — they would be approving themselves. To hold a line
+                against everybody, cap the item in Catalogue instead.
+              </p>
+            )}
+            {!fromRole.has("apply_discount") && !grants.includes("apply_discount") && (
+              <p className="text-xs text-amber-700 mt-2">
+                Tick “Apply discounts” above, or this limit has nothing to apply to.
+              </p>
+            )}
           </fieldset>
 
           {staff && !self && (

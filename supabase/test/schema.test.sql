@@ -689,4 +689,274 @@ begin
   update public.app_users set pin_hash = crypt('1234', gen_salt('bf')) where id = v_mgr;
 end $$;
 
+-- 0037: two ceilings ---------------------------------------------------------
+--
+-- The staff limit is soft: it decides whether a manager is fetched. The item
+-- cap is hard: it refuses, and it refuses the owner too. Both are checked here
+-- against the same sale, because the interesting bugs live where they meet.
+
+do $$
+declare v_tok text; v_mgr uuid; v_emp uuid; v_a uuid; v_b uuid;
+        v_pa numeric; v_pb numeric; v_sale public.sales; v_row record;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select employee_id into v_emp from fixture;
+  select id, price_retail into v_a, v_pa from public.products
+   where active and price_retail > 0 order by price_retail limit 1;
+  select id, price_retail into v_b, v_pb from public.products
+   where active and price_retail > 0 and id <> v_a order by price_retail desc limit 1;
+
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+
+  -- The counter has apply_discount by role but no approve_discount and, to
+  -- begin with, no limit. This is the shop as it behaved before 0037.
+  --
+  -- Put back on the roster first: the 0028 block above disables this same
+  -- person to prove that deleting somebody with sales behind them disables
+  -- them instead, and pos_create_sale will not take a sale from a disabled
+  -- cashier.
+  update public.app_users
+     set active = true, status = 'active',
+         discount_limit_percent = null, discount_limit_amount = null
+   where id = v_emp;
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null
+   where id in (v_a, v_b);
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 1, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'with no limit set, any discount still waits for a manager');
+
+  -- ---- the staff limit, in percent -----------------------------------------
+  update public.app_users set discount_limit_percent = 10 where id = v_emp;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => round(v_pb * 0.10, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'a discount inside the limit goes through on the cashier''s own authority');
+  perform assert(v_sale.approved_by is null,
+    'and records no approver, because nobody was asked');
+  perform assert(v_sale.doc_number is not null,
+    'so it takes an invoice number like any other sale');
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => round(v_pb * 0.20, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'a cent past it and the sale parks, exactly as it used to');
+
+  -- A line discount counts against the same limit. Ten percent off the ladder
+  -- is the same money as ten percent off a sale containing only the ladder.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 1, 'discount_percent', 20)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'the limit counts line discounts too, not only blanket ones');
+
+  -- ---- the staff limit, in rand --------------------------------------------
+  -- Both set: the tighter one binds. 10% of the dearer line is more than R1,
+  -- so R1 is what actually holds.
+  update public.app_users set discount_limit_amount = 1 where id = v_emp;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 1, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'where both limits are set the sale must clear both');
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => 2, p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'pending_approval'::sale_status,
+    'and the tighter of the two is the one that binds');
+
+  update public.app_users
+     set discount_limit_percent = null, discount_limit_amount = null
+   where id = v_emp;
+
+  -- ---- the item cap --------------------------------------------------------
+  -- Five percent off the dearer line, and no more, whoever asks.
+  update public.products set max_discount_percent = 5 where id = v_b;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 1, 'discount_percent', 5)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'a discount at the cap is allowed');
+
+  -- The owner can approve their own discounts and is refused anyway. That is
+  -- the whole difference between a cap and a limit.
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb)$f$, v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_b, 'qty', 1, 'discount_percent', 6))::text),
+    'a line discount past the item cap, given by someone who can approve');
+
+  -- And it cannot be walked around by taking the money off the whole sale
+  -- instead: the cap watches what the line loses, however it loses it.
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb, p_discount_amount => %L)$f$,
+      v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object('product_id', v_b, 'qty', 1))::text,
+      round(v_pb * 0.20, 2)),
+    'a sale-level discount that lands past the item cap');
+
+  -- An uncapped line in the same sale is not held back by the capped one, so
+  -- long as the capped line stays inside its own ceiling.
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+  update public.products set max_discount_percent = 50 where id = v_b;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_a, 'qty', 1),
+      jsonb_build_object('product_id', v_b, 'qty', 1)),
+    p_discount_amount => round((v_pa + v_pb) * 0.10, 2), p_payment_method => 'cash');
+  perform assert_eq(v_sale.status, 'completed'::sale_status,
+    'a cap looser than the discount does not get in the way');
+
+  -- ---- the rand cap is per unit --------------------------------------------
+  -- R1 off a unit means R2 off two of them, the same shape a percentage has.
+  -- A per-line rand cap would tighten as the customer bought more.
+  update public.products
+     set max_discount_percent = null, max_discount_amount = 1 where id = v_b;
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_b, 'qty', 2, 'discount_amount', 2)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.discount_amount, 2::numeric,
+    'a R1 cap allows R2 off two units');
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb)$f$, v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_b, 'qty', 2, 'discount_amount', 3))::text),
+    'and stops at R2 — the cap scales with quantity, it does not multiply');
+
+  -- ---- a cap of zero means no discount at all ------------------------------
+  update public.products set max_discount_amount = 0 where id = v_b;
+  perform assert_refuses(
+    format($f$select public.pos_create_sale(%L, %L, %L::jsonb)$f$, v_tok, v_mgr,
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_b, 'qty', 1, 'discount_amount', 1))::text),
+    'a cap of zero is a line that is never discounted');
+
+  update public.products
+     set max_discount_percent = null, max_discount_amount = null
+   where id in (v_a, v_b);
+  delete from public.sale_payments where sale_id in (select id from public.sales);
+  delete from public.sale_items    where sale_id in (select id from public.sales);
+  delete from public.sales;
+end $$;
+
+-- 0037: the manager sets both, through the back office ------------------------
+
+do $$
+declare v_tok text; v_emp uuid; v_row record; v_prod uuid;
+begin
+  select token into v_tok from till;
+  select employee_id into v_emp from fixture;
+  select id into v_prod from public.products where active order by name limit 1;
+
+  select * into v_row from public.pos_admin_update_user(
+    v_tok, '1234', v_emp, p_discount_limit_percent => 15,
+    p_discount_limit_amount => 250);
+  perform assert_eq(v_row.discount_limit_percent, 15::numeric,
+    'the manager can set a percentage limit on a staff member');
+  perform assert_eq(v_row.discount_limit_amount, 250::numeric,
+    'and a rand one beside it');
+
+  -- The roster reports it, so the editor opens on what is actually stored.
+  perform assert_eq(
+    (select u.discount_limit_percent from public.pos_admin_list_users(v_tok, '1234') u
+      where u.id = v_emp), 15::numeric,
+    'and the roster carries it back');
+
+  -- Editing something else must not quietly clear the limit.
+  select * into v_row from public.pos_admin_update_user(
+    v_tok, '1234', v_emp, p_name => 'Counter hand');
+  perform assert_eq(v_row.discount_limit_percent, 15::numeric,
+    'renaming somebody leaves their limit alone');
+
+  -- Zero is how a limit is taken away; there is no such thing as a zero limit.
+  select * into v_row from public.pos_admin_update_user(
+    v_tok, '1234', v_emp, p_discount_limit_percent => 0,
+    p_discount_limit_amount => 0);
+  perform assert(v_row.discount_limit_percent is null
+             and v_row.discount_limit_amount is null,
+    'and zero clears it');
+
+  perform assert_refuses(
+    format($f$select public.pos_admin_update_user(%L, '1234', %L,
+                 p_discount_limit_percent => 120)$f$, v_tok, v_emp),
+    'a limit of 120%% is not a percentage');
+
+  -- The item cap, set the way the catalogue editor sets it.
+  perform public.pos_admin_save_product(
+    v_tok, '1234', v_prod,
+    (select sku from public.products where id = v_prod),
+    (select barcode from public.products where id = v_prod),
+    (select name from public.products where id = v_prod),
+    (select description from public.products where id = v_prod),
+    (select category_id from public.products where id = v_prod),
+    (select unit_code from public.products where id = v_prod),
+    (select price_retail from public.products where id = v_prod),
+    (select price_trade from public.products where id = v_prod),
+    (select cost from public.products where id = v_prod),
+    (select tax_code from public.products where id = v_prod),
+    (select stock_qty from public.products where id = v_prod),
+    (select reorder_level from public.products where id = v_prod),
+    true, null, null, 7.5, 30);
+  perform assert_eq(
+    (select p.max_discount_percent from public.products p where p.id = v_prod),
+    7.5::numeric, 'the catalogue editor can cap a product');
+
+  -- The till gets the cap with the catalogue, so the discount dialog can hold
+  -- the line with the shop's connection down.
+  perform assert_eq(
+    (select c.max_discount_percent from public.pos_catalogue(v_tok) c
+      where c.id = v_prod), 7.5::numeric,
+    'and the till is told about it in the catalogue it caches');
+
+  -- Clearing the boxes clears the cap. Null means none, unlike the picture.
+  perform public.pos_admin_save_product(
+    v_tok, '1234', v_prod,
+    (select sku from public.products where id = v_prod),
+    (select barcode from public.products where id = v_prod),
+    (select name from public.products where id = v_prod),
+    (select description from public.products where id = v_prod),
+    (select category_id from public.products where id = v_prod),
+    (select unit_code from public.products where id = v_prod),
+    (select price_retail from public.products where id = v_prod),
+    (select price_trade from public.products where id = v_prod),
+    (select cost from public.products where id = v_prod),
+    (select tax_code from public.products where id = v_prod),
+    (select stock_qty from public.products where id = v_prod),
+    (select reorder_level from public.products where id = v_prod),
+    true, null, null, null, null);
+  perform assert(
+    (select p.max_discount_percent from public.products p where p.id = v_prod) is null,
+    'and clearing the box removes it');
+
+  update public.app_users set name = 'Cashier' where id = v_emp;
+end $$;
+
 select 'all database tests passed' as result;
