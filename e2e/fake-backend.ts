@@ -145,6 +145,26 @@ export class Backend {
   customers: FakeCustomer[] = [];
   accountPayments: RecordedAccountPayment[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string; note: string | null }[] = [];
+  /** The staff roster the back office edits, seeded from the two sign-in users. */
+  staff: {
+    id: string; name: string; phone: string; role: string;
+    status: string; active: boolean; permissions: string[];
+  }[] = [
+    { id: "u1", name: "Manager", phone: "+27820000001", role: "admin",
+      status: "active", active: true, permissions: [] },
+    { id: "u2", name: "Sam", phone: "+27820000002", role: "employee",
+      status: "active", active: true, permissions: [] },
+  ];
+  /** The shop's own details, mutable so a settings save can be asserted on. */
+  orgSettings: Record<string, string> = {
+    shop_name: "Ladybrand Hardware",
+    address_line1: "12 Church St",
+    address_line2: "Ladybrand, Free State",
+    phone: "051 924 0000",
+    vat_number: "4001234567",
+    currency: "R",
+    registration_number: "",
+  };
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
             customer_id: string | null;
             items: { product_id: string; qty: number; unit_price: number }[] }[] = [];
@@ -587,15 +607,80 @@ export async function installBackend(page: Page): Promise<Backend> {
       }
       case "rpc/pos_org_settings":
         if (!tokenOk) return fail("Register not paired or revoked");
-        return json([{
-          shop_name: "Ladybrand Hardware",
-          address_line1: "12 Church St",
-          address_line2: "Ladybrand, Free State",
-          phone: "051 924 0000",
-          vat_number: "4001234567",
-          currency: "R",
-          registration_number: "",
-        }]);
+        return json([{ ...be.orgSettings }]);
+
+      case "rpc/pos_admin_save_settings": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        Object.assign(be.orgSettings, body.p_settings as Record<string, string>);
+        return json(null);
+      }
+
+      case "rpc/pos_admin_list_users":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(be.staff.map((s) => ({ ...s })));
+
+      case "rpc/pos_admin_invite_user": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const phone = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
+        if (!/^(\+\d{9,15}|0\d{9})$/.test(phone)) {
+          return fail("Phone must be a valid number, e.g. 082 123 4567");
+        }
+        if (be.staff.some((s) => s.phone === phone)) {
+          return fail("That phone number is already registered");
+        }
+        const row = {
+          id: "u" + (be.staff.length + 1),
+          name: String(body.p_name),
+          phone,
+          role: String(body.p_role ?? "employee"),
+          // Invited, with no PIN of their own yet — which is the whole point:
+          // nobody is handed a credential they did not choose.
+          status: "invited",
+          active: true,
+          permissions: (body.p_permissions as string[]) ?? [],
+        };
+        be.staff.push(row);
+        return json([row]);
+      }
+
+      case "rpc/pos_admin_update_user": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const row = be.staff.find((s) => s.id === body.p_user_id);
+        if (!row) return fail("No such staff member");
+        // Mirrors the migration's guard: the manager holding the PIN cannot
+        // shut themselves out mid-shift.
+        if (row.id === USERS.manager.row.id && body.p_active === false) {
+          return fail("You cannot change your own role or sign yourself out");
+        }
+        if (body.p_name != null) row.name = String(body.p_name);
+        if (body.p_role != null) row.role = String(body.p_role);
+        if (body.p_permissions != null) row.permissions = body.p_permissions as string[];
+        if (body.p_active != null) {
+          row.active = body.p_active as boolean;
+          row.status = row.active ? (row.status === "invited" ? "invited" : "active") : "disabled";
+        }
+        return json([{ ...row }]);
+      }
+
+      case "rpc/pos_admin_delete_user": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const i = be.staff.findIndex((s) => s.id === body.p_user_id);
+        if (i < 0) return fail("No such staff member");
+        // Anyone whose name is on an invoice is disabled, not deleted.
+        if (be.sales.some((s) => s.cashier_id === be.staff[i].id)) {
+          be.staff[i].active = false;
+          be.staff[i].status = "disabled";
+          return json("disabled");
+        }
+        be.staff.splice(i, 1);
+        return json("deleted");
+      }
+
       case "rpc/pos_categories":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([{ id: "c1", name: "Building", sort_order: 10 }]);

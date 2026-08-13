@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   adminDeleteProduct,
   adminImportProducts,
@@ -16,6 +16,10 @@ import { can } from "../lib/permissions";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
 import ProductEditor from "./ProductEditor";
+import ShopSettings from "./admin/ShopSettings";
+import StaffAdmin from "./admin/StaffAdmin";
+
+type TabKey = "catalogue" | "import" | "staff" | "shop";
 
 /**
  * The back office.
@@ -33,7 +37,20 @@ export default function Admin({
   pin: string;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"catalogue" | "import">("catalogue");
+  // Only the tabs this person is actually allowed to open. The RPCs behind each
+  // re-check the permission anyway; this is so a counter supervisor is not
+  // shown a Staff tab that will only refuse them.
+  const tabs = useMemo(() => {
+    const t: { key: TabKey; label: string }[] = [
+      { key: "catalogue", label: "Catalogue" },
+      { key: "import", label: "Bulk import" },
+    ];
+    if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
+    if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
+    return t;
+  }, [user]);
+
+  const [tab, setTab] = useState<TabKey>("catalogue");
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
@@ -120,15 +137,15 @@ export default function Admin({
       <header className="flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-200">
         <h1 className="text-lg font-semibold">Manage</h1>
         <nav className="flex gap-1 ml-4">
-          {(["catalogue", "import"] as const).map((t) => (
+          {tabs.map((t) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-1.5 rounded-lg text-sm capitalize ${
-                tab === t ? "bg-stone-800 text-white" : "text-stone-600"
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-3 py-1.5 rounded-lg text-sm ${
+                tab === t.key ? "bg-stone-800 text-white" : "text-stone-600"
               }`}
             >
-              {t === "import" ? "Bulk import" : t}
+              {t.label}
             </button>
           ))}
         </nav>
@@ -315,6 +332,10 @@ export default function Admin({
       {tab === "import" && (
         <ImportPanel pin={pin} onDone={load} />
       )}
+
+      {tab === "staff" && <StaffAdmin user={user} pin={pin} />}
+
+      {tab === "shop" && <ShopSettings pin={pin} />}
 
       {editing && (
         <ProductEditor

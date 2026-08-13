@@ -276,6 +276,68 @@ export async function adminInviteUser(
   return rows[0];
 }
 
+/**
+ * Change a staff member. Every field is optional — send only what changed, and
+ * the server leaves the rest alone.
+ *
+ * It also refuses the changes that would lock the shop out of itself: your own
+ * role, your own access, and the last admin standing. Those checks live in the
+ * database because this screen is not the only way in.
+ */
+export async function adminUpdateUser(
+  pin: string,
+  id: string,
+  patch: {
+    name?: string;
+    role?: "admin" | "manager" | "employee";
+    permissions?: string[];
+    active?: boolean;
+  }
+): Promise<StaffUser> {
+  const { data, error } = await supabase.rpc("pos_admin_update_user", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_user_id: id,
+    p_name: patch.name ?? null,
+    p_role: patch.role ?? null,
+    p_permissions: patch.permissions ?? null,
+    p_active: patch.active ?? null,
+  });
+  if (error) throw error;
+  const rows = data as StaffUser[];
+  if (!rows?.[0]) throw new Error("Save failed");
+  return rows[0];
+}
+
+/**
+ * Remove a staff member. Anybody who has rung up a sale is disabled rather
+ * than deleted — their name is on invoices that still have to make sense — so
+ * the outcome says which of the two actually happened.
+ */
+export async function adminDeleteUser(
+  pin: string,
+  id: string
+): Promise<"deleted" | "disabled"> {
+  const { data, error } = await supabase.rpc("pos_admin_delete_user", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_user_id: id,
+  });
+  if (error) throw error;
+  return data as "deleted" | "disabled";
+}
+
+/** The shop's own details, as the back office edits them. */
+export interface ShopDetails {
+  shop_name: string;
+  address_line1: string;
+  address_line2: string;
+  phone: string;
+  vat_number: string;
+  currency: string;
+  registration_number: string;
+}
+
 // Units are global reference data (kg, ea, m) with nothing tenant-specific in
 // them, so they remain a plain anon-readable table — the one survivor of the
 // old "just read the table" era.
