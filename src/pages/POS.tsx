@@ -105,6 +105,11 @@ export default function POS() {
   // it is never queued, and never written to the device.
   const [approverPin, setApproverPin] = useState<string | null>(null);
   const [needsApproval, setNeedsApproval] = useState(false);
+  // How to put things back if the manager is not fetched after all. Backing
+  // out has to undo the discount that raised the prompt and nothing else: a
+  // cashier who gave 5% off one line within their limit, then 20% off another
+  // and thought better of it, should keep the first.
+  const undoDiscount = useRef<(() => void) | null>(null);
 
   const [term, setTerm] = useState("");
   const scanRef = useRef<HTMLInputElement>(null);
@@ -769,13 +774,21 @@ export default function POS() {
           approvalFreeUpTo={limited ? saleFreeUpTo : undefined}
           onCancel={() => setShowDiscount(false)}
           onApply={(amount, reason) => {
+            const wasAmount = discount;
+            const wasReason = discountReason;
             setDiscount(amount);
             setDiscountReason(reason);
             setShowDiscount(false);
             // Managers approve their own; so does anybody inside their standing
             // limit. Everyone else needs a PIN now, so the sale completes at the
             // counter instead of parking for later.
-            if (overCeiling(amount, saleFreeUpTo)) setNeedsApproval(true);
+            if (overCeiling(amount, saleFreeUpTo)) {
+              undoDiscount.current = () => {
+                setDiscount(wasAmount);
+                setDiscountReason(wasReason);
+              };
+              setNeedsApproval(true);
+            }
           }}
         />
       )}
@@ -805,9 +818,11 @@ export default function POS() {
             // the slip can name it. The server works the amount out again from
             // the percentage, which is what stops the two disagreeing.
             const pct = /^(\d+(?:\.\d+)?)% off/.exec(reason)?.[1];
+            const id = discountLine;
+            const was = lines.find((l) => l.product.id === id);
             setLines((prev) =>
               prev.map((l) =>
-                l.product.id === discountLine
+                l.product.id === id
                   ? {
                       ...l,
                       discount: amount,
@@ -817,7 +832,21 @@ export default function POS() {
               )
             );
             setDiscountLine(null);
-            if (overCeiling(amount, lineFreeUpTo)) setNeedsApproval(true);
+            if (overCeiling(amount, lineFreeUpTo)) {
+              undoDiscount.current = () =>
+                setLines((prev) =>
+                  prev.map((l) =>
+                    l.product.id === id
+                      ? {
+                          ...l,
+                          discount: was?.discount,
+                          discountPercent: was?.discountPercent,
+                        }
+                      : l
+                  )
+                );
+              setNeedsApproval(true);
+            }
           }}
         />
       )}
@@ -825,7 +854,9 @@ export default function POS() {
       {needsApproval && (
         <ManagerPinModal
           title="Manager approval"
-          subtitle={`Discount of ${money(discount)} needs a manager's PIN`}
+          // The whole discount on the sale, not just the blanket one — a line
+          // discount used to make this read "Discount of R0.00".
+          subtitle={`Discount of ${money(allDiscount)} needs a manager's PIN`}
           onApprove={async (pin) => {
             // Checked against the device credential cache so this works during
             // an outage too; the server rechecks the approver's permission.
@@ -834,13 +865,15 @@ export default function POS() {
               throw new Error("That PIN can't approve discounts");
             }
             setApproverPin(pin);
+            undoDiscount.current = null;
             setNeedsApproval(false);
           }}
           onCancel={() => {
             // Backing out drops the discount rather than leaving one applied
-            // that nobody authorised.
-            setDiscount(0);
-            setDiscountReason(null);
+            // that nobody authorised — the one that raised the prompt, whether
+            // it came off the sale or off a line.
+            undoDiscount.current?.();
+            undoDiscount.current = null;
             setNeedsApproval(false);
           }}
         />

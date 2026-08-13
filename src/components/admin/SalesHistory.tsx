@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { saleItems, salePayments } from "../../lib/api";
+import { approveSale, saleItems, salePayments } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/format";
 import { printReceipt } from "../../lib/print";
@@ -12,6 +12,7 @@ import {
   type SalesHistory as History,
 } from "../../lib/sales";
 import type { Sale } from "../../lib/types";
+import ManagerPinModal from "../ManagerPinModal";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "today", label: "Today" },
@@ -50,6 +51,8 @@ export default function SalesHistory({ pin }: { pin: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
+  // The sale a manager is being asked to release, if any.
+  const [releasing, setReleasing] = useState<SaleRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -255,6 +258,20 @@ export default function SalesHistory({ pin }: { pin: string }) {
                 </span>
                 <span className="tabular-nums w-24 text-right">{money(s.total)}</span>
 
+                {/* A sale parked for approval had nowhere to go. The RPC to
+                    release one has existed since 0004 and nothing ever called
+                    it, so "awaiting approval" was a label with no exit — the
+                    sale sat there with no invoice number and its stock never
+                    came off the shelf. */}
+                {s.status === "pending_approval" && (
+                  <button
+                    className="text-sm text-emerald-700 underline underline-offset-2"
+                    onClick={() => setReleasing(s)}
+                  >
+                    Release
+                  </button>
+                )}
+
                 <button
                   className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
                   disabled={printing === s.id}
@@ -265,6 +282,21 @@ export default function SalesHistory({ pin }: { pin: string }) {
               </li>
             ))}
           </ul>
+        )}
+
+        {releasing && (
+          <ManagerPinModal
+            title="Release this sale"
+            subtitle={`${money(releasing.total)} rung up by ${releasing.cashier_name}`}
+            onApprove={async (pin) => {
+              // Checked on the server against approve_discount, so the PIN of
+              // whoever is standing here decides — not whoever opened Manage.
+              await approveSale(releasing.id, pin);
+              setReleasing(null);
+              await load();
+            }}
+            onCancel={() => setReleasing(null)}
+          />
         )}
 
         {data && data.rows.length >= 200 && (

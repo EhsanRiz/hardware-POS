@@ -913,17 +913,24 @@ export async function installBackend(page: Page): Promise<Backend> {
           return at >= from && at < to;
         });
         const round2 = (n: number) => Math.round(n * 100) / 100;
+        // A sale parked for approval is not takings and has no invoice number
+        // yet. The fake hardcoded "completed" on every row, so no test could
+        // ever see one — which is how a Sales screen with no way to release a
+        // parked sale went unnoticed.
+        const parked = (x: RecordedSale) =>
+          x.discount_amount > 0 && !x.approved_by && !x.within_limit;
+        const done = inWindow.filter((x) => !parked(x));
         const tenders: Record<string, number> = {};
-        for (const sale of inWindow) {
+        for (const sale of done) {
           for (const p of sale.payments) {
             tenders[p.method] = round2((tenders[p.method] ?? 0) + p.amount);
           }
         }
-        const gross = round2(inWindow.reduce((t, x) => t + x.total, 0));
+        const gross = round2(done.reduce((t, x) => t + x.total, 0));
         return json({
           rows: inWindow.map((x, i) => ({
             id: "s" + i,
-            doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+            doc_number: parked(x) ? null : "INV-" + String(i + 1).padStart(6, "0"),
             created_at: x.created_at ?? new Date().toISOString(),
             cashier_name: "Sam",
             customer_name: null,
@@ -937,7 +944,7 @@ export async function installBackend(page: Page): Promise<Backend> {
             total: x.total,
             tax_amount: round2(x.total - x.total / 1.15),
             discount_amount: x.discount_amount,
-            status: "completed",
+            status: parked(x) ? "pending_approval" : "completed",
             payment_method: x.payment_method,
             amount_tendered: x.amount_tendered,
             change_due: x.change_due,
@@ -947,14 +954,25 @@ export async function installBackend(page: Page): Promise<Backend> {
             item_count: x.items.length,
           })),
           totals: {
-            count: inWindow.length,
+            count: done.length,
             gross,
             vat: round2(gross - gross / 1.15),
-            discount: round2(inWindow.reduce((t, x) => t + x.discount_amount, 0)),
+            discount: round2(done.reduce((t, x) => t + x.discount_amount, 0)),
             voided: 0,
             tenders,
           },
         });
+      }
+
+      case "rpc/pos_approve_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // Whoever is standing here, not whoever opened the back office.
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
+        const sale = be.sales[idx];
+        if (!sale) return fail("Sale not found");
+        sale.approved_by = USERS.manager.row.id;
+        return json({ id: body.p_sale_id, status: "completed" });
       }
 
       case "rpc/pos_sale_items": {
