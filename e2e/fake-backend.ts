@@ -155,6 +155,19 @@ export class Backend {
     { id: "u2", name: "Sam", phone: "+27820000002", role: "employee",
       status: "active", active: true, permissions: [] },
   ];
+  /**
+   * The open till session, if any. `fromIndex` stands in for the server's
+   * opened_at window: the real one attributes sales by register and time, and
+   * for a fake with one till "everything rung up since it opened" is the same
+   * set without needing clocks in the test.
+   */
+  cashSession: {
+    id: string; opened_by_name: string; opened_at: string; opening_float: number;
+    fromIndex: number; fromPayments: number;
+  } | null = null;
+  cashMovements: { id: string; kind: string; amount: number; reason: string;
+                   by_name: string; created_at: string }[] = [];
+  closedSessions: Record<string, unknown>[] = [];
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string> = {
     shop_name: "Ladybrand Hardware",
@@ -197,6 +210,47 @@ export class Backend {
   /** Sales actually stored, i.e. after idempotent replays collapse. */
   get storedSales() {
     return this.sales;
+  }
+
+  /** What the open session's window adds up to. Mirrors cash_session_figures. */
+  cashFigures() {
+    const s = this.cashSession;
+    if (!s) throw new Error("No session");
+    const inWindow = this.sales.slice(s.fromIndex);
+    const tenders: Record<string, number> = {};
+    for (const sale of inWindow) {
+      for (const p of sale.payments) {
+        tenders[p.method] = Math.round(((tenders[p.method] ?? 0) + p.amount) * 100) / 100;
+      }
+    }
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const total = round2(inWindow.reduce((t, x) => t + x.total, 0));
+    // Account settlements taken in cash are drawer money like any other.
+    const accountCash = round2(
+      this.accountPayments
+        .slice(s.fromPayments)
+        .filter((p) => p.method === "cash" && !p.voided)
+        .reduce((t, p) => t + p.amount, 0)
+    );
+    const payIn = round2(
+      this.cashMovements.filter((m) => m.kind === "pay_in").reduce((t, m) => t + m.amount, 0)
+    );
+    const payOut = round2(
+      this.cashMovements.filter((m) => m.kind === "pay_out").reduce((t, m) => t + m.amount, 0)
+    );
+    const cashSales = tenders.cash ?? 0;
+    return {
+      sales_count: inWindow.length,
+      sales_total: total,
+      vat_total: round2(total - total / 1.15),
+      discount_total: round2(inWindow.reduce((t, x) => t + x.discount_amount, 0)),
+      tenders,
+      cash_sales: cashSales,
+      account_cash: accountCash,
+      pay_in: payIn,
+      pay_out: payOut,
+      expected_cash: round2(s.opening_float + cashSales + accountCash + payIn - payOut),
+    };
   }
 
   private price(p: FakeProduct, trade: boolean) {
@@ -615,6 +669,79 @@ export async function installBackend(page: Page): Promise<Backend> {
         Object.assign(be.orgSettings, body.p_settings as Record<string, string>);
         return json(null);
       }
+
+      case "rpc/pos_cash_session_open": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        if (be.cashSession) return fail("This till already has a session open");
+        be.cashSession = {
+          id: "cs1",
+          opened_by_name: "Manager",
+          opened_at: new Date().toISOString(),
+          opening_float: Number(body.p_opening_float ?? 0),
+          fromIndex: be.sales.length,
+          fromPayments: be.accountPayments.length,
+        };
+        be.cashMovements = [];
+        return json(be.cashSession);
+      }
+
+      case "rpc/pos_cash_session_current": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        if (!be.cashSession) return json(null);
+        return json({
+          ...be.cashSession,
+          closed_at: null, closed_by_name: null, counted_cash: null,
+          expected_cash: null, variance: null, note: null,
+          figures: be.cashFigures(),
+          movements: be.cashMovements,
+        });
+      }
+
+      case "rpc/pos_cash_movement": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        if (!be.cashSession) return fail("No session is open on this till");
+        if (!String(body.p_reason ?? "").trim()) return fail("A reason is required");
+        const row = {
+          id: "m" + (be.cashMovements.length + 1),
+          kind: String(body.p_kind),
+          amount: Number(body.p_amount),
+          reason: String(body.p_reason).trim(),
+          by_name: "Manager",
+          created_at: new Date().toISOString(),
+        };
+        be.cashMovements.push(row);
+        return json(row);
+      }
+
+      case "rpc/pos_cash_session_close": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        if (!be.cashSession) return fail("No session is open on this till");
+        const figures = be.cashFigures();
+        const counted = Number(body.p_counted_cash);
+        const closed = {
+          ...be.cashSession,
+          closed_at: new Date().toISOString(),
+          closed_by_name: "Manager",
+          counted_cash: counted,
+          expected_cash: figures.expected_cash,
+          variance: Math.round((counted - figures.expected_cash) * 100) / 100,
+          note: (body.p_note as string) ?? null,
+          figures,
+          movements: be.cashMovements,
+        };
+        be.closedSessions.unshift(closed);
+        be.cashSession = null;
+        return json(closed);
+      }
+
+      case "rpc/pos_cash_sessions":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(be.closedSessions);
 
       case "rpc/pos_admin_list_users":
         if (!tokenOk) return fail("Register not paired or revoked");

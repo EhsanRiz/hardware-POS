@@ -1,3 +1,4 @@
+import type { CashSession } from "./cashup";
 import { CURRENCY, RECEIPT_WIDTH } from "./config";
 import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
@@ -360,6 +361,93 @@ export function buildStatementText(
     boxRow(balance < 0 ? "IN CREDIT" : "BALANCE DUE", amount(Math.abs(balance)))
   );
   out.push(boxTop());
+  out.push("");
+  out.push(center("not a tax invoice"));
+  out.push("");
+  out.push("");
+  return out.join("\n");
+}
+
+/**
+ * The cash-up slip.
+ *
+ * Ordered the way a manager checks it: what the till says was sold, then what
+ * that means the drawer should hold, then what was actually counted, and the
+ * difference last and boxed. The variance is the reason this piece of paper
+ * exists — a slip that buries it among the takings is a sales summary, not a
+ * cash-up — so it is the one figure in the box, and it is named "OVER" or
+ * "SHORT" rather than left as a signed number for somebody to interpret at the
+ * end of a long day.
+ */
+export function buildCashUpText(s: CashSession): string {
+  const out: string[] = [];
+  const f = s.figures;
+  shopHeader(out, "CASH-UP");
+  out.push("");
+  out.push(lineItem("Opened", fmtDateTime(new Date(s.opened_at))));
+  out.push(lineItem("By", s.opened_by_name));
+  if (s.closed_at) {
+    out.push(lineItem("Closed", fmtDateTime(new Date(s.closed_at))));
+    if (s.closed_by_name) out.push(lineItem("Counted by", s.closed_by_name));
+  }
+  out.push(solid());
+
+  out.push(bold("TAKINGS"));
+  out.push(lineItem(`Sales (${f.sales_count})`, amount(f.sales_total)));
+  if (f.discount_total > 0) out.push(lineItem("Discounts given", amount(f.discount_total)));
+  out.push(lineItem("VAT within", amount(f.vat_total)));
+  out.push(divider());
+
+  // Every tender, including the ones that never touch the drawer: the manager
+  // reconciling a card machine's own total needs this line to check it against.
+  for (const [method, value] of Object.entries(f.tenders)) {
+    const label = PAYMENT_LABEL[method as PaymentMethod] ?? method;
+    out.push(lineItem(label, amount(value)));
+  }
+  out.push(divider());
+
+  out.push(bold("THE DRAWER"));
+  out.push(lineItem("Opening float", amount(s.opening_float)));
+  out.push(lineItem("Cash sales", amount(f.cash_sales)));
+  if (f.account_cash > 0) out.push(lineItem("Account payments in cash", amount(f.account_cash)));
+  if (f.pay_in > 0) out.push(lineItem("Paid in", amount(f.pay_in)));
+  if (f.pay_out > 0) out.push(lineItem("Paid out", `-${amount(f.pay_out)}`));
+  out.push(lineItem("Expected in drawer", amount(s.expected_cash ?? f.expected_cash)));
+  out.push(lineItem("Counted", s.counted_cash == null ? "—" : amount(s.counted_cash)));
+
+  if (s.variance != null) {
+    const over = s.variance > 0;
+    out.push(boxTop());
+    out.push(
+      boxRow(
+        Math.abs(s.variance) < 0.005 ? "BALANCED" : over ? "OVER" : "SHORT",
+        amount(Math.abs(s.variance))
+      )
+    );
+    out.push(boxTop());
+  }
+
+  if (s.movements?.length) {
+    out.push("");
+    out.push(bold("IN AND OUT"));
+    for (const m of s.movements) {
+      out.push(
+        lineItem(
+          `${shortDate(m.created_at)} ${m.reason}`,
+          (m.kind === "pay_out" ? "-" : "") + amount(m.amount)
+        )
+      );
+    }
+  }
+
+  if (s.note) {
+    out.push("");
+    out.push(bold("NOTE"));
+    out.push(s.note);
+  }
+
+  out.push("");
+  out.push(center("signed ............................"));
   out.push("");
   out.push(center("not a tax invoice"));
   out.push("");

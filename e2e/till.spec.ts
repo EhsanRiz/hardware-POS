@@ -359,6 +359,96 @@ async function openManage(page: import("@playwright/test").Page) {
   await dialog.locator('button:text-is("OK")').click();
 }
 
+test("a day is opened on a float, cashed up, and the variance is what prints", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+
+  await page.getByLabel("Opening float").fill("500");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+  await expect(page.getByText(/Expected in drawer/i)).toBeVisible();
+
+  // Sell R115 in cash, and take R60 out of the drawer for diesel.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByRole("button", { name: /Money in or out/i }).click();
+  await page.getByRole("button", { name: /^Paid out$/ }).click();
+  await page.getByLabel("Movement amount").fill("60");
+  await page.getByLabel("Movement reason").fill("Diesel for the bakkie");
+  await page.getByRole("button", { name: /Record it/i }).click();
+
+  // 500 float + 115 cash - 60 out. A payout that did not count would read as a
+  // R60 shortfall against a cashier who is not short.
+  await expect(page.getByText("Expected in drawer").locator("..")).toContainText("555.00");
+
+  // Count R550: R5 missing, and the manager is told before committing to it.
+  await page.getByLabel("Counted cash").fill("550");
+  const variance = page.getByRole("status", { name: "Variance" });
+  await expect(variance).toContainText("Short");
+  await expect(variance).toContainText("5.00");
+
+  // A difference takes a second press — closing the day cannot be undone here.
+  await page.getByRole("button", { name: /Close & print/i }).click();
+  await page.getByRole("button", { name: /Close short by/i }).click();
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("CASH-UP");
+  await expect(slip).toContainText("Opening float");
+  await expect(slip).toContainText("Diesel for the bakkie");
+  await expect(slip).toContainText("SHORT");
+  expect(be.closedSessions[0].variance).toBe(-5);
+});
+
+test("a balanced drawer closes on one press", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Opening float").fill("200");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+
+  await page.getByLabel("Counted cash").fill("200");
+  await expect(page.getByRole("status", { name: "Variance" })).toContainText("Balanced");
+  // Nothing to query, so no second press is asked for.
+  await page.getByRole("button", { name: /Close & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("BALANCED");
+  expect(be.closedSessions[0].variance).toBe(0);
+});
+
+test("cashing up over unsynced sales is warned about, not silently wrong", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Opening float").fill("0");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+
+  // The sale cannot reach the server, so it queues on the device. Only the
+  // sale path is blocked: the cash-up itself still loads, which is exactly the
+  // window that does the damage — a reachable server with takings it has never
+  // been told about.
+  await page.route(/rpc\/pos_create_sale/, (r) => r.abort());
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  // Without this the R115 reads as a shortfall and lands on whoever was on the
+  // till, which is the one way a cash-up can do real harm.
+  await expect(page.getByText(/still waiting to sync/i)).toBeVisible();
+  // And the figures agree with the warning rather than contradicting it.
+  await expect(page.getByText("Expected in drawer").locator("..")).toContainText("0.00");
+});
+
 test("staff are invited by phone, and nobody's PIN is set for them", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
