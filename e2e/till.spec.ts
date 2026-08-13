@@ -660,8 +660,10 @@ test("a manager's PIN releases a LINE discount, not only a blanket one", async (
 
   // The figure named is the discount actually given, not the blanket total —
   // which for a line discount was R0.00.
-  // A thin space sits between the R and the figure, so match around it.
-  await expect(page.getByText(/Discount of R.20\.00 needs a manager/i)).toBeVisible();
+  // A thin space sits between the R and the figure, so match around it. The
+  // figure is the discount actually given — for a line discount this read
+  // R0.00, because it was naming the sale-level total.
+  await expect(page.getByText(/R.20\.00 off .* manager's PIN/i)).toBeVisible();
   // Scoped to the dialog: the till's own keypad is still on the page behind it.
   const approval = page.getByRole("dialog", { name: "Manager approval" });
   for (const d of USERS.manager.pin.split("")) {
@@ -1077,6 +1079,160 @@ test("a parked sale can be released from the Sales screen", async ({ page }) => 
   await expect(page.getByText(/awaiting approval/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Release$/ })).toHaveCount(0);
   expect(be.sales[0].approved_by).toBe(USERS.manager.row.id);
+});
+
+test("a manager issues a code, and it releases a discount over the phone", async ({ page }) => {
+  // What actually happens when the manager is at the bank: the cashier phones,
+  // the manager reads out six digits. Before this the only digits that worked
+  // were their PIN — which opens the back office, the staff list and the
+  // cash-up on every till, and cannot be taken back once said aloud.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Approvals$/ }).click();
+  await page.getByLabel("Code ceiling").fill("100");
+  await page.getByLabel("Code reason").fill("Mr Molefe, cement");
+  await page.getByRole("button", { name: /Give me a code/i }).click();
+
+  await expect(page.getByText(/Read this to the counter/i)).toBeVisible();
+  const code = be.approvalCodes[0].code;
+  await expect(page.getByText(code)).toBeVisible();
+  // Shown once and listed as live, so the manager can see what is outstanding.
+  await expect(page.getByText(/^live$/)).toBeVisible();
+
+  // The counter, later. Sam has no standing authority at all.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  const signIn = page.locator('button:text-is("OK")');
+  if (await signIn.count()) await signIn.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // The prompt takes either — that is the whole point of offering it.
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  await expect(approval).toContainText(/a code they gave you/i);
+  for (const d of code.split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = approval.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Released, invoiced, and the MANAGER's name against it — not Sam's. A code
+  // that made the cashier the approver would be worse than the PIN it replaced.
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales[0].approved_by).toBe(USERS.manager.row.id);
+  expect(be.storedSales[0].discount_amount).toBe(20);
+  expect(be.approvalCodes[0].used_at).toBeTruthy();
+});
+
+test("a code works once, and a wrong one is refused at the counter", async ({ page }) => {
+  be.approvalCodes.push({
+    id: "ac9",
+    code: "424242",
+    issued_by: USERS.manager.row.id,
+    issued_by_name: "Manager",
+    max_amount: null,
+    reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: new Date().toISOString(), // already spent
+    used_by_name: "Sam",
+    doc_number: "INV-000001",
+  });
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // Overhearing a code is worth nothing once it has been used — the till says
+  // so at the counter rather than at the tender screen.
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  for (const d of "424242".split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = approval.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await expect(approval).toContainText(/expired or already been used/i);
+  await expect(approval).toBeVisible();
+});
+
+test("a code ceiling is checked before the customer is told yes", async ({ page }) => {
+  be.approvalCodes.push({
+    id: "ac8",
+    code: "313131",
+    issued_by: USERS.manager.row.id,
+    issued_by_name: "Manager",
+    max_amount: 10,
+    reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: null,
+    used_by_name: null,
+    doc_number: null,
+  });
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  for (const d of "313131".split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = approval.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await expect(approval).toContainText(/releases up to/i);
+  // Refused and NOT spent: the manager should not have to issue a second one.
+  expect(be.approvalCodes.find((c) => c.code === "313131")?.used_at).toBeNull();
+});
+
+test("a parked sale does not tell the cashier it completed", async ({ page }) => {
+  // The banner read "Sale completed." on a sale the server had parked, and the
+  // slip said "Invoice No: pending sync" — so a cashier handed over something
+  // that was not an invoice and walked away believing it had gone through.
+  //
+  // Reproduced the way it can still happen now that the approval path is
+  // fixed: the limit is cached on the device at sign-in, so a manager lowering
+  // it mid-shift leaves the till believing the cashier has more room than they
+  // do. The till asks nobody, the server parks the sale, and the two disagree.
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = 100;
+  await pairAndSignIn(page, USERS.employee.pin);
+  be.staff.find((s) => s.id === "u2")!.discount_limit_percent = null;
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  // The till believes this is within Sam's authority, so it asks nobody.
+  await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // The server parked it. The till has to say so, and say what to do about it.
+  await expect(banner(page)).toContainText(/Waiting for a manager/i);
+  await expect(banner(page)).not.toContainText(/completed/i);
+  // And the slip must not pass itself off as an invoice, nor blame the line.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("NOT AN INVOICE");
+  await expect(slip).not.toContainText("pending sync");
 });
 
 test("an employee is not offered the back office", async ({ page }) => {

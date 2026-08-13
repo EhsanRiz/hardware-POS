@@ -35,6 +35,12 @@ export interface SaleInput {
   amountTendered: number | null;
   /** Manager PIN entered to approve a discount, if one was applied. */
   approverPin: string | null;
+  /**
+   * A manager's single-use code, read over the phone when they are not in the
+   * building. Unlike the PIN this cannot be checked on the device — it lives on
+   * the server — so it travels with the sale and is spent there, atomically.
+   */
+  approvalCode?: string | null;
   customerId: string | null;
   customerName: string | null;
   tradePricing: boolean;
@@ -118,8 +124,12 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
       ? Math.max(0, p.amountTendered - (cashApplied || p.total))
       : null;
 
+  // A code is the server's business; a PIN is resolved here so the till can
+  // approve during an outage. Only one of the two is ever in play.
   const approver =
-    anyDiscount(p) ? await resolveApprover(p.approverPin) : null;
+    anyDiscount(p) && !p.approvalCode
+      ? await resolveApprover(p.approverPin)
+      : null;
 
   if (isOnline()) {
     try {
@@ -131,6 +141,7 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
         discountAmount: p.discountAmount,
         discountReason: p.discountReason,
         approvedBy: approver?.id ?? null,
+        approvalCode: p.approvalCode ?? null,
         amountTendered: p.amountTendered,
         paidCash: p.paidCash,
         paidCard: p.paidCard,
@@ -164,6 +175,7 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
     total: p.total,
     approvedBy: approver?.id ?? null,
     approvedByName: approver?.name ?? null,
+    approvalCode: p.approvalCode ?? null,
     customerId: p.customerId,
     customerName: p.customerName,
     tradePricing: p.tradePricing,
@@ -230,6 +242,7 @@ export async function syncNow(): Promise<void> {
           discountAmount: item.discountAmount,
           discountReason: item.discountReason,
           approvedBy: item.approvedBy,
+          approvalCode: item.approvalCode ?? null,
           amountTendered: item.amountTendered,
           paidCash: item.paidCash,
           paidCard: item.paidCard,
