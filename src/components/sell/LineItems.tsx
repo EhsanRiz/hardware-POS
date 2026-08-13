@@ -73,7 +73,7 @@ export default function LineItems({
             >
               <span className="line-n">{i + 1}</span>
 
-              <span>
+              <span className="line-main">
                 {/* The name is a button: "is that the right one?" gets asked
                     about a line already in the sale at least as often as about
                     a search result. */}

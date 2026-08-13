@@ -115,3 +115,79 @@ test.describe("manager's phone, 390", () => {
     await expect(page.getByRole("button", { name: /Back to till/i })).toBeVisible();
   });
 });
+
+/**
+ * A whole sale on a phone.
+ *
+ * The tablet tiers narrow the line columns and drop the unit price, which
+ * works down to about 700px and then fails quietly: `1fr` will not shrink past
+ * the product name's min-content, so the row grows wider than the screen and
+ * the two controls on its right — the discount key and the delete — are pushed
+ * off the edge. The row is clipped, so the page does not scroll and nothing
+ * says they are there. You could not remove a line or take money off one.
+ */
+test.describe("phone, 390", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("rings up, discounts, deletes and tenders without anything off-screen", async ({
+    page,
+  }) => {
+    await installBackend(page);
+    await pairAndSignIn(page, "1234");
+
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+    // Nothing may sit outside the viewport. Measured per element rather than by
+    // document scrollWidth, because a clipped row hides the problem from that.
+    // Swept over the header and the line rows rather than the whole document.
+    // A blanket sweep also flags things that are SUPPOSED to sit outside their
+    // box — the receipt preview is a fixed 48-column slip that scrolls inside
+    // its own frame, because reflowing it would stop it being a preview of what
+    // the printer puts on paper. These two regions are where the bug was.
+    const spill = async () =>
+      page.evaluate(() => {
+        const w = document.documentElement.clientWidth;
+        const scope = [
+          ...document.querySelectorAll<HTMLElement>(".sell-head, .sell-head *"),
+          ...document.querySelectorAll<HTMLElement>(".line-row, .line-row *"),
+        ];
+        return scope
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.right > w + 1 || r.left < -1);
+          })
+          .map((el) => `${el.tagName}.${String(el.className).split(" ")[0]}`);
+      });
+    expect(await spill(), "elements past the edge with a line in the cart").toEqual([]);
+
+    // Both line controls are on screen and usable — this is what was broken.
+    await expect(
+      page.getByRole("button", { name: /Discount Cement/i })
+    ).toBeInViewport();
+    await expect(
+      page.getByRole("button", { name: /Remove Cement/i })
+    ).toBeInViewport();
+
+    // The quantity is still editable, which is the thing a counter does most.
+    await page.getByLabel("Quantity of Cement 42.5N 50kg").fill("3");
+    await page.getByLabel("Quantity of Cement 42.5N 50kg").blur();
+    // Scoped to a row: .lines-head carries an "Amount" label of its own,
+    // hidden at this width but still matching a bare selector.
+    await expect(page.locator(".line-row .line-amt").first()).toContainText("345");
+
+    // Payment is a sheet on a phone, raised from the bar along the bottom.
+    await page.getByRole("button", { name: /Take payment/i }).click();
+    await page.getByRole("button", { name: /^Cash$/ }).click();
+    await page.getByRole("button", { name: /Tender & print/i }).click();
+    await expect(page.locator("#print-area")).toContainText("Cement");
+
+    expect(await spill(), "elements past the edge after tendering").toEqual([]);
+    // And the page itself never scrolls sideways, preview and all.
+    const docSpill = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth
+    );
+    expect(docSpill, "horizontal overflow in CSS pixels").toBeLessThanOrEqual(0);
+  });
+});
