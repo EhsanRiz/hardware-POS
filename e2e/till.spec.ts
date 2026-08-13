@@ -84,6 +84,33 @@ test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) 
   await expect(page.getByText("Sam")).toBeVisible();
 });
 
+test("the till says who is serving, and in what capacity", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+
+  // Name over title. On a shared till the glance question is "whose shift is
+  // this", so the name carries and the role explains it.
+  const who = page.locator(".sell-cashier");
+  await expect(who.locator(".sell-cashier-name")).toHaveText("Sam");
+  await expect(who.locator(".sell-cashier-role")).toHaveText("Counter");
+
+  // The same words the sign-in screen used to offer them, which is the point of
+  // sharing one mapping: a person must not be a Counter on one screen and an
+  // employee on the next.
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  const sam = page.getByRole("button", { name: /^Sam\b/ });
+  await expect(sam).toContainText("Counter");
+
+  // And an owner reads as an owner, not as "admin".
+  await page.getByRole("button", { name: /^Manager\b/ }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = page.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await expect(who.locator(".sell-cashier-role")).toHaveText("Owner");
+});
+
 test("a handover puts the next operator on their own name", async ({ page }) => {
   // The manager finishes a shift.
   await pairAndSignIn(page, USERS.manager.pin);

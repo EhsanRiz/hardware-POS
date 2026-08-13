@@ -1,6 +1,7 @@
 import { InnovaLockup } from "../InnovaMark";
 import { CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
 import { registerName } from "../../lib/device";
+import { roleTitle } from "../../lib/permissions";
 import { shopSettings } from "../../lib/settings";
 import type { User } from "../../lib/types";
 
@@ -99,7 +100,14 @@ export default function SellHeader({
 
         <span className="sell-divider-v" />
 
-        <span className="sell-cashier">{user?.name}</span>
+        {/* Who is serving, and in what capacity. The title sits under the name
+            in a quieter colour because it is context rather than content: on a
+            shared till the question at a glance is "whose shift is this", and
+            the answer is only useful if the name is what carries. */}
+        <span className="sell-cashier">
+          <span className="sell-cashier-name">{user?.name}</span>
+          <span className="sell-cashier-role">{roleTitle(user?.role)}</span>
+        </span>
 
         {canManage && (
           <button className="btn-line" style={{ minHeight: 38 }} onClick={onManage}>

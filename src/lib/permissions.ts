@@ -23,6 +23,25 @@ export const PERMISSIONS = [
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
 export type RoleKey = "admin" | "manager" | "employee";
 
+/**
+ * What a role is called on screen.
+ *
+ * Not the database word. "admin" and "employee" are how the schema thinks; a
+ * shop floor says Owner and Counter, and the person reading it is a cashier
+ * mid-shift, not a developer. Shared so the sign-in roster and the till header
+ * cannot drift into calling the same person two different things.
+ */
+export const ROLE_TITLE: Record<RoleKey, string> = {
+  admin: "Owner",
+  manager: "Manager",
+  employee: "Counter",
+};
+
+/** The title for a role, tolerating a value the client has not heard of. */
+export function roleTitle(role: string | null | undefined): string {
+  return ROLE_TITLE[(role ?? "") as RoleKey] ?? "Counter";
+}
+
 export const ALL_PERMS: PermKey[] = PERMISSIONS.map((p) => p.key);
 
 // Mirrors role_default_permissions() in migration 0001. The server is the
