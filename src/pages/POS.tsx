@@ -15,6 +15,11 @@ import { adminListProducts, stockMovements } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
+import {
+  cartLineCap,
+  saleDiscountCeiling,
+  staffCeiling,
+} from "../lib/discountLimits";
 import { money } from "../lib/money";
 import { cacheGet, cacheSet } from "../lib/localCache";
 import { useOnline } from "../lib/offline";
@@ -217,6 +222,45 @@ export default function POS() {
   // the server: a line already marked down must not take a second helping in
   // proportion to a price it is no longer being sold at.
   const netSubtotal = Math.max(0, subtotal - itemsDiscount);
+
+  // The two ceilings, worked out here so both discount dialogs and the approval
+  // decision all read the same figures. The server enforces them again — see
+  // supabase/migrations/0037_discount_limits.sql — this is so the counter finds
+  // out while typing rather than at the tender screen.
+  const caps = useMemo(
+    () =>
+      lines.map((l) => ({
+        qty: l.qty,
+        price: priceOf(l.product),
+        discount: l.discount,
+        cap: cartLineCap(l, priceOf(l.product)),
+      })),
+    [lines, priceOf]
+  );
+  const saleCeiling = useMemo(() => saleDiscountCeiling(caps), [caps]);
+  const anyCapped = caps.some((c) => c.cap != null);
+  // What this person may give away before a manager is fetched. Undefined for
+  // anybody who approves their own, so the dialogs never raise the subject.
+  const ownCeiling = useMemo(
+    () => (can(user, "approve_discount") ? undefined : staffCeiling(user, subtotal)),
+    [user, subtotal]
+  );
+
+  /**
+   * Whether a total discount of this much has to wait for a manager's PIN.
+   *
+   * Mirrors the rule in pos_create_sale: an approver never needs asking, and
+   * anybody else needs asking unless the whole discount on the sale — lines and
+   * blanket together — sits inside their standing limit.
+   */
+  const needsApprovalFor = useCallback(
+    (totalDiscount: number) => {
+      if (can(user, "approve_discount")) return false;
+      const ceil = staffCeiling(user, subtotal);
+      return ceil == null || totalDiscount > ceil + 0.005;
+    },
+    [user, subtotal]
+  );
 
   function addProduct(p: Product, qty = 1) {
     setLines((prev) => {
@@ -557,7 +601,12 @@ export default function POS() {
             freshId={freshId}
             onSetQty={setQty}
             onRemove={removeLine}
-            onDiscountLine={(id) => setDiscountLine(id)}
+            // Gated the same as the Discount button below it. Both take money
+            // off; letting one through on a permission the other refuses was
+            // an oversight, not a policy.
+            onDiscountLine={
+              can(user, "apply_discount") ? (id) => setDiscountLine(id) : undefined
+            }
             onInspect={(p) => setInspecting({ product: p, mode: "edit" })}
           />
 
@@ -697,15 +746,26 @@ export default function POS() {
 
       {showDiscount && (
         <DiscountModal
-          subtotal={subtotal}
+          subtotal={netSubtotal}
+          // Only mentioned when something in the basket is actually capped;
+          // otherwise the ceiling is just the subtotal and saying so is noise.
+          ceiling={anyCapped ? saleCeiling : null}
+          approvalFreeUpTo={
+            ownCeiling === undefined
+              ? undefined
+              : ownCeiling == null
+                ? null
+                : Math.max(0, ownCeiling - itemsDiscount)
+          }
           onCancel={() => setShowDiscount(false)}
           onApply={(amount, reason) => {
             setDiscount(amount);
             setDiscountReason(reason);
             setShowDiscount(false);
-            // Managers approve their own; everyone else needs a PIN now, so the
-            // sale completes at the counter instead of parking for later.
-            if (!can(user, "approve_discount")) setNeedsApproval(true);
+            // Managers approve their own; so does anybody inside their standing
+            // limit. Everyone else needs a PIN now, so the sale completes at the
+            // counter instead of parking for later.
+            if (needsApprovalFor(itemsDiscount + amount)) setNeedsApproval(true);
           }}
         />
       )}
@@ -718,6 +778,25 @@ export default function POS() {
           subtotal={(() => {
             const l = lines.find((x) => x.product.id === discountLine);
             return l ? priceOf(l.product) * l.qty : 0;
+          })()}
+          // The line's own cap. If a blanket discount is already on the sale it
+          // takes a share of this line too, and the two together can still land
+          // over — the server catches that and names the product. Giving the
+          // line discount first, which is the order a counter works in, is
+          // covered exactly.
+          ceiling={(() => {
+            const l = lines.find((x) => x.product.id === discountLine);
+            return l ? cartLineCap(l, priceOf(l.product)) : null;
+          })()}
+          approvalFreeUpTo={(() => {
+            if (ownCeiling === undefined) return undefined;
+            if (ownCeiling == null) return null;
+            // What is left of the allowance once everything already coming off
+            // this sale is counted — including the other lines' discounts.
+            const others = lines
+              .filter((x) => x.product.id !== discountLine)
+              .reduce((sum, x) => sum + (x.discount ?? 0), 0);
+            return Math.max(0, ownCeiling - others - discount);
           })()}
           onCancel={() => setDiscountLine(null)}
           onApply={(amount, reason) => {
@@ -737,7 +816,10 @@ export default function POS() {
               )
             );
             setDiscountLine(null);
-            if (!can(user, "approve_discount")) setNeedsApproval(true);
+            const others = lines
+              .filter((x) => x.product.id !== discountLine)
+              .reduce((sum, x) => sum + (x.discount ?? 0), 0);
+            if (needsApprovalFor(others + amount + discount)) setNeedsApproval(true);
           }}
         />
       )}

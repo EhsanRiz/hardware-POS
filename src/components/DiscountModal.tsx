@@ -4,6 +4,19 @@ import { CURRENCY } from "../lib/config";
 
 interface Props {
   subtotal: number;
+  /**
+   * The shop's cap on this — the most that may come off, whoever asks. Null
+   * means uncapped. This one refuses: there is no PIN that lifts it, which is
+   * why it is checked here and not left to the tender screen to discover.
+   */
+  ceiling?: number | null;
+  /**
+   * How much goes through on this person's own authority before a manager has
+   * to be fetched. Null means none does — every discount they give is
+   * approved, which is how the shop worked before limits existed. Undefined
+   * means they approve their own, so approval is never mentioned.
+   */
+  approvalFreeUpTo?: number | null;
   onApply: (amount: number, reason: string) => void;
   onCancel: () => void;
 }
@@ -21,7 +34,13 @@ interface Props {
  * customer looking at "Discount -R506.40" wants to see the 10% they were
  * promised, and a manager reading it back next week wants the same.
  */
-export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
+export default function DiscountModal({
+  subtotal,
+  ceiling,
+  approvalFreeUpTo,
+  onApply,
+  onCancel,
+}: Props) {
   const [mode, setMode] = useState<"amount" | "percent">("amount");
   const [value, setValue] = useState("");
   const [reason, setReason] = useState("");
@@ -34,7 +53,19 @@ export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
 
   const overSubtotal = amount > subtotal;
   const overHundred = mode === "percent" && typed > 100;
-  const invalid = amount <= 0 || overSubtotal || overHundred;
+  // A cent of slack, matching the server: a percentage of an odd figure can
+  // land a rounding cent over a cap that was meant to be exactly reachable.
+  const overCeiling = ceiling != null && amount > ceiling + 0.005;
+  const invalid = amount <= 0 || overSubtotal || overHundred || overCeiling;
+
+  // Not a refusal — the sale still happens, it just waits for a PIN. Said
+  // before Apply is pressed so the cashier can decide whether to fetch
+  // somebody or offer less, rather than finding out at the tender screen.
+  const willNeedApproval =
+    approvalFreeUpTo !== undefined &&
+    amount > 0 &&
+    !overCeiling &&
+    (approvalFreeUpTo === null || amount > approvalFreeUpTo + 0.005);
 
   function apply() {
     // The percentage is the thing worth remembering, so it leads the reason and
@@ -55,7 +86,16 @@ export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
         aria-label="Apply discount"
       >
         <h2 className="text-xl font-bold text-stone-800 mb-1">Apply discount</h2>
-        <p className="text-stone-500 mb-4">Subtotal {money(subtotal)}</p>
+        <p className="text-stone-500 mb-1">Subtotal {money(subtotal)}</p>
+        {/* The ceiling is worth stating up front rather than only when it is
+            hit: a cashier who knows the cement stops at 5% negotiates around
+            it, and one who does not promises 20% and then takes it back. */}
+        {ceiling != null && (
+          <p className="text-sm text-amber-800 mb-3">
+            Capped at {money(ceiling)} off. Nobody can go past this.
+          </p>
+        )}
+        {ceiling == null && <div className="mb-3" />}
 
         <div className="flex gap-2 mb-4">
           {([
@@ -110,6 +150,20 @@ export default function DiscountModal({ subtotal, onApply, onCancel }: Props) {
           className="w-full h-12 px-3 rounded-lg border border-stone-300 mb-2"
           placeholder="e.g. staff, loyalty"
         />
+
+        {overCeiling && (
+          <p className="text-red-600 text-sm mb-2">
+            The most that comes off this is {money(ceiling ?? 0)}. It is capped on
+            the item, so no PIN will lift it.
+          </p>
+        )}
+        {willNeedApproval && (
+          <p className="text-amber-800 text-sm mb-2" role="status">
+            {approvalFreeUpTo === null
+              ? "A manager will need to approve this."
+              : `Over your ${money(approvalFreeUpTo)} — a manager will need to approve this.`}
+          </p>
+        )}
 
         {overHundred && (
           <p className="text-red-600 text-sm mb-2">

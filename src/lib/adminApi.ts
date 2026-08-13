@@ -36,6 +36,14 @@ export interface ProductInput {
   active: boolean;
   /** Shelf or bin location — where in the shop the thing physically is. */
   bin?: string | null;
+  /**
+   * The shop's ceiling on discounting this line, overriding whatever anybody
+   * at the till is allowed to give. Null clears it — unlike the picture in
+   * 0027, an empty box here means "no cap", because a cap you cannot remove
+   * by clearing the box would be a trap.
+   */
+  max_discount_percent?: number | null;
+  max_discount_amount?: number | null;
 }
 
 export async function adminSaveProduct(
@@ -60,6 +68,8 @@ export async function adminSaveProduct(
     p_reorder_level: p.reorder_level,
     p_active: p.active,
     p_bin: p.bin ?? null,
+    p_max_discount_percent: p.max_discount_percent ?? null,
+    p_max_discount_amount: p.max_discount_amount ?? null,
   });
   if (error) throw error;
 }
@@ -239,6 +249,13 @@ export interface StaffUser {
   status: "invited" | "active" | "disabled";
   active: boolean;
   permissions: string[];
+  /**
+   * How far this person may discount without fetching a manager. Null means
+   * none. See supabase/migrations/0037_discount_limits.sql — a limit only
+   * decides whether approval is needed, it never refuses.
+   */
+  discount_limit_percent: number | null;
+  discount_limit_amount: number | null;
 }
 
 export async function adminListUsers(pin: string): Promise<StaffUser[]> {
@@ -292,6 +309,13 @@ export async function adminUpdateUser(
     role?: "admin" | "manager" | "employee";
     permissions?: string[];
     active?: boolean;
+    /**
+     * Zero clears a limit; undefined leaves it alone. There is no such thing
+     * as a zero limit — it would mean the same as having none — so zero is
+     * free to be the "take it away" signal, and the server reads it that way.
+     */
+    discount_limit_percent?: number | null;
+    discount_limit_amount?: number | null;
   }
 ): Promise<StaffUser> {
   const { data, error } = await supabase.rpc("pos_admin_update_user", {
@@ -302,6 +326,8 @@ export async function adminUpdateUser(
     p_role: patch.role ?? null,
     p_permissions: patch.permissions ?? null,
     p_active: patch.active ?? null,
+    p_discount_limit_percent: patch.discount_limit_percent ?? null,
+    p_discount_limit_amount: patch.discount_limit_amount ?? null,
   });
   if (error) throw error;
   const rows = data as StaffUser[];

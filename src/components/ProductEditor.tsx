@@ -51,6 +51,8 @@ export default function ProductEditor({
     reorder_level: product?.reorder_level ?? null,
     bin: product?.bin ?? null,
     active: product?.active ?? true,
+    max_discount_percent: product?.max_discount_percent ?? null,
+    max_discount_amount: product?.max_discount_amount ?? null,
   }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -260,6 +262,49 @@ export default function ProductEditor({
               />
             </Field>
           </div>
+
+          {/* The shop's own floor on this line.
+              Unlike a staff discount limit, which only decides whether a
+              manager is fetched, this refuses — including for the owner. That
+              is the point of setting one: a thin-margin line stays priced
+              where it was put, whoever is at the till and whoever they ask. */}
+          <fieldset className="border border-stone-200 rounded-xl p-3">
+            <legend className="px-1 text-sm text-stone-600">Discount cap</legend>
+            <p className="text-xs text-stone-500 mb-2">
+              The most that may ever come off this line. Nobody can go past it —
+              not a manager, not the owner. Leave both blank for no cap.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Percent off, at most">
+                <input
+                  inputMode="decimal"
+                  value={f.max_discount_percent ?? ""}
+                  onChange={(e) => set("max_discount_percent", num(e.target.value))}
+                  className={inputCls}
+                  aria-label="Maximum discount percent"
+                  placeholder="—"
+                />
+              </Field>
+              <Field
+                label={`${CURRENCY} off, at most`}
+                hint={`Per ${unit?.name?.toLowerCase() ?? f.unit_code} — ten of them allows ten times as much.`}
+              >
+                <input
+                  inputMode="decimal"
+                  value={f.max_discount_amount ?? ""}
+                  onChange={(e) => set("max_discount_amount", num(e.target.value))}
+                  className={inputCls}
+                  aria-label="Maximum discount amount"
+                  placeholder="—"
+                />
+              </Field>
+            </div>
+            {f.max_discount_percent != null && f.max_discount_amount != null && (
+              <p className="text-xs text-stone-500 mt-2">
+                Both set — whichever comes to less is the one that holds.
+              </p>
+            )}
+          </fieldset>
 
           {/* Where the thing physically is. In a shop with thousands of SKUs
               this is how a cashier tells a customer which aisle to walk to. */}

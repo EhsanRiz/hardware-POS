@@ -29,6 +29,14 @@ export interface User {
   phone?: string | null;
   email?: string | null;
   permissions?: string[] | null;
+  /**
+   * How far this person may discount on their own say-so. Null means no
+   * standing authority: every discount they give goes for approval, which is
+   * how the shop behaved before limits existed. Somebody who can approve
+   * discounts is not bound by it — they would be approving themselves.
+   */
+  discount_limit_percent?: number | null;
+  discount_limit_amount?: number | null;
 }
 
 /**
@@ -66,6 +74,15 @@ export interface Product {
   bin?: string | null;
   /** How many photographs exist; image_url is the first of them. */
   image_count?: number | null;
+  /**
+   * The shop's own ceiling on discounting this line — see
+   * supabase/migrations/0037_discount_limits.sql. Null means uncapped. The
+   * rand figure is PER UNIT, so it scales with quantity the way the percentage
+   * does. Carried in the catalogue because the till has to hold the line
+   * offline, not only when it can reach the server.
+   */
+  max_discount_percent?: number | null;
+  max_discount_amount?: number | null;
 }
 
 export interface Category {
@@ -292,6 +309,9 @@ export interface AdminProduct {
   sort_order: number;
   /** Shelf or bin location — where in the shop the thing physically is. */
   bin?: string | null;
+  /** The ceiling on discounting this line. See Product. */
+  max_discount_percent?: number | null;
+  max_discount_amount?: number | null;
 }
 
 export interface StockMovement {

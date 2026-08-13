@@ -38,6 +38,9 @@ export interface FakeProduct {
   image_url: string | null;
   sort_order: number;
   bin: string | null;
+  /** The shop's ceiling on discounting this line. Null means uncapped. */
+  max_discount_percent: number | null;
+  max_discount_amount: number | null;
 }
 
 export const PRODUCTS: FakeProduct[] = [
@@ -61,6 +64,7 @@ function mk(
     unit_code, unit_name, allows_fraction,
     price_retail, price_trade, tax_code: "standard",
     stock_qty, reorder_level, image_url: null, sort_order: 0, bin: "A1",
+    max_discount_percent: null, max_discount_amount: null,
   };
 }
 
@@ -155,11 +159,15 @@ export class Backend {
   staff: {
     id: string; name: string; phone: string; role: string;
     status: string; active: boolean; permissions: string[];
+    discount_limit_percent: number | null;
+    discount_limit_amount: number | null;
   }[] = [
     { id: "u1", name: "Manager", phone: "+27820000001", role: "admin",
-      status: "active", active: true, permissions: [] },
+      status: "active", active: true, permissions: [],
+      discount_limit_percent: null, discount_limit_amount: null },
     { id: "u2", name: "Sam", phone: "+27820000002", role: "employee",
-      status: "active", active: true, permissions: [] },
+      status: "active", active: true, permissions: [],
+      discount_limit_percent: null, discount_limit_amount: null },
   ];
   /**
    * The open till session, if any. `fromIndex` stands in for the server's
@@ -309,6 +317,42 @@ export class Backend {
     const discount = Math.round((itemsDiscount + saleDiscount) * 100) / 100;
     const total = Math.round((subtotal - discount) * 100) / 100;
 
+    // The item caps, exactly as pos_create_sale checks them: what is measured
+    // is everything the line loses — its own discount plus its share of the
+    // sale-level one — so the cap cannot be walked around by discounting the
+    // whole sale instead. This refuses; it never parks.
+    const netSubtotal = Math.round((subtotal - itemsDiscount) * 100) / 100;
+    if (discount > 0) {
+      for (const it of items) {
+        const p = PRODUCTS.find((x) => x.id === it.product_id)!;
+        if (p.max_discount_percent == null && p.max_discount_amount == null) continue;
+        const line = Math.round(this.price(p, false) * it.qty * 100) / 100;
+        const lineDisc =
+          it.discount_percent != null
+            ? Math.round(line * (it.discount_percent / 100) * 100) / 100
+            : Math.round((it.discount_amount ?? 0) * 100) / 100;
+        const share =
+          netSubtotal > 0
+            ? Math.round(((line - lineDisc) * total * 100) / netSubtotal) / 100
+            : 0;
+        const taken = Math.round((line - share) * 100) / 100;
+        const caps: number[] = [];
+        if (p.max_discount_percent != null) {
+          caps.push(Math.round(line * (p.max_discount_percent / 100) * 100) / 100);
+        }
+        if (p.max_discount_amount != null) {
+          caps.push(Math.round(p.max_discount_amount * it.qty * 100) / 100);
+        }
+        const cap = Math.min(...caps);
+        if (taken > cap + 0.005) {
+          throw new Error(
+            `${p.name} is capped at ${cap.toFixed(2)} off and this sale takes ` +
+              `${taken.toFixed(2)} off it. Lower the discount.`
+          );
+        }
+      }
+    }
+
     const payments =
       (body.p_payments as { method: string; amount: number }[]) ?? [];
     // Mirrors public.cash_rounding: nearest 10c, halves down, cash only.
@@ -414,6 +458,14 @@ function searchProducts(q: string) {
 export async function installBackend(page: Page): Promise<Backend> {
   const be = new Backend();
 
+  // PRODUCTS is module state and the catalogue editor now writes to it, so a
+  // cap set by one test would still be there for the next one in the same
+  // worker. Put it back rather than leaving tests to depend on their order.
+  for (const p of PRODUCTS) {
+    p.max_discount_percent = null;
+    p.max_discount_amount = null;
+  }
+
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
   // (it sticks after sleep/wake on tablets) and instead asks whether the server
   // answers. The fake has to model that, or the till never notices the line
@@ -476,7 +528,16 @@ export async function installBackend(page: Page): Promise<Backend> {
           return json([]);
         }
         delete be.failedLogins[target.row.id];
-        return json([target.row]);
+        // The limit rides the login row, as it does on the server: the till
+        // caches it and needs it with the line down.
+        const staffRow = be.staff.find((x) => x.id === target.row.id);
+        return json([
+          {
+            ...target.row,
+            discount_limit_percent: staffRow?.discount_limit_percent ?? null,
+            discount_limit_amount: staffRow?.discount_limit_amount ?? null,
+          },
+        ]);
       }
       case "rpc/pos_list_customers":
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -699,6 +760,24 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
         return json(PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })));
       }
+      case "rpc/pos_admin_save_product": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const p = PRODUCTS.find((x) => x.id === body.p_id);
+        if (!p) return fail("Product not found");
+        const pct = body.p_max_discount_percent;
+        if (pct != null && (Number(pct) < 0 || Number(pct) > 100)) {
+          return fail("A discount cap is a percentage between 0 and 100");
+        }
+        // Null clears the cap, unlike the picture in 0027 — an empty box has
+        // to be able to remove one.
+        p.max_discount_percent = pct == null ? null : Number(pct);
+        p.max_discount_amount =
+          body.p_max_discount_amount == null ? null : Number(body.p_max_discount_amount);
+        p.name = String(body.p_name ?? p.name);
+        p.price_retail = Number(body.p_price_retail ?? p.price_retail);
+        return json([{ ...p }]);
+      }
       case "rpc/pos_org_settings":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json([{ ...be.orgSettings }]);
@@ -903,6 +982,8 @@ export async function installBackend(page: Page): Promise<Backend> {
           status: "invited",
           active: true,
           permissions: (body.p_permissions as string[]) ?? [],
+          discount_limit_percent: null,
+          discount_limit_amount: null,
         };
         be.staff.push(row);
         return json([row]);
@@ -924,6 +1005,19 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (body.p_active != null) {
           row.active = body.p_active as boolean;
           row.status = row.active ? (row.status === "invited" ? "invited" : "active") : "disabled";
+        }
+        // Zero clears; null leaves alone. There is no such thing as a zero
+        // limit, so zero is free to mean "take it away".
+        if (body.p_discount_limit_percent != null) {
+          const n = Number(body.p_discount_limit_percent);
+          if (n < 0 || n > 100) {
+            return fail("A discount limit is a percentage between 0 and 100");
+          }
+          row.discount_limit_percent = n === 0 ? null : n;
+        }
+        if (body.p_discount_limit_amount != null) {
+          const n = Number(body.p_discount_limit_amount);
+          row.discount_limit_amount = n === 0 ? null : n;
         }
         return json([{ ...row }]);
       }
