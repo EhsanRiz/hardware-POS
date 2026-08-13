@@ -53,6 +53,36 @@ pull request. It covers the journeys that would cost a shop money if they broke:
 scanning, decimal quantities, whole-unit refusal, a cash sale, a server refusal
 reaching the cashier, and a sale taken offline syncing exactly once.
 
+`npm run test:db` applies every migration to a throwaway Postgres and calls the
+RPCs as the client calls them (`supabase/test/`). The browser suite drives a
+hand-written fake of the server, which is a second implementation of the same
+rules — and a second implementation agrees with the first right up until it
+doesn't, so this runs the real SQL.
+
+### Keeping the migrations honest
+
+The repository and the live database are two accounts of one schema, and they
+have drifted before: the database gained migrations the repo never recorded, so
+a build from these files was *close* to production without equalling it — near
+enough to look right, different enough to be wrong where nobody was looking. It
+cost a false alarm about every EFT sale failing, and left the search RPC
+described here differing from the one actually serving customers.
+
+`supabase/test/fingerprint.sql` is how that is checked. Run it against a fresh
+build and against the live database, and diff:
+
+```sh
+npm run test:db                     # build from the migrations
+psql -d pos_test -tA -f supabase/test/fingerprint.sql > /tmp/repo.txt
+psql "$PROD_URL" -tA -f supabase/test/fingerprint.sql > /tmp/live.txt
+diff /tmp/repo.txt /tmp/live.txt    # silence means they agree
+```
+
+It compares columns, enums, constraints, indexes, function signatures, function
+bodies, RLS and grants. Bodies are hashed with comments and whitespace stripped,
+because a diff that shouts about indentation is a diff nobody reads. Worth
+running after anything is applied to production by hand.
+
 Verified end to end on the live project: a mixed basket (2.5 m chain + 0.75 kg
 nails + 3 bags cement) prices to R464.00 with R60.52 VAT; fractional "each" is
 rejected; overselling is rejected; an employee discount parks for approval

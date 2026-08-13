@@ -263,10 +263,9 @@ begin
      and sa.session_id is null;
 
   update public.customer_payments cp set session_id = v_session.id
-   where cp.created_at >= v_session.opened_at and cp.created_at <= v_session.closed_at
-     and cp.session_id is null
-     and exists (select 1 from public.customers c
-                  where c.id = cp.customer_id and c.org_id = v_session.org_id);
+   where cp.org_id = v_session.org_id
+     and cp.created_at >= v_session.opened_at and cp.created_at <= v_session.closed_at
+     and cp.session_id is null;
 
   return to_jsonb(v_session) || jsonb_build_object('figures', v_fig);
 end;
