@@ -190,7 +190,7 @@ test("a cash sale completes and reports its invoice number", async ({ page }) =>
   // The customer hands over R200 for a R115 sale: the tender is 200, the
   // payment applied is 115, and the difference is change. Recording 200 as the
   // payment would overpay the invoice.
-  await page.getByLabel("Cash received").fill("200");
+  await page.getByLabel("Amount for the next tender").fill("200");
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await expect(page.getByText(/Change due/i)).toBeVisible();
   await page.getByRole("button", { name: /Tender & print/i }).click();
@@ -221,13 +221,11 @@ test("counting the notes after tapping Cash still gives change", async ({ page }
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
 
+  // Count the notes, then tap the tender: the order the box is built for.
+  await page.getByLabel("Amount for the next tender").fill("200");
   await page.getByRole("button", { name: /^Cash$/ }).click();
   const change = page.locator(".taken-row.is-outstanding");
   await expect(change).toContainText(/Change due/i);
-  await expect(change).toContainText("0.00");
-
-  await page.getByLabel("Cash received").fill("200");
-  // Live, without pressing anything further: there is nothing left to press.
   await expect(change).toContainText("85.00");
 
   await page.getByRole("button", { name: /Tender & print/i }).click();
@@ -240,6 +238,56 @@ test("counting the notes after tapping Cash still gives change", async ({ page }
   await expect(page.locator("#print-area")).toContainText("Change");
 });
 
+test("a settled sale stops taking figures that would move the change", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  // R490 of stock, R500 handed over: type it first, then tap the tender. That
+  // is the order every till uses and the only order this one accepts.
+  await addBySearch(page, "padlock", "Padlock 50mm Brass", "5");
+  await expect(page.locator(".total-row .fig")).toContainText("445.00");
+
+  const amount = page.getByLabel("Amount for the next tender");
+  await amount.fill("500");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+
+  const change = page.locator(".taken-row.is-outstanding");
+  await expect(change).toContainText("55.00");
+
+  // Nothing is outstanding, so there is no tender left to size and the box is
+  // shut. It used to keep accepting digits, and each one moved the change on a
+  // sale whose money had already been counted.
+  await expect(amount).toBeDisabled();
+  await expect(amount).toHaveValue("");
+  await expect(page.getByRole("button", { name: "5", exact: true })).toBeDisabled();
+
+  // The change stays where the tender put it.
+  await expect(change).toContainText("55.00");
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].amount_tendered).toBe(500);
+  expect(be.storedSales[0].change_due).toBe(55);
+});
+
+test("the tender that took the money is marked as the one that took it", async ({ page }) => {
+  await pairAndSignIn(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Card$/ }).click();
+
+  // On its own button, not only in the list above: the eye goes back to the
+  // grid it was just tapped in.
+  await expect(page.getByRole("button", { name: /^Card$/ })).toHaveClass(/is-taken/);
+  await expect(page.getByRole("button", { name: /^Cash$/ })).not.toHaveClass(/is-taken/);
+
+  // A card sale settles exactly, so there is nothing to hand back and nothing
+  // left to type.
+  await expect(page.locator(".taken-row.is-outstanding")).toContainText("0.00");
+  await expect(page.getByLabel("Amount for the next tender")).toBeDisabled();
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].amount_tendered).toBeNull();
+});
+
 test("removing a tender takes its notes with it", async ({ page }) => {
   await pairAndSignIn(page);
 
@@ -247,20 +295,23 @@ test("removing a tender takes its notes with it", async ({ page }) => {
   await addBySearch(page, "padlock", "Padlock 50mm Brass", "9");
   await expect(page.locator(".total-row .fig")).toContainText("801.00");
 
+  await page.getByLabel("Amount for the next tender").fill("900");
   await page.getByRole("button", { name: /^Cash$/ }).click();
-  await page.getByLabel("Cash received").fill("900");
   const change = page.locator(".taken-row.is-outstanding");
   await expect(change).toContainText("99.00");
 
   // The cashier changes their mind and takes the tender off. The notes were
-  // recorded against it, so they come off with it.
+  // recorded against it, so they come off with it — and the box opens again,
+  // because there is a tender to size once more.
   await page.getByRole("button", { name: /Remove Cash payment/i }).click();
   await expect(page.locator(".taken-row")).toHaveCount(0);
+  await expect(page.getByLabel("Amount for the next tender")).toBeEnabled();
 
-  // Tendering again shows the SAME change, not another R900 stacked on top of
-  // the first. This is the bug: the notes used to live in a counter of their
-  // own that removing a tender never touched, so each retry grew the change
-  // and the drawer was told to hand back money it had never been given.
+  // Tendering the same notes again shows the SAME change, not another R900
+  // stacked on the first. The notes used to live in a counter of their own that
+  // removing a tender never touched, so each retry grew the change and the
+  // drawer was told to hand back money it had never been given.
+  await page.getByLabel("Amount for the next tender").fill("900");
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await expect(change).toContainText("99.00");
 
@@ -277,7 +328,7 @@ test("a removed cash tender leaves no change behind on a card sale", async ({ pa
 
   // Cash first, with a note over the total, then removed entirely and settled
   // on card. Nothing about the abandoned cash may survive into the sale.
-  await page.getByLabel("Cash received").fill("200");
+  await page.getByLabel("Amount for the next tender").fill("200");
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await expect(page.locator(".taken-row.is-outstanding")).toContainText("85.00");
   await page.getByRole("button", { name: /Remove Cash payment/i }).click();
@@ -290,19 +341,21 @@ test("a removed cash tender leaves no change behind on a card sale", async ({ pa
   expect(be.storedSales[0].amount_tendered).toBeNull();
 });
 
-test("a stray figure in the amount box invents no change on a card sale", async ({ page }) => {
+test("a figure left in the box cannot overpay a card, or invent change", async ({ page }) => {
   await pairAndSignIn(page);
 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: /^Card$/ }).click();
 
-  // Left over from a previous customer, or a mis-tap. No cash is in this sale,
-  // so there is nothing for the drawer to give back.
-  await page.getByLabel("Cash received").fill("500");
+  // Left over from a previous customer, or a mis-tap. A card is settled
+  // exactly, so it takes the total and not the figure — and no cash is in the
+  // sale, so there is nothing for the drawer to give back either.
+  await page.getByLabel("Amount for the next tender").fill("500");
+  await page.getByRole("button", { name: /^Card$/ }).click();
   await expect(page.locator(".taken-row.is-outstanding")).toContainText("0.00");
 
   await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].payments).toEqual([{ method: "card", amount: 115 }]);
   expect(be.storedSales[0].amount_tendered).toBeNull();
 });
 

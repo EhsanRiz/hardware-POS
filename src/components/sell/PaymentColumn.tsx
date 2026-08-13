@@ -150,28 +150,29 @@ export default function PaymentColumn({
   /**
    * The notes physically handed over.
    *
-   * A cash tender records what was offered when it was added, which covers the
-   * cashier who counts the notes first and then taps Cash. But the natural
-   * order at a counter is the other way round — pick the tender, then count
-   * what is in your hand — and typing R1 000 against a settled R945 sale used
-   * to sit dead in the box: every tender button is disabled once nothing is
-   * outstanding, so the figure was never recorded and the slip said no change
-   * was owed. The customer's R55 went unmentioned at the one moment anybody
-   * would have noticed.
+   * Read only from the tenders that are actually in this sale. The box does not
+   * get a vote once a tender is placed — an earlier version let it keep
+   * meaning "cash received" afterwards, so typing into it moved the change on a
+   * settled sale and the same figure could be edited after the fact. One box
+   * that means two different things depending on what has already happened is
+   * not a box anybody can trust with money.
    *
-   * So the box keeps meaning "cash received" after the tender is added. It only
-   * ever raises the figure: correcting one downwards is done by removing the
-   * tender and taking it again, which is the safer way round when the number
-   * decides what comes out of the drawer.
+   * The order is the one every till uses: count what is in your hand, type it,
+   * then tap the tender. Getting it wrong is undone by removing the tender and
+   * taking it again.
    */
   const handedOver = useMemo(() => {
     // No cash in the sale, no change to give — a card sale must not invent
     // change from a stray figure left in the box.
     if (cashTaken <= 0.005) return 0;
-    return Math.max(cashOffered, hasTyped ? typed : 0);
-  }, [cashTaken, cashOffered, hasTyped, typed]);
+    return cashOffered;
+  }, [cashTaken, cashOffered]);
 
   const changeDue = Math.max(0, Math.round((handedOver - cashTaken) * 100) / 100);
+
+  // Nothing left to pay. Used to shut the amount entry, so the figures that
+  // decide what leaves the drawer stop being editable once they are decided.
+  const settled = lines.length > 0 && outstanding <= 0.005;
 
   const ready = !busy && canPay && lines.length > 0 && outstanding <= 0.005;
 
@@ -386,7 +387,9 @@ export default function PaymentColumn({
             <button
               key={t.method}
               type="button"
-              className="tender-btn"
+              className={`tender-btn${
+                taken.some((x) => x.payment.method === t.method) ? " is-taken" : ""
+              }`}
               disabled={
                 lines.length === 0 ||
                 (t.method === "account" && accountBlocked) ||
@@ -411,15 +414,22 @@ export default function PaymentColumn({
           ))}
         </div>
 
-        <div className="cash-in">
-          <span className="kicker-sm">Amount</span>
+        {/* Settled means settled. With nothing outstanding there is no tender
+            left to size, so the box is shut rather than left looking editable —
+            a field that still accepts digits after the money is counted invites
+            somebody to change a figure that has already been decided. */}
+        <div className={`cash-in${settled ? " is-shut" : ""}`}>
+          <span className="kicker-sm">{settled ? "Settled" : "Amount"}</span>
           <input
             inputMode="decimal"
-            value={entry}
+            value={settled ? "" : entry}
+            disabled={settled}
             onChange={(e) => setEntry(e.target.value.replace(/[^\d.,]/g, ""))}
             onKeyDown={(e) => e.key === "Enter" && (ready ? complete() : take("cash"))}
-            placeholder={money(Math.max(outstanding, 0), { currency: false })}
-            aria-label="Cash received"
+            placeholder={
+              settled ? "—" : money(Math.max(outstanding, 0), { currency: false })
+            }
+            aria-label="Amount for the next tender"
           />
         </div>
 
@@ -437,6 +447,7 @@ export default function PaymentColumn({
                   key={k}
                   type="button"
                   className={quick ? "quick" : undefined}
+                  disabled={settled}
                   onClick={() => (quick ? setEntry(k.slice(1)) : key(k))}
                   aria-label={k === "⌫" ? "Backspace" : quick ? `${k} note` : k}
                 >
@@ -512,8 +523,10 @@ export default function PaymentColumn({
         <p className="tender-caption">
           {trade ? "Trade pricing · " : ""}
           {taken.length === 0
-            ? "Tap a tender · Enter takes cash"
-            : "Enter to complete · drawer opens · invoice prints"}
+            ? "Type what they hand over, then tap a tender · Enter takes cash"
+            : settled
+              ? "Enter to complete · drawer opens · invoice prints"
+              : "Take the rest on another tender"}
         </p>
       </div>
     </aside>
