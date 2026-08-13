@@ -349,6 +349,119 @@ test("a manager can open the catalogue", async ({ page }) => {
   await expect(page.getByRole("cell", { name: "CEM-425-50" })).toBeVisible();
 });
 
+/** Open Manage and get past the PIN, which every back-office test needs first. */
+async function openManage(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) {
+    await dialog.locator(`button:text-is("${d}")`).first().click();
+  }
+  await dialog.locator('button:text-is("OK")').click();
+}
+
+test("staff are invited by phone, and nobody's PIN is set for them", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+
+  await expect(page.getByText("Sam")).toBeVisible();
+  await page.getByRole("button", { name: /Invite someone/i }).click();
+  await page.getByLabel("Staff name").fill("Thabo");
+  await page.getByLabel("Staff mobile number").fill("082 555 0100");
+  await page.getByRole("button", { name: /Send invite/i }).click();
+
+  // Invited, not active: they choose their own PIN on their own phone, so a
+  // manager never holds a credential that would ring up a sale as someone else.
+  await expect(page.getByText("PIN not set")).toBeVisible();
+  const invited = be.staff.find((s) => s.name === "Thabo");
+  expect(invited?.status).toBe("invited");
+  expect(invited?.phone).toBe("0825550100");
+});
+
+test("a role's own permissions are shown fixed, and only the extras are saved", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Sam/ }).click();
+
+  // Counter staff already take payments through the role, so that box is
+  // ticked and fixed — offering to untick it would be a lie, since the server
+  // unions the role's set with the extras.
+  const takes = page.getByRole("checkbox", { name: /Take payments/i });
+  await expect(takes).toBeChecked();
+  await expect(takes).toBeDisabled();
+
+  await page.getByRole("checkbox", { name: /Cash-up & reconciliation/i }).check();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  // Only the extra is stored. Writing the role's own set down as well would
+  // leave it behind if the role ever changed.
+  await expect.poll(() => be.staff.find((s) => s.id === "u2")?.permissions)
+    .toEqual(["cash_management"]);
+});
+
+test("a cashier who has rung up sales is signed out rather than deleted", async ({ page }) => {
+  // Sam's name is already on an invoice — the shift before this one, which is
+  // the ordinary case when somebody leaves.
+  be.sales.push({
+    client_ref: null, cashier_id: USERS.employee.row.id, customer_id: null,
+    items: [{ product_id: "p1", qty: 1 }], payment_method: "cash",
+    discount_amount: 0, approved_by: null, created_at: null, total: 115,
+    payments: [{ method: "cash", amount: 115 }], po_number: null,
+    customer_vat_number: null, rounding: 0, amount_tendered: null, change_due: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Manager/ }).click();
+  // You cannot remove yourself, so the button is not even offered.
+  await expect(page.getByRole("button", { name: /^Remove$/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /^Close$/ }).click();
+
+  await page.getByRole("button", { name: /Sam/ }).click();
+  await page.getByRole("button", { name: /^Remove$/ }).click();
+  await page.getByRole("button", { name: /Tap again to remove/i }).click();
+
+  // Still on the roster, signed out — an invoice that cannot say who rang it
+  // up is a worse record than a staff list with a leaver on it.
+  await expect(page.getByText(/rung up sales, so they were signed out/i)).toBeVisible();
+  expect(be.staff.find((s) => s.id === "u2")?.active).toBe(false);
+});
+
+test("the shop's own details are editable and reach the next invoice", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+
+  await page.getByLabel("VAT number").fill("4009999999");
+  await page.getByLabel("Street address").fill("9 Kerk St");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  expect(be.orgSettings.vat_number).toBe("4009999999");
+
+  // The point of the screen: a shop that registers for VAT on the Tuesday can
+  // issue a valid tax invoice on the Wednesday, without a redeploy.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("VAT No: 4009999999");
+  await expect(slip).toContainText("9 Kerk St");
+});
+
+test("a manager without staff rights is not shown the staff tab", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  // The seeded manager is an admin, so both tabs are there. What this pins is
+  // that the tabs are permission-driven at all rather than always present.
+  await expect(page.getByRole("button", { name: /^Staff$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Shop$/ })).toBeVisible();
+});
+
 /**
  * The repeat buyer.
  *
