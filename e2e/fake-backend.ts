@@ -966,9 +966,11 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
         const gross = round2(done.reduce((t, x) => t + x.total, 0));
         return json({
-          rows: inWindow.map((x, i) => ({
+          rows: inWindow.map((x, i) => {
+            const docNumber = parked(x) ? null : "INV-" + String(i + 1).padStart(6, "0");
+            return {
             id: "s" + i,
-            doc_number: parked(x) ? null : "INV-" + String(i + 1).padStart(6, "0"),
+            doc_number: docNumber,
             created_at: x.created_at ?? new Date().toISOString(),
             cashier_name: "Sam",
             customer_name: null,
@@ -989,8 +991,15 @@ export async function installBackend(page: Page): Promise<Backend> {
             rounding: x.rounding,
             po_number: x.po_number,
             customer_vat_number: x.customer_vat_number,
+            approved_by_name: x.approved_by ? "Manager" : null,
+            // Released by a code rather than a PIN — the codes point at the
+            // invoice they spent themselves on, as approval_codes does.
+            approved_by_code:
+              docNumber != null &&
+              be.approvalCodes.some((c) => c.doc_number === docNumber),
             item_count: x.items.length,
-          })),
+          };
+          }),
           totals: {
             count: done.length,
             gross,

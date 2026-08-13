@@ -237,6 +237,17 @@ export default function SalesHistory({ pin }: { pin: string }) {
                     {s.status === "pending_approval" && (
                       <span className="ml-2 text-xs text-amber-700">awaiting approval</span>
                     )}
+                    {/* Who let it through, and whether they were in the room.
+                        A code is the manager's decision either way, but it was
+                        made down a phone line by somebody who could not see the
+                        counter — which is exactly what an owner reading the day
+                        back wants to be able to pick out. */}
+                    {s.approved_by_name && (
+                      <span className="ml-2 text-xs text-stone-500">
+                        {s.approved_by_code ? "by code" : "approved"} ·{" "}
+                        {s.approved_by_name}
+                      </span>
+                    )}
                   </span>
                   <span className="block text-sm text-stone-500">
                     {new Date(s.created_at).toLocaleString("en-ZA", {
