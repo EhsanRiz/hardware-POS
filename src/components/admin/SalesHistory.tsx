@@ -11,7 +11,7 @@ import {
   type SaleRow,
   type SalesHistory as History,
 } from "../../lib/sales";
-import type { Sale } from "../../lib/types";
+import type { Sale, SaleItem } from "../../lib/types";
 import ManagerPinModal from "../ManagerPinModal";
 
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -29,6 +29,19 @@ const TENDER_LABEL: Record<string, string> = {
   account: "On account",
   mixed: "Mixed",
 };
+
+/**
+ * How much of a sale's discount was taken off the whole sale rather than off
+ * particular lines.
+ *
+ * `sales.discount_amount` is everything that came off, both kinds together —
+ * that is what makes subtotal less discount equal total on the invoice. The
+ * lines carry their own, so what is left over is the blanket one.
+ */
+function saleWideDiscount(s: SaleRow, items: SaleItem[]): number {
+  const onLines = items.reduce((t, i) => t + (i.discount_amount ?? 0), 0);
+  return Math.round((s.discount_amount - onLines) * 100) / 100;
+}
 
 /**
  * What was sold, and when.
@@ -53,6 +66,12 @@ export default function SalesHistory({ pin }: { pin: string }) {
   const [printing, setPrinting] = useState<string | null>(null);
   // The sale a manager is being asked to release, if any.
   const [releasing, setReleasing] = useState<SaleRow | null>(null);
+  // Which sale has its discounts open, and the lines once they have been
+  // fetched. Kept per sale rather than cleared on close: an owner working down
+  // a day opens several, and a second look should not cost a second round trip.
+  const [openDiscount, setOpenDiscount] = useState<string | null>(null);
+  const [lines, setLines] = useState<Record<string, SaleItem[]>>({});
+  const [loadingLines, setLoadingLines] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +94,34 @@ export default function SalesHistory({ pin }: { pin: string }) {
     }
     void load();
   }, [load, range, from, to]);
+
+  /**
+   * Open the discounts on one sale.
+   *
+   * The totals above answer "how much went out in discounts today". This
+   * answers the question that follows it, which is the one worth asking: on
+   * what, and why. Until now the only way to find out was to reprint the slip
+   * and read it, which is a strange thing to have to do at a desk.
+   */
+  async function toggleDiscounts(s: SaleRow) {
+    if (openDiscount === s.id) {
+      setOpenDiscount(null);
+      return;
+    }
+    setOpenDiscount(s.id);
+    if (lines[s.id]) return;
+    setLoadingLines(s.id);
+    try {
+      const got = await saleItems(s.id);
+      setLines((prev) => ({ ...prev, [s.id]: got }));
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e, "Could not read that sale's lines"));
+      setOpenDiscount(null);
+    } finally {
+      setLoadingLines(null);
+    }
+  }
 
   async function reprint(s: SaleRow) {
     setPrinting(s.id);
@@ -267,6 +314,15 @@ export default function SalesHistory({ pin }: { pin: string }) {
                     {s.customer_name ? ` · ${s.customer_name}` : ""}
                     {" · "}
                     {s.item_count} {s.item_count === 1 ? "line" : "lines"}
+                    {/* Whether a sale carries a discount at all is the first
+                        thing an owner scanning a day looks for, so it is on the
+                        row rather than behind the button. */}
+                    {s.discount_amount > 0 && (
+                      <span className="text-amber-700">
+                        {" · "}
+                        {money(s.discount_amount)} off
+                      </span>
+                    )}
                   </span>
                 </span>
 
@@ -289,6 +345,22 @@ export default function SalesHistory({ pin }: { pin: string }) {
                   </button>
                 )}
 
+                {s.discount_amount > 0 && (
+                  <button
+                    className="text-sm text-amber-800 underline underline-offset-2 disabled:opacity-40"
+                    disabled={loadingLines === s.id}
+                    aria-expanded={openDiscount === s.id}
+                    aria-label={`Discounts on ${s.doc_number ?? "this sale"}`}
+                    onClick={() => void toggleDiscounts(s)}
+                  >
+                    {loadingLines === s.id
+                      ? "Opening…"
+                      : openDiscount === s.id
+                        ? "Hide discounts"
+                        : "Discounts"}
+                  </button>
+                )}
+
                 <button
                   className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
                   disabled={printing === s.id}
@@ -296,6 +368,53 @@ export default function SalesHistory({ pin }: { pin: string }) {
                 >
                   {printing === s.id ? "Printing…" : "Reprint"}
                 </button>
+
+                {/* Where the money went, and on whose say-so. The totals at the
+                    top answer "how much came off today"; this answers the
+                    question straight after it, which is the one worth asking.
+                    Before this the only way to find out was to reprint the slip
+                    and read it, which is a strange thing to do at a desk. */}
+                {openDiscount === s.id && lines[s.id] && (
+                  <div className="w-full mt-2 pl-1 border-l-2 border-amber-200 space-y-1">
+                    {lines[s.id]
+                      .filter((i) => i.discount_amount > 0)
+                      .map((i, n) => (
+                        <p key={n} className="text-sm text-stone-600 pl-3">
+                          <span className="text-stone-800">{i.name}</span>
+                          {" — "}
+                          {i.discount_percent ? `less ${i.discount_percent}%, ` : ""}
+                          {money(i.discount_amount)} off
+                          {i.discount_reason && (
+                            <span className="italic"> · {i.discount_reason}</span>
+                          )}
+                        </p>
+                      ))}
+
+                    {/* A discount off the whole sale is a different decision
+                        from one off a line, so it is said separately rather
+                        than spread across the lines it touched. */}
+                    {saleWideDiscount(s, lines[s.id]) > 0 && (
+                      <p className="text-sm text-stone-600 pl-3">
+                        <span className="text-stone-800">Off the whole sale</span>
+                        {" — "}
+                        {money(saleWideDiscount(s, lines[s.id]))} off
+                        {s.discount_reason && (
+                          <span className="italic"> · {s.discount_reason}</span>
+                        )}
+                      </p>
+                    )}
+
+                    {/* Older sales, rung up before a reason was ever asked for.
+                        Saying so is better than an empty panel that reads as a
+                        screen that does not work. */}
+                    {!lines[s.id].some((i) => i.discount_reason) &&
+                      !s.discount_reason && (
+                        <p className="text-sm text-stone-500 pl-3">
+                          No reason was recorded.
+                        </p>
+                      )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

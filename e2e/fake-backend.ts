@@ -991,7 +991,10 @@ export async function installBackend(page: Page): Promise<Backend> {
             customer_address: null,
             trade_pricing: false,
             subtotal: round2(x.total + x.discount_amount),
-            discount_reason: null,
+            // Was hardcoded null here too, so no test could see a sale-level
+            // reason come back out of the history the way the Sales screen
+            // reads it.
+            discount_reason: x.discount_reason,
             paid_cash: null,
             paid_card: null,
             total: x.total,
