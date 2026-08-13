@@ -90,12 +90,18 @@ export default function SalesHistory({ pin }: { pin: string }) {
       printReceipt(
         buildReceiptText(
           s as unknown as Sale,
+          // Including what came off each line. These were being dropped here,
+          // so a slip printed a second time showed full price on a line that
+          // had been marked down and a total that did not follow from it.
           items.map((i) => ({
             name: i.name,
             unit_code: i.unit_code,
             qty: i.qty,
             unit_price: i.unit_price,
             line_total: i.line_total,
+            discount_amount: i.discount_amount,
+            discount_percent: i.discount_percent,
+            discount_reason: i.discount_reason,
           })),
           s.customer_name ? { name: s.customer_name, balance: 0 } : null,
           payments

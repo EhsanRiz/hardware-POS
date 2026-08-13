@@ -2,6 +2,22 @@ import { useState } from "react";
 import { money } from "../lib/format";
 import { CURRENCY } from "../lib/config";
 
+/** What the modal knows about the discount somebody just agreed to. */
+export interface DiscountDetail {
+  /** The rand figure that travels. Always set, whichever way it was typed. */
+  amount: number;
+  /** The percentage, when it was asked for as one. Null when it was rands. */
+  percent: number | null;
+  /** What the cashier typed to explain it, and nothing else. */
+  note: string | null;
+  /**
+   * Percentage and note as one string, for the sale-level discount — `sales`
+   * keeps a single reason column and the percentage has nowhere else to go.
+   * A line has a column for each and uses `percent` and `note` instead.
+   */
+  reason: string;
+}
+
 interface Props {
   subtotal: number;
   /**
@@ -17,7 +33,7 @@ interface Props {
    * means they approve their own, so approval is never mentioned.
    */
   approvalFreeUpTo?: number | null;
-  onApply: (amount: number, reason: string) => void;
+  onApply: (d: DiscountDetail) => void;
   onCancel: () => void;
 }
 
@@ -69,12 +85,21 @@ export default function DiscountModal({
 
   function apply() {
     // The percentage is the thing worth remembering, so it leads the reason and
-    // whatever the cashier typed follows it.
-    const said =
-      mode === "percent"
-        ? [`${typed}% off`, reason.trim()].filter(Boolean).join(" — ")
-        : reason.trim();
-    onApply(amount, said);
+    // whatever the cashier typed follows it. The pieces go out beside it: a
+    // caller with a column for each should not have to pick this string apart
+    // again with a regular expression, which is how the typed words used to get
+    // lost on their way to a line.
+    const percent = mode === "percent" ? typed : null;
+    const note = reason.trim();
+    onApply({
+      amount,
+      percent,
+      note: note || null,
+      reason:
+        percent != null
+          ? [`${percent}% off`, note].filter(Boolean).join(" — ")
+          : note,
+    });
   }
 
   return (

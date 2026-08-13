@@ -153,6 +153,12 @@ export default function LineItems({
                   <span className="line-disc">
                     {l.discountPercent ? `less ${l.discountPercent}% ` : "less "}
                     −{money(l.discount, { currency: false })}
+                    {/* Why, under the how much. It matters most on a sale that
+                        was parked and picked up an hour later by somebody who
+                        was not there when it was agreed. */}
+                    {l.discountReason && (
+                      <span className="line-disc-why">{l.discountReason}</span>
+                    )}
                   </span>
                 )}
               </span>

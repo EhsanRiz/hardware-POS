@@ -553,6 +553,90 @@ test("money can come off one line without touching the others", async ({ page })
   await expect(slip).toContainText("145.00");
 });
 
+test("a line discount says why, and the words reach the record", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  // The modal has asked for a reason since it was written. On a line discount
+  // the answer was parsed for its percentage and the words thrown away, so an
+  // invoice could say a line went down 10% and nothing anywhere said why.
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await page.getByPlaceholder("e.g. staff, loyalty").fill("church job, Mr Molefe");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  // On the screen it belongs to the line it came off — which matters most on a
+  // basket parked at lunchtime and picked up by whoever is on the till at four.
+  const cable = page.locator(".line-row", { hasText: "Twin & Earth" });
+  await expect(cable.locator(".line-disc")).toContainText("10%");
+  await expect(cable.locator(".line-disc-why")).toHaveText("church job, Mr Molefe");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // On the paper, beside the money rather than on a line of its own — a basket
+  // of ten marked-down lines would otherwise add ten rows to an 80mm slip.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("less 10% (church job, Mr Molefe)");
+
+  // And on the record, where the month-end asks who decided this and on what
+  // grounds. The percentage keeps its own field: one fact stored twice is two
+  // facts that can disagree.
+  const item = be.storedSales[0].items.find((i) => i.discount_percent === 10)!;
+  expect(item.discount_reason).toBe("church job, Mr Molefe");
+});
+
+test("a reason with no discount behind it is not kept", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByPlaceholder("e.g. staff, loyalty").fill("  offcut  ");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const items = be.storedSales[0].items;
+  // Trimmed, because trailing spaces are not part of anybody's reason.
+  expect(items.find((i) => i.discount_amount === 20)!.discount_reason).toBe("offcut");
+  // And the cement, which nobody discounted, carries no note about nothing —
+  // a reason on an undiscounted line reads on a reprint as though money came
+  // off it.
+  expect(items.find((i) => !i.discount_amount)!.discount_reason ?? null).toBeNull();
+});
+
+test("a reprinted slip still shows what came off each line, and why", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: /Discount Twin & Earth/i }).click();
+  await page.getByRole("button", { name: /Percent/ }).click();
+  await page.getByLabel("Discount percent").fill("10");
+  await page.getByPlaceholder("e.g. staff, loyalty").fill("damaged drum");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  await page.getByRole("button", { name: /Reprint/ }).first().click();
+
+  // The reprint was dropping every line discount on the way to the printer, so
+  // a second copy of the same invoice showed full price on a line that had been
+  // marked down, and a total that did not follow from the lines above it.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("less 10% (damaged drum)");
+  await expect(slip).toContainText("R145.00");
+  // R1450 less R145, and the line above it agrees — which it did not when the
+  // discount was being dropped between the sale and the printer.
+  await expect(slip).toContainText("R1305.00");
+});
+
 test("the per-line discount is a key you can see, not a hidden tap", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");

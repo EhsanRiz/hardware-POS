@@ -119,6 +119,16 @@ export interface CartLine {
    */
   discount?: number;
   discountPercent?: number | null;
+  /**
+   * What the cashier typed when they took the money off — "church job", "staff",
+   * "damaged box". Not the percentage: that has its own field, and one fact
+   * stored twice is two facts that can disagree.
+   *
+   * The month-end question is never whether the arithmetic was right, it is who
+   * decided this and on what grounds. Without this the invoice could say a line
+   * was marked down ten percent and nothing anywhere said why.
+   */
+  discountReason?: string | null;
 }
 
 /** A customer account. Trade customers price off `price_trade` automatically. */
@@ -237,6 +247,14 @@ export interface SaleItem {
   unit_price: number;
   line_total: number;
   tax_amount: number;
+  /**
+   * Money off this line, and why. The server has returned these since 0035 and
+   * 0041; the reprint was throwing them away, so a slip printed a second time
+   * came out showing full price on a line that had been marked down.
+   */
+  discount_amount: number;
+  discount_percent: number | null;
+  discount_reason: string | null;
 }
 
 export interface RecentSale {
@@ -297,6 +315,8 @@ export interface ReceiptItem {
   /** Money off this line alone. Printed under it when there is any. */
   discount_amount?: number;
   discount_percent?: number | null;
+  /** Why it came off, printed beside the discount. */
+  discount_reason?: string | null;
 }
 
 /**

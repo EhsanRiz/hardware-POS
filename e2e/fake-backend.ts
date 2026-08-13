@@ -80,7 +80,15 @@ export interface RecordedSale {
   client_ref: string | null;
   cashier_id: string;
   customer_id: string | null;
-  items: { product_id: string; qty: number }[];
+  items: {
+    product_id: string;
+    qty: number;
+    discount_amount?: number;
+    discount_percent?: number | null;
+    /** Kept as the server keeps it: trimmed, cut to 200, and only where there
+     *  is a discount for it to explain. */
+    discount_reason?: string | null;
+  }[];
   payment_method: string;
   discount_amount: number;
   /**
@@ -306,6 +314,7 @@ export class Backend {
       (body.p_items as {
         product_id: string; qty: number;
         discount_amount?: number; discount_percent?: number | null;
+        discount_reason?: string | null;
       }[]) ?? [];
     let subtotal = 0;
     let itemsDiscount = 0;
@@ -328,6 +337,10 @@ export class Backend {
       if (lineDisc > line) {
         throw new Error(`Discount on ${p.name} is more than the line comes to`);
       }
+      // Kept the way the server keeps it — bounded, trimmed, and dropped on a
+      // line nobody discounted — so a test cannot pass here and fail there.
+      const why = (it.discount_reason ?? "").slice(0, 200).trim();
+      it.discount_reason = lineDisc > 0 && why ? why : null;
       subtotal += line;
       itemsDiscount += lineDisc;
     }
@@ -1076,14 +1089,33 @@ export async function installBackend(page: Page): Promise<Backend> {
         const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
         const sale = be.sales[idx];
         if (!sale) return json([]);
+        // What each line lost, as the server stores it: line_total is the share
+        // after this line's own discount AND its share of the sale-level one, so
+        // a reprint adds up to the total that was actually taken.
+        const gross = (it: (typeof sale.items)[number]) =>
+          Math.round(
+            (PRODUCTS.find((p) => p.id === it.product_id)?.price_retail ?? 0) *
+              it.qty * 100
+          ) / 100;
+        const own = (it: (typeof sale.items)[number]) =>
+          it.discount_percent != null
+            ? Math.round(gross(it) * (it.discount_percent / 100) * 100) / 100
+            : Math.round((it.discount_amount ?? 0) * 100) / 100;
+        const net = sale.items.reduce((t, it) => t + gross(it) - own(it), 0);
         return json(
           sale.items.map((it) => {
             const prod = PRODUCTS.find((p) => p.id === it.product_id)!;
             return {
               name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
               qty: it.qty, unit_price: prod.price_retail,
-              line_total: Math.round(prod.price_retail * it.qty * 100) / 100,
+              line_total:
+                net > 0
+                  ? Math.round(((gross(it) - own(it)) * sale.total * 100) / net) / 100
+                  : 0,
               tax_amount: 0,
+              discount_amount: own(it),
+              discount_percent: it.discount_percent ?? null,
+              discount_reason: it.discount_reason ?? null,
             };
           })
         );
