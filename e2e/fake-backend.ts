@@ -751,9 +751,14 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_admin_invite_user": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        const phone = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
-        if (!/^(\+\d{9,15}|0\d{9})$/.test(phone)) {
-          return fail("Phone must be a valid number, e.g. 082 123 4567");
+        // Normalised exactly as pos_admin_invite_user does it: a local ZA or
+        // Lesotho number is stored in E.164, because that is what the enrolment
+        // lookup matches on and a mismatch there fails silently by design.
+        let phone = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
+        if (/^0\d{9}$/.test(phone)) phone = "+27" + phone.slice(1);
+        else if (/^[5-6]\d{7}$/.test(phone)) phone = "+266" + phone;
+        if (!/^\+\d{9,15}$/.test(phone)) {
+          return fail("Phone must be a valid number, e.g. 082 123 4567 or +266 5800 0000");
         }
         if (be.staff.some((s) => s.phone === phone)) {
           return fail("That phone number is already registered");

@@ -6,6 +6,7 @@ import {
   adminUpdateUser,
   type StaffUser,
 } from "../../lib/adminApi";
+import { ENROL_URL } from "../../lib/config";
 import { errorMessage } from "../../lib/errors";
 import {
   ADMIN_LEVEL_PERMS,
@@ -41,6 +42,9 @@ export default function StaffAdmin({ user, pin }: { user: User | null; pin: stri
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<StaffUser | "new" | null>(null);
+  // Who has just been invited, so the screen can say what happens next while
+  // the manager is still standing there.
+  const [invited, setInvited] = useState<StaffUser | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -148,13 +152,84 @@ export default function StaffAdmin({ user, pin }: { user: User | null; pin: stri
           self={editing !== "new" && editing.id === user?.id}
           staff={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
-          onSaved={async () => {
+          onSaved={async (added) => {
             setEditing(null);
+            if (added) setInvited(added);
             await load();
           }}
           onRemove={remove}
         />
       )}
+
+      {invited && <WhatHappensNext staff={invited} onClose={() => setInvited(null)} />}
+    </div>
+  );
+}
+
+/**
+ * What happens after an invite, said at the moment the manager expects it.
+ *
+ * Inviting somebody sends them nothing, on purpose: an unsolicited SMS with a
+ * link is what a phishing message looks like, and the code that matters is the
+ * one they ask for themselves. But nothing said so, so an invite looked like a
+ * button that did nothing — the row appeared, no message arrived, and the
+ * obvious conclusion was that it was broken.
+ *
+ * So the step the manager has to perform is named, with the address to pass on
+ * and the number it must be typed against. They are standing next to the person
+ * they just invited; this is the one moment telling them costs nothing.
+ */
+function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const message =
+    `You have been added to the till at work. ` +
+    `Go to ${ENROL_URL} and enter your number ${staff.phone} — ` +
+    `you will get an SMS code, and then you choose your own PIN.`;
+
+  return (
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+      <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl p-5 space-y-4">
+        <h3 className="font-semibold">{staff.name} is on the staff list</h3>
+
+        <p className="text-sm text-stone-600">
+          They cannot sign in yet. Nobody is sent a PIN — they choose their own,
+          after proving the phone is theirs. Tell them to do this:
+        </p>
+
+        <ol className="text-sm text-stone-700 list-decimal pl-5 space-y-1">
+          <li>
+            Open <span className="font-medium break-all">{ENROL_URL}</span>
+          </li>
+          <li>
+            Enter <span className="font-medium">{staff.phone}</span> — the number
+            they were added with, or no code is sent
+          </li>
+          <li>Type the SMS code, then choose a PIN nobody else knows</li>
+        </ol>
+
+        {/* The counter is busy and the person is standing right there, so the
+            message is ready to send rather than something to compose. */}
+        <button
+          className="w-full text-left text-sm bg-stone-50 border border-stone-200 rounded-lg p-3"
+          onClick={() => {
+            void navigator.clipboard?.writeText(message).then(
+              () => setCopied(true),
+              () => setCopied(false)
+            );
+          }}
+        >
+          <span className="block text-xs uppercase tracking-wide text-stone-400 mb-1">
+            {copied ? "Copied — send it to them" : "Tap to copy a message for them"}
+          </span>
+          {message}
+        </button>
+
+        <div className="flex justify-end">
+          <button className="px-4 py-2 rounded-lg bg-stone-800 text-white" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -185,7 +260,8 @@ function StaffEditor({
   isAdmin: boolean;
   self: boolean;
   onClose: () => void;
-  onSaved: () => Promise<void>;
+  /** Called with the new row after an invite, and with null after an edit. */
+  onSaved: (invited: StaffUser | null) => Promise<void>;
   onRemove: (u: StaffUser) => Promise<void>;
 }) {
   const [name, setName] = useState(staff?.name ?? "");
@@ -212,10 +288,11 @@ function StaffEditor({
       const extras = grants.filter((g) => !fromRole.has(g));
       if (staff) {
         await adminUpdateUser(pin, staff.id, { name, role, permissions: extras, active });
+        await onSaved(null);
       } else {
-        await adminInviteUser(pin, name, phone, role, extras);
+        const added = await adminInviteUser(pin, name, phone, role, extras);
+        await onSaved(added);
       }
-      await onSaved();
     } catch (e) {
       setError(errorMessage(e, "Could not save"));
     } finally {

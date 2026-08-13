@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { signIn } from "../lib/auth";
+import { ENROL_URL } from "../lib/config";
 import { useAuth } from "../context/AuthContext";
 import { shopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
@@ -8,9 +9,6 @@ import { usePendingSync } from "../lib/sync";
 import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
-
-/** Where staff reset a forgotten PIN, by SMS to their own phone. */
-const ENROL_URL = "https://pos.innovaearth.com/enrol/";
 
 /**
  * Daily sign-in.
