@@ -273,8 +273,13 @@ export class Backend {
       if (existing) return this.saleRow(existing, false);
     }
 
-    const items = (body.p_items as { product_id: string; qty: number }[]) ?? [];
+    const items =
+      (body.p_items as {
+        product_id: string; qty: number;
+        discount_amount?: number; discount_percent?: number | null;
+      }[]) ?? [];
     let subtotal = 0;
+    let itemsDiscount = 0;
     for (const it of items) {
       const p = PRODUCTS.find((x) => x.id === it.product_id);
       if (!p) throw new Error("Product not available");
@@ -284,9 +289,24 @@ export class Backend {
       if (p.stock_qty != null && p.stock_qty < it.qty) {
         throw new Error(`Not enough stock for ${p.name} (${p.stock_qty} ${p.unit_code} on hand)`);
       }
-      subtotal += Math.round(this.price(p, false) * it.qty * 100) / 100;
+      const line = Math.round(this.price(p, false) * it.qty * 100) / 100;
+      // The percentage decides, as it does on the server: a client sending a
+      // percentage and a mismatched amount must not get to choose which wins.
+      const lineDisc =
+        it.discount_percent != null
+          ? Math.round(line * (it.discount_percent / 100) * 100) / 100
+          : Math.round((it.discount_amount ?? 0) * 100) / 100;
+      if (lineDisc > line) {
+        throw new Error(`Discount on ${p.name} is more than the line comes to`);
+      }
+      subtotal += line;
+      itemsDiscount += lineDisc;
     }
-    const discount = (body.p_discount_amount as number) ?? 0;
+    itemsDiscount = Math.round(itemsDiscount * 100) / 100;
+    const saleDiscount = (body.p_discount_amount as number) ?? 0;
+    // Everything off, so subtotal - discount = total reads correctly whichever
+    // kind of discount was given.
+    const discount = Math.round((itemsDiscount + saleDiscount) * 100) / 100;
     const total = Math.round((subtotal - discount) * 100) / 100;
 
     const payments =

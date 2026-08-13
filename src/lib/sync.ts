@@ -55,7 +55,14 @@ export interface SaleResult {
 }
 
 function itemsPayload(lines: CartLine[]) {
-  return lines.map((l) => ({ product_id: l.product.id, qty: l.qty }));
+  // The discount travels with the line. A sale queued offline that dropped it
+  // would replay at full price hours later, with nobody watching.
+  return lines.map((l) => ({
+    product_id: l.product.id,
+    qty: l.qty,
+    ...(l.discount ? { discount_amount: l.discount } : {}),
+    ...(l.discountPercent ? { discount_percent: l.discountPercent } : {}),
+  }));
 }
 
 /**

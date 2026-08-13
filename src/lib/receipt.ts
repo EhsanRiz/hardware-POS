@@ -192,6 +192,19 @@ export function buildReceiptText(
     if (item.unit_code !== "ea" || item.qty !== 1) {
       out.push(unitRate(item.unit_price, item.unit_code));
     }
+    // Money taken off this line, under the line it came off. Without it the
+    // customer sees a total that does not match the price they were quoted and
+    // has nothing on the paper to explain the difference.
+    if (item.discount_amount && item.discount_amount > 0) {
+      out.push(
+        lineItem(
+          item.discount_percent
+            ? `  less ${item.discount_percent}%`
+            : "  less discount",
+          `-${amount(item.discount_amount)}`
+        )
+      );
+    }
   }
 
   out.push(solid());

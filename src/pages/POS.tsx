@@ -132,6 +132,8 @@ export default function POS() {
   const [stockPin, setStockPin] = useState<string | null>(null);
   const [askStockPin, setAskStockPin] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  // The line a discount is being set on. The sale-level one has no product id.
+  const [discountLine, setDiscountLine] = useState<string | null>(null);
   const [showFailed, setShowFailed] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
   // The back office asks for the PIN once and keeps it in memory only: every
@@ -203,7 +205,18 @@ export default function POS() {
     () => lines.reduce((sum, l) => sum + priceOf(l.product) * l.qty, 0),
     [lines, priceOf]
   );
-  const total = Math.max(0, subtotal - discount);
+  // What the lines took off themselves, before anything comes off the sale.
+  const itemsDiscount = useMemo(
+    () => Math.round(lines.reduce((sum, l) => sum + (l.discount ?? 0), 0) * 100) / 100,
+    [lines]
+  );
+  // Everything off, which is what the customer sees on one line of the slip.
+  const allDiscount = Math.round((itemsDiscount + discount) * 100) / 100;
+  const total = Math.max(0, subtotal - allDiscount);
+  // The sale-level discount spreads over what is left of the lines, mirroring
+  // the server: a line already marked down must not take a second helping in
+  // proportion to a price it is no longer being sold at.
+  const netSubtotal = Math.max(0, subtotal - itemsDiscount);
 
   function addProduct(p: Product, qty = 1) {
     setLines((prev) => {
@@ -373,13 +386,16 @@ export default function POS() {
     // stored invoice agree line for line.
     return lines.map((l) => {
       const gross = priceOf(l.product) * l.qty;
-      const share = subtotal > 0 ? (gross * total) / subtotal : 0;
+      const net = gross - (l.discount ?? 0);
+      const share = netSubtotal > 0 ? (net * total) / netSubtotal : 0;
       return {
         name: l.product.name,
         unit_code: l.product.unit_code,
         qty: l.qty,
         unit_price: priceOf(l.product),
         line_total: Math.round(share * 100) / 100,
+        discount_amount: l.discount ?? 0,
+        discount_percent: l.discountPercent ?? null,
       };
     });
   }
@@ -541,6 +557,7 @@ export default function POS() {
             freshId={freshId}
             onSetQty={setQty}
             onRemove={removeLine}
+            onDiscountLine={(id) => setDiscountLine(id)}
             onInspect={(p) => setInspecting({ product: p, mode: "edit" })}
           />
 
@@ -588,7 +605,7 @@ export default function POS() {
         <PaymentColumn
           lines={lines}
           subtotal={subtotal}
-          discount={discount}
+          discount={allDiscount}
           total={total}
           trade={trade}
           customer={customer}
@@ -688,6 +705,38 @@ export default function POS() {
             setShowDiscount(false);
             // Managers approve their own; everyone else needs a PIN now, so the
             // sale completes at the counter instead of parking for later.
+            if (!can(user, "approve_discount")) setNeedsApproval(true);
+          }}
+        />
+      )}
+
+      {/* The same dialog, aimed at one line. Money off a ladder is the same
+          decision as money off the sale — same arithmetic, same approval — so
+          it is the same screen rather than a second one to learn. */}
+      {discountLine && (
+        <DiscountModal
+          subtotal={(() => {
+            const l = lines.find((x) => x.product.id === discountLine);
+            return l ? priceOf(l.product) * l.qty : 0;
+          })()}
+          onCancel={() => setDiscountLine(null)}
+          onApply={(amount, reason) => {
+            // The percentage is recovered from the reason the modal writes, so
+            // the slip can name it. The server works the amount out again from
+            // the percentage, which is what stops the two disagreeing.
+            const pct = /^(\d+(?:\.\d+)?)% off/.exec(reason)?.[1];
+            setLines((prev) =>
+              prev.map((l) =>
+                l.product.id === discountLine
+                  ? {
+                      ...l,
+                      discount: amount,
+                      discountPercent: pct ? Number(pct) : null,
+                    }
+                  : l
+              )
+            );
+            setDiscountLine(null);
             if (!can(user, "approve_discount")) setNeedsApproval(true);
           }}
         />

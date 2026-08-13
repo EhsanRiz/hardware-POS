@@ -19,6 +19,7 @@ export default function LineItems({
   freshId,
   onSetQty,
   onRemove,
+  onDiscountLine,
   onInspect,
 }: {
   lines: CartLine[];
@@ -27,6 +28,8 @@ export default function LineItems({
   freshId: string | null;
   onSetQty: (productId: string, qty: number) => void;
   onRemove: (productId: string) => void;
+  /** Take money off this line alone. Null clears whatever was on it. */
+  onDiscountLine?: (productId: string) => void;
   /** Open the closer look for a line already in the sale. */
   onInspect: (p: CartLine["product"]) => void;
 }) {
@@ -142,7 +145,26 @@ export default function LineItems({
               </span>
 
               <span className="line-amt">
-                {money(priceOf(l) * l.qty, { currency: false })}
+                {/* The amount is where a discount is asked for, because it is
+                    the figure being argued about. */}
+                {onDiscountLine ? (
+                  <button
+                    className="line-amt-btn"
+                    onClick={() => onDiscountLine(p.id)}
+                    aria-label={`Discount ${p.name}`}
+                    title="Take money off this line"
+                  >
+                    {money(priceOf(l) * l.qty, { currency: false })}
+                  </button>
+                ) : (
+                  money(priceOf(l) * l.qty, { currency: false })
+                )}
+                {!!l.discount && l.discount > 0 && (
+                  <span className="line-disc">
+                    {l.discountPercent ? `less ${l.discountPercent}% ` : "less "}
+                    −{money(l.discount, { currency: false })}
+                  </span>
+                )}
               </span>
 
               <button
