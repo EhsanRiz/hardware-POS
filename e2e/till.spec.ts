@@ -1235,6 +1235,107 @@ test("a parked sale does not tell the cashier it completed", async ({ page }) =>
   await expect(slip).not.toContainText("pending sync");
 });
 
+test("a sale open when the screen reloads comes back parked", async ({ page }) => {
+  // A counter screen is a browser tab, and tabs get refreshed: a stray gesture,
+  // the PWA updating itself, a phone reclaiming a backgrounded page. Every one
+  // of those threw away a basket scanned item by item, with the customer
+  // standing there and an empty screen as the only clue.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await expect(page.locator(".total-row .fig")).toContainText("1 565.00");
+
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+
+  // Parked, not silently restored: a refresh is not always an accident, and a
+  // basket that reappears on its own is fighting whoever meant to clear it.
+  await expect(banner(page)).toContainText(/has been parked/i);
+  await expect(page.locator(".line-row")).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Resume parked/i }).click();
+  await expect(page.locator(".line-row")).toHaveCount(2);
+  await expect(page.locator(".total-row .fig")).toContainText("1 565.00");
+
+  // And it is a real sale again, not a husk.
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.storedSales[0].total).toBe(1565);
+});
+
+test("a completed sale does not come back parked", async ({ page }) => {
+  // The other half: the device's copy has to be dropped when the sale leaves,
+  // or every refresh resurrects the last thing sold.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await expect(page.getByText(/has been parked/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Resume parked/i })).toHaveCount(0);
+});
+
+test("an approval code releases a sale taken offline, and survives the queue", async ({ page }) => {
+  // The code cannot be checked on the device — it lives on the server — so an
+  // offline sale carries it in the queue and it is spent at sync. Expiry is
+  // measured against when the sale was RUNG UP, so a line that comes back late
+  // does not refuse a code that was live when the cashier typed it.
+  be.approvalCodes.push({
+    id: "ac7",
+    code: "515151",
+    issued_by: USERS.manager.row.id,
+    issued_by_name: "Manager",
+    max_amount: null,
+    reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: null,
+    used_by_name: null,
+    doc_number: null,
+  });
+
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // The line drops before the discount is even given.
+  be.offline = true;
+  await page.context().setOffline(true);
+
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  for (const d of "515151".split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = approval.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+
+  // Offline the code is taken on trust, and the till says so rather than
+  // implying it has been checked.
+  await expect(banner(page)).toContainText(/taken on trust/i);
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 15000 }).toBe(1);
+
+  // Released by the manager who issued it, and the code is spent.
+  expect(be.storedSales[0].discount_amount).toBe(20);
+  expect(be.storedSales[0].approved_by).toBe(USERS.manager.row.id);
+  expect(be.approvalCodes.find((c) => c.code === "515151")?.used_at).toBeTruthy();
+});
+
 test("an employee is not offered the back office", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
   await expect(page.getByRole("button", { name: /^Manage$/ })).toHaveCount(0);
