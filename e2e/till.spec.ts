@@ -1026,6 +1026,59 @@ test("the shop's banking details are editable and reach the next invoice", async
   await expect(page.getByText("15%", { exact: true })).toBeVisible();
 });
 
+test("a parked sale can be released from the Sales screen", async ({ page }) => {
+  // Sales park for approval by design — a cashier past their limit, no manager
+  // on the floor, or a device whose cached limit is behind what the back office
+  // now says. But there was no way out of that state: the RPC to release one
+  // has existed since 0004 and no screen ever called it, so the sale sat with
+  // no invoice number and its stock never came off the shelf.
+  //
+  // Parked here directly rather than through the till, because the till no
+  // longer produces one on demand — backing out of the approval prompt undoes
+  // the discount, which is the point of the fix that came with this. What is
+  // under test is the way out, not the way in.
+  be.sales.push({
+    client_ref: null,
+    cashier_id: USERS.employee.row.id,
+    customer_id: null,
+    items: [{ product_id: "p1", qty: 1 }],
+    payment_method: "cash",
+    discount_amount: 20,
+    discount_reason: "staff",
+    approved_by: null,
+    within_limit: false,
+    created_at: new Date().toISOString(),
+    total: 95,
+    payments: [{ method: "cash", amount: 95 }],
+    po_number: null,
+    customer_vat_number: null,
+    rounding: 0,
+    amount_tendered: 95,
+    change_due: 0,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // Unnumbered, flagged, and counting for nothing: a parked sale is not
+  // takings until somebody says it is.
+  await expect(page.getByText(/awaiting approval/i)).toBeVisible();
+  await expect(page.getByText("(no invoice number)")).toBeVisible();
+
+  await page.getByRole("button", { name: /^Release$/ }).click();
+  const release = page.getByRole("dialog", { name: "Release this sale" });
+  for (const d of USERS.manager.pin.split("")) {
+    await release.locator(`button:text-is("${d}")`).first().click();
+  }
+  const ok = release.locator('button:text-is("OK")');
+  if (await ok.count()) await ok.first().click();
+
+  await expect(page.getByText(/awaiting approval/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Release$/ })).toHaveCount(0);
+  expect(be.sales[0].approved_by).toBe(USERS.manager.row.id);
+});
+
 test("an employee is not offered the back office", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
   await expect(page.getByRole("button", { name: /^Manage$/ })).toHaveCount(0);
