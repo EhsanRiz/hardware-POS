@@ -3,6 +3,7 @@ import {
   adminDeleteProduct,
   adminImportProducts,
   adminListProducts,
+  adminListUsers,
   adminSaveProduct,
   fetchAllCategories,
   fetchUnits,
@@ -67,6 +68,27 @@ export default function Admin({
   }, [user]);
 
   const [tab, setTab] = useState<TabKey>("catalogue");
+  // On a phone the tabs live behind a burger (see the header); this is it.
+  const [menuOpen, setMenuOpen] = useState(false);
+  // How many colleagues are on the list but cannot sign in yet. Carried on the
+  // menu's Staff row, because a closed menu is the one place that problem
+  // could otherwise hide on a phone. A hint, not a screen: if the roster
+  // cannot be read the badge simply stays absent, and the demo backend does
+  // not serve the roster at all.
+  const [staffWaiting, setStaffWaiting] = useState(0);
+  const refreshWaiting = useCallback(async () => {
+    if (!can(user, "manage_staff")) return;
+    try {
+      const roster = await adminListUsers(pin);
+      setStaffWaiting(roster.filter((s) => s.active && s.status === "invited").length);
+    } catch {
+      /* the badge is a hint; the Staff screen itself reports load failures */
+    }
+  }, [user, pin]);
+  useEffect(() => {
+    void refreshWaiting();
+  }, [refreshWaiting]);
+
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
@@ -154,13 +176,42 @@ export default function Admin({
     // scroll clear. The dynamic unit tracks the chrome as it comes and goes.
     <div className="fixed inset-0 h-[100dvh] bg-stone-50 z-40 flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 bg-white border-b border-stone-200">
+        {/* On a phone the tabs collapse behind this burger. A strip of seven
+            scrolled sideways there, and the far tabs — Staff and Shop, the
+            ones a manager pulls a phone out FOR — were three screen-widths
+            away with nothing to say so. On a tablet the strip below is the
+            better tool (every section one tap, none hidden), so the burger
+            exists only under sm. */}
+        <button
+          className="sm:hidden shrink-0 w-9 h-9 flex flex-col items-center justify-center gap-1 rounded-lg border border-stone-300"
+          aria-label="Sections"
+          aria-expanded={menuOpen}
+          onClick={() => {
+            setMenuOpen((o) => !o);
+            // Opening is the moment the count is looked at, so it is the
+            // moment it is refreshed — an invite made moments ago on this very
+            // screen must show here without a reload.
+            if (!menuOpen) void refreshWaiting();
+          }}
+        >
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
+        </button>
         <h1 className="text-lg font-semibold shrink-0">Manage</h1>
+        {/* A burger hides where you are, so the header says it instead. */}
+        <span className="sm:hidden min-w-0 truncate text-stone-500">
+          · <span className="font-medium text-stone-800">
+            {tabs.find((t) => t.key === tab)?.label}
+          </span>
+        </span>
         {/* Built for a tablet, then opened on a manager's phone — where seven
             tabs do not fit, "Bulk import" wrapped onto two lines, and Staff and
             Shop were off the right-hand edge with nothing to say so. The row
             scrolls now: min-w-0 lets it shrink below its content so the
-            overflow actually engages, and nothing inside it wraps. */}
-        <nav className="flex gap-1 ml-1 min-w-0 overflow-x-auto">
+            overflow actually engages, and nothing inside it wraps. Under sm it
+            yields to the burger above instead. */}
+        <nav className="hidden sm:flex gap-1 ml-1 min-w-0 overflow-x-auto">
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -173,6 +224,7 @@ export default function Admin({
             </button>
           ))}
         </nav>
+        {/* Never inside the menu: the way out must not need finding. */}
         <button
           onClick={onClose}
           className="ml-auto shrink-0 text-stone-500 px-2 py-1.5 text-sm whitespace-nowrap"
@@ -180,6 +232,49 @@ export default function Admin({
           Back to till
         </button>
       </header>
+
+      {/* The burger's menu: a compact card under the button, not a screen of
+          its own. The page stays visible behind a light scrim — a menu that
+          swallows the display reads as "you have left", and losing sight of
+          the work in progress is the cost. Rows keep their full height; a
+          menu you mis-tap is worse than a menu that is a little tall. */}
+      {menuOpen && (
+        <div className="sm:hidden">
+          <div
+            className="fixed inset-0 z-40 bg-black/20"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute left-2 top-16 z-50 w-72 bg-white border border-stone-200 rounded-2xl shadow-xl overflow-hidden">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => {
+                  setTab(t.key);
+                  setMenuOpen(false);
+                }}
+                aria-current={tab === t.key ? "page" : undefined}
+                className={`w-full flex items-center gap-2 text-left px-4 py-3 text-[15px] border-b border-stone-100 last:border-b-0 ${
+                  tab === t.key ? "bg-stone-100 font-medium" : "hover:bg-stone-50"
+                }`}
+              >
+                {t.label}
+                {/* Somebody stuck at "PIN not set" must be visible from here,
+                    or a closed menu is where that problem goes to hide. */}
+                {t.key === "staff" && staffWaiting > 0 && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    {staffWaiting} waiting
+                  </span>
+                )}
+                {tab === t.key && (
+                  <span aria-hidden="true" className="ml-auto">
+                    ✓
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div

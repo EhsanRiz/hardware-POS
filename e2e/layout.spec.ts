@@ -69,11 +69,19 @@ for (const device of DEVICES) {
  * bank queue, not at a counter. Seven tabs did not fit: "Bulk import" wrapped
  * onto two lines, and Staff and Shop were off the right-hand edge with nothing
  * on screen to suggest they existed.
+ *
+ * The first fix made the strip scroll, which kept every tab reachable but not
+ * findable — Shop was three screen-widths of sideways scrolling away, and
+ * nothing said so. On a phone the tabs now sit behind a burger: one tap shows
+ * every section this person may open, on rows a thumb can hit, over the page
+ * rather than in place of it. The tablet strip is untouched — at those widths
+ * all seven fit and one-tap switching is the better tool — and the rest of the
+ * suite exercises it constantly at the default desktop size.
  */
 test.describe("manager's phone, 390", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("every Manage tab is reachable, and nothing wraps", async ({ page }) => {
+  test("every Manage section is reachable from the burger, and nothing wraps", async ({ page }) => {
     const be = await installBackend(page);
     void be;
     await pairAndSignIn(page, "1234");
@@ -89,29 +97,45 @@ test.describe("manager's phone, 390", () => {
     // still mounted underneath and is built for a tablet, which is a separate
     // question — nobody rings up a sale on a phone. What matters here is that
     // the back office fits the device a manager actually carries.
-    const header = page.locator("header").filter({ hasText: "Manage" }).first();
+    // The Manage header specifically — the Sell header behind it also says
+    // "Manage", on the button that opens this.
+    const header = page
+      .locator("header")
+      .filter({ has: page.getByRole("heading", { name: "Manage" }) })
+      .first();
     const box = await header.boundingBox();
     expect(box!.width, "header width").toBeLessThanOrEqual(390);
 
-    // The strip itself scrolls rather than squeezing — that is the mechanism.
-    const strip = page.locator("nav").filter({ hasText: "Catalogue" }).first();
-    const scrolls = await strip.evaluate((n) => n.scrollWidth > n.clientWidth);
-    expect(scrolls, "the tab strip scrolls instead of cramming").toBe(true);
+    // The strip is gone on a phone — the burger replaces it, and the header
+    // says where you are since the tabs no longer can.
+    await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toBeHidden();
+    await expect(header).toContainText("Catalogue");
 
-    // Every tab is one line. A wrapped label is the tell that the row is being
-    // squeezed rather than scrolled.
-    for (const label of ["Catalogue", "Bulk import", "Sales", "Approvals", "Shop"]) {
-      const tab = page.getByRole("button", { name: label, exact: true });
-      const box = await tab.boundingBox();
-      expect(box, `${label} is present`).not.toBeNull();
-      expect(box!.height, `${label} on one line`).toBeLessThan(44);
+    const burger = page.getByRole("button", { name: "Sections" });
+    await expect(burger).toBeVisible();
+    await burger.click();
+
+    // One tap, every section — visible, unwrapped, and inside the screen.
+    for (const label of ["Catalogue", "Bulk import", "Sales", "Approvals", "Cash-up", "Staff", "Shop"]) {
+      const row = page.getByRole("button", { name: label, exact: true });
+      await expect(row, `${label} is offered`).toBeVisible();
+      const rb = await row.boundingBox();
+      expect(rb!.height, `${label} on one line`).toBeLessThan(56);
+      expect(rb!.x + rb!.width, `${label} inside the screen`).toBeLessThanOrEqual(390);
     }
 
-    // And the far tab can actually be reached and used.
+    // Picking one goes there and puts the menu away.
     await page.getByRole("button", { name: "Shop", exact: true }).click();
     await expect(page.getByLabel("Shop name")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toBeHidden();
+    await expect(header).toContainText("Shop");
 
-    // Leaving is always available, however narrow it gets.
+    // Reopened, the menu marks where you are.
+    await burger.click();
+    await expect(page.getByRole("button", { name: "Shop", exact: true }))
+      .toHaveAttribute("aria-current", "page");
+
+    // Leaving is always available — never folded into the menu.
     await expect(page.getByRole("button", { name: /Back to till/i })).toBeVisible();
   });
 });

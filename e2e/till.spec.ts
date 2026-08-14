@@ -1838,7 +1838,11 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
 
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
-  await page.getByRole("button", { name: /^Staff$/ }).click();
+  // On a phone the sections sit behind the burger, so Staff is reached
+  // through it rather than from a strip. Not an exact name: Thabo is waiting,
+  // so the row also wears the badge that says so.
+  await page.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: /^Staff/ }).click();
   const pending = page.getByRole("button", { name: /Thabo cannot sign in yet/i });
   await expect(pending).toBeVisible();
 
@@ -1850,6 +1854,45 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   const box = await pending.boundingBox();
   expect(box!.width, "the row action's width").toBeLessThanOrEqual(390);
   expect(box!.x + box!.width, "its right edge").toBeLessThanOrEqual(390);
+});
+
+test("the phone menu says who is waiting, and steps aside without stealing the page", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Somebody added but not yet enrolled — the situation the badge exists for.
+  be.staff.push({
+    id: "u9",
+    name: "Thabo",
+    phone: "+27825550100",
+    role: "employee",
+    status: "invited",
+    active: true,
+    permissions: [],
+    discount_limit_percent: null,
+    discount_limit_amount: null,
+    last_code_error: null,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Sections" }).click();
+
+  // The Staff row wears the count. A closed menu is the one place on a phone
+  // where "someone still cannot sign in" could hide; the badge is how it
+  // does not.
+  const staffRow = page.getByRole("button", { name: /^Staff/ });
+  await expect(staffRow).toContainText("1 waiting");
+
+  // The menu is a card over the page, not a page: the catalogue is still
+  // there behind it, and a tap outside puts the menu away without moving you.
+  await expect(page.getByPlaceholder(/Search by name, SKU or barcode/i)).toBeVisible();
+  await page.mouse.click(200, 700);
+  await expect(staffRow).toBeHidden();
+  await expect(page.getByPlaceholder(/Search by name, SKU or barcode/i)).toBeVisible();
+
+  // And the badge leads somewhere: Staff, where the pending strip carries on.
+  await page.getByRole("button", { name: "Sections" }).click();
+  await staffRow.click();
+  await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i })).toBeVisible();
 });
 
 test("a role's own permissions are shown fixed, and only the extras are saved", async ({ page }) => {
