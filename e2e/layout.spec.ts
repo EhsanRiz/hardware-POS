@@ -191,3 +191,107 @@ test.describe("phone, 390", () => {
     expect(docSpill, "horizontal overflow in CSS pixels").toBeLessThanOrEqual(0);
   });
 });
+
+/**
+ * Every dialog survives the on-screen keyboard.
+ *
+ * Reported from a shop iPad: tapping Discount showed "Apply discount" and
+ * nothing else — the keyboard covered the dialog it had just opened, and the
+ * only way out was to dismiss the keyboard by hand. The same happened on the
+ * product dialog, where the quantity is settled.
+ *
+ * The cause is that iOS does not shrink the LAYOUT viewport for the keyboard,
+ * only the visible one — and every browser on an iPad is WebKit, Chrome
+ * included, so this is not a Safari-only fault. A scrim on `inset: 0` therefore
+ * covers a full-height page that is mostly hidden and centres its dialog behind
+ * the keyboard.
+ *
+ * No engine available here raises a real iOS keyboard, so the keyboard is stood
+ * in for: the visible rectangle is published as custom properties by
+ * lib/visualViewport.ts, and setting them by hand is exactly what an iPad does
+ * when the keyboard opens. What that leaves unproven is Safari's own reporting,
+ * and nothing but a device settles that. What it does prove is the part that
+ * was actually broken — that a dialog follows the visible rectangle instead of
+ * the page, and that the button at the bottom of it can still be pressed.
+ */
+test.describe("with a keyboard over the bottom half", () => {
+  // An iPad Pro 11 in landscape, which is what the shop is holding.
+  test.use({ viewport: { width: 1194, height: 834 } });
+
+  // Roughly what iPadOS leaves once its keyboard is up.
+  const VISIBLE = 420;
+
+  const DIALOGS = [
+    {
+      name: "the discount dialog",
+      open: async (page: import("@playwright/test").Page) => {
+        await page.getByRole("button", { name: /^Discount$/ }).click();
+      },
+      dialog: "Apply discount",
+      // Apply stays disabled until there is a figure, so the keys get used
+      // before the button is asked for — which is the real sequence anyway.
+      enter: async (card: import("@playwright/test").Locator) => {
+        await card.getByRole("button", { name: "1", exact: true }).click();
+        await card.getByRole("button", { name: "0", exact: true }).click();
+      },
+      action: /^Apply$/,
+    },
+    {
+      name: "the product dialog, where a quantity is settled",
+      open: async (page: import("@playwright/test").Page) => {
+        await page.locator(".line-desc-btn").first().click();
+      },
+      dialog: "Cement 42.5N 50kg",
+      enter: undefined,
+      action: /Update sale/,
+    },
+  ];
+
+  for (const d of DIALOGS) {
+    test(`${d.name} stays on the screen the keyboard left`, async ({ page }) => {
+      await installBackend(page);
+      await pairAndSignIn(page);
+      await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+      await page.keyboard.press("Enter");
+
+      await d.open(page);
+      const card = page.getByRole("dialog", { name: d.dialog });
+      await expect(card).toBeVisible();
+      if (d.enter) await d.enter(card);
+
+      // The keyboard comes up.
+      await page.evaluate((h) => {
+        document.documentElement.style.setProperty("--vv-height", `${h}px`);
+        document.documentElement.style.setProperty("--vv-top", "0px");
+      }, VISIBLE);
+
+      const box = (await card.boundingBox())!;
+      expect(box.y, "the top of the dialog is on screen").toBeGreaterThanOrEqual(-1);
+      expect(
+        box.y + box.height,
+        "and the bottom of it, where the buttons are, is above the keyboard"
+      ).toBeLessThanOrEqual(VISIBLE + 1);
+
+      // Not merely on screen — reachable. Playwright refuses to click something
+      // covered or out of view, so this is the cashier's actual question.
+      await card.getByRole("button", { name: d.action }).click();
+      await expect(card).toHaveCount(0);
+    });
+
+    test(`${d.name} does not summon the keyboard for a number`, async ({ page }) => {
+      await installBackend(page);
+      await pairAndSignIn(page);
+      await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+      await page.keyboard.press("Enter");
+      await d.open(page);
+
+      // inputMode="none" is what stops the device keyboard opening at all, on
+      // WebKit and Blink alike, without stopping a real keyboard from typing.
+      // The till's own keys are underneath instead.
+      const card = page.getByRole("dialog", { name: d.dialog });
+      const numeric = card.locator('input[inputmode="none"]');
+      await expect(numeric).toHaveCount(1);
+      await expect(card.getByRole("group", { name: "Number keys" })).toBeVisible();
+    });
+  }
+});

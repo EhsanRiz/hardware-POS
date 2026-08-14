@@ -839,9 +839,11 @@
 .modal-card {
   width: 100%;
   max-width: 460px;
-  max-height: 80vh;
+  /* The visible screen, not the layout viewport — see .detail-card. */
+  max-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   padding: 22px;
   background: var(--color-bg);
   border: 1px solid var(--divider);
@@ -1481,7 +1483,11 @@ tr.is-void td:last-child { text-decoration: none; }
 .detail-card {
   width: 100%;
   max-width: 560px;
-  max-height: 88vh;
+  /* Bounded by the SCRIM, which is bounded by the visible screen — not by vh,
+     which measures a layout viewport the keyboard never shrinks. Capped at 88vh
+     this dialog stood 734px tall in the 420px an iPad keyboard leaves, so it
+     spilled off both ends and the Add to sale button sat under the keys. */
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   overflow-y: auto;

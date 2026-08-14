@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { money, quantity } from "../../lib/money";
 import { imageSrc } from "../../lib/images";
 import type { Product } from "../../lib/types";
+import NumberPad from "../NumberPad";
 
 /**
  * A closer look at one product, and the place a quantity is decided.
@@ -192,8 +193,11 @@ export default function ProductDetail({
                 <input
                   ref={qtyRef}
                   // Whole-unit goods must not accept a fraction: half a padlock
-                  // is not a sale, and the server refuses it anyway.
-                  inputMode={p.allows_fraction ? "decimal" : "numeric"}
+                  // is not a sale, and the server refuses it anyway. That is
+                  // now the keypad's job — "none" keeps the device keyboard off
+                  // a dialog it would otherwise bury, without keeping a real
+                  // keyboard out of it.
+                  inputMode="none"
                   value={qtyText}
                   onChange={(e) => setQtyText(e.target.value)}
                   onBlur={tidy}
@@ -221,6 +225,17 @@ export default function ProductDetail({
                 {quantity(qty || 0, p.unit_code)} × {money(charged)}
               </span>
             </div>
+
+            {/* The same keys the discount dialog uses. Quantity is the number
+                a counter changes most, and on a tablet tapping it raised the
+                device keyboard over this whole dialog — picture, price, Add to
+                sale and all. The decimal key is offered only where a part
+                quantity is a real sale: half a padlock is not. */}
+            <NumberPad
+              value={qtyText}
+              onChange={setQtyText}
+              decimal={p.allows_fraction}
+            />
 
             {p.allows_fraction && (
               <span className="detail-note">
