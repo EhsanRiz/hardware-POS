@@ -172,6 +172,9 @@ export async function fetchSettings(): Promise<ShopSettings> {
     // build's constant only when the server has never been reached, and a
     // zero here would print "VAT at 0%" on a brand-new till.
     vat_rate: typeof row?.vat_rate === "number" ? row.vat_rate : null,
+    // Defaults to showing them. A server that answered without this field is
+    // an old one, and an old one prices every line.
+    quote_show_line_prices: row?.quote_show_line_prices !== false,
   };
 }
 

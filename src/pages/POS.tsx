@@ -436,7 +436,14 @@ export default function POS() {
     if (!user || lines.length === 0) return;
     if (!online) {
       printReceipt(
-        buildQuoteText(lines, { subtotal, discount, total, trade }),
+        buildQuoteText(lines, {
+          subtotal,
+          // Everything off, not just the blanket discount — the same figure the
+          // invoice prints, so subtotal less discount equals total on both.
+          discount: allDiscount,
+          total,
+          trade,
+        }),
         "Quote"
       );
       setBanner("Printed unsaved — quotes get a number when the line is back.");
@@ -452,7 +459,7 @@ export default function POS() {
       printReceipt(
         buildQuoteText(lines, {
           subtotal,
-          discount,
+          discount: allDiscount,
           total,
           trade,
           docNumber: q.doc_number,

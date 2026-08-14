@@ -303,6 +303,14 @@ export interface ShopSettings {
    * the moment of sale; this is so the rate shown on screen cannot outlive it.
    */
   vat_rate?: number | null;
+  /**
+   * Whether a printed QUOTE prices each line, or gives the scope and one total.
+   *
+   * An itemised quote is a shopping list a competitor can price against, so a
+   * counter quoting a job usually wants the total alone. Never applies to a tax
+   * invoice, which must itemise by law.
+   */
+  quote_show_line_prices?: boolean;
 }
 
 /** Minimal shape the receipt builder needs (live carts and past sales alike). */

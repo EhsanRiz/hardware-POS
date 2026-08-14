@@ -319,9 +319,24 @@ export function buildQuoteText(
     /** Set when the quote was saved: the number the builder brings back. */
     docNumber?: string | null;
     validUntil?: string | null;
+    /**
+     * Whether each line carries a price. False prints the scope and one total
+     * — the ordinary way a trade counter quotes a job, because an itemised
+     * quote is a shopping list a competitor can price against.
+     *
+     * The lines themselves never go: a quote that does not say what is
+     * included is not a quote, it is a number.
+     *
+     * Left unset it follows the shop's setting, read from the same device
+     * cache the header is read from — so it is right offline, and so the two
+     * places that print a quote cannot drift apart by one of them forgetting.
+     */
+    showLinePrices?: boolean;
   }
 ): string {
   const out: string[] = [];
+  const priced =
+    opts.showLinePrices ?? shopSettings().quote_show_line_prices !== false;
   shopHeader(out, "QUOTE");
   out.push("");
   if (opts.docNumber) out.push(bold(opts.docNumber));
@@ -330,18 +345,55 @@ export function buildQuoteText(
   out.push(solid());
 
   for (const l of lines) {
-    const lineTotal = l.product.price_retail * l.qty;
-    out.push(lineItem(itemLabel(l.qty, l.product.unit_code, l.product.name),
-                      amount(lineTotal)));
+    // The price this customer is actually being quoted. It read price_retail
+    // regardless, so a trade quote printed retail against every line while the
+    // subtotal underneath was worked out at trade — the paper disagreed with
+    // itself, in the customer's favour on the total and against them on every
+    // line above it.
+    const unit =
+      opts.trade && l.product.price_trade != null
+        ? l.product.price_trade
+        : l.product.price_retail;
+    const label = itemLabel(l.qty, l.product.unit_code, l.product.name);
+
+    if (!priced) {
+      out.push(label);
+      continue;
+    }
+
+    // Money off this line, taken off this line. Ignoring it printed full price
+    // on a line that had been marked down, and left the difference unexplained
+    // between the subtotal and the total.
+    const gross = unit * l.qty;
+    const off = l.discount ?? 0;
+    out.push(lineItem(label, amount(gross - off)));
     if (l.product.unit_code !== "ea" || l.qty !== 1) {
-      out.push(unitRate(l.product.price_retail, l.product.unit_code));
+      out.push(unitRate(unit, l.product.unit_code));
+    }
+    if (off > 0) {
+      out.push(
+        lineItem(
+          l.discountPercent ? `  less ${l.discountPercent}%` : "  less discount",
+          `-${amount(off)}`
+        )
+      );
     }
   }
 
   out.push(solid());
-  out.push(lineItem("Subtotal", amount(opts.subtotal)));
-  if (opts.discount > 0) {
-    out.push(lineItem("Discount", `-${amount(opts.discount)}`));
+  // Laid out exactly as the invoice lays it out, so the two documents read the
+  // same way: gross subtotal, everything that came off, and the total those two
+  // produce. `discount` is ALL of it, lines and blanket together — the quote
+  // was passed only the blanket one, so a line discount left a gap between the
+  // subtotal and the total with nothing on the paper to account for it.
+  //
+  // On a totals-only quote none of it appears. A subtotal with no lines above
+  // it to explain it is just the total again, one row higher.
+  if (priced) {
+    out.push(lineItem("Subtotal", amount(opts.subtotal)));
+    if (opts.discount > 0) {
+      out.push(lineItem("Discount", `-${amount(opts.discount)}`));
+    }
   }
   out.push(boxTop());
   out.push(boxRow("TOTAL", amount(opts.total)));

@@ -209,7 +209,9 @@ export class Backend {
     doc_number: string | null;
   }[] = [];
   /** The shop's own details, mutable so a settings save can be asserted on. */
-  orgSettings: Record<string, string> = {
+  orgSettings: Record<string, string | boolean> = {
+    // A shop that has never been asked prices every line, as 0042 defaults it.
+    quote_show_line_prices: true,
     shop_name: "Ladybrand Hardware",
     address_line1: "12 Church St",
     address_line2: "Ladybrand, Free State",
@@ -875,7 +877,10 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_admin_save_settings": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        Object.assign(be.orgSettings, body.p_settings as Record<string, string>);
+        Object.assign(
+          be.orgSettings,
+          body.p_settings as Record<string, string | boolean>
+        );
         return json(null);
       }
 

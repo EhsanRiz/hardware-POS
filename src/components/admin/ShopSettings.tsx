@@ -3,8 +3,13 @@ import { adminSaveSettings, type ShopDetails } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { refreshSettings, shopSettings } from "../../lib/settings";
 
+/** The text fields only — the one boolean is edited by its own control. */
+type TextKey = {
+  [K in keyof ShopDetails]: ShopDetails[K] extends string ? K : never;
+}[keyof ShopDetails];
+
 interface Field {
-  key: keyof ShopDetails;
+  key: TextKey;
   label: string;
   hint?: string;
   inputMode?: "tel" | "numeric";
@@ -73,9 +78,15 @@ export default function ShopSettings({ pin }: { pin: string }) {
     });
   }, []);
 
-  function set(k: keyof ShopDetails, v: string) {
+  function set(k: TextKey, v: string) {
     touched.current = true;
     setF((prev) => ({ ...prev, [k]: v }));
+    setSaved(false);
+  }
+
+  function setQuotePrices(v: boolean) {
+    touched.current = true;
+    setF((prev) => ({ ...prev, quote_show_line_prices: v }));
     setSaved(false);
   }
 
@@ -169,9 +180,43 @@ export default function ShopSettings({ pin }: { pin: string }) {
 
       </div>
 
-      {/* One Save for the page, not one per card. Both cards edit the same
-          record and a single save writes all of it, so two identical buttons
-          would only raise the question of which one this field belongs to. */}
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
+          <h2 className="font-medium">Quotes</h2>
+          {/* A quote is a piece of paper that leaves the shop and gets read by
+              people who are not the customer. Itemised, it is a shopping list:
+              the cement gets matched down the road and the customer comes back
+              for the two lines nobody else stocks, or does not come back. */}
+          <p className="text-sm text-stone-500">
+            What a printed quote shows. This never affects an invoice — a tax
+            invoice has to itemise, which is SARS's rule and not a preference.
+          </p>
+        </div>
+
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-5 w-5 accent-stone-800"
+            checked={f.quote_show_line_prices}
+            onChange={(e) => setQuotePrices(e.target.checked)}
+            aria-label="Show a price against each line on a quote"
+          />
+          <span>
+            <span className="block text-sm text-stone-700">
+              Show a price against each line
+            </span>
+            <span className="block text-xs text-stone-500">
+              {f.quote_show_line_prices
+                ? "Every item is priced, then the total."
+                : "The quote lists what is included and gives one total. What each item costs stays in the shop."}
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {/* One Save for the page, not one per card. Every card edits the same
+          record and a single save writes all of it, so repeated buttons would
+          only raise the question of which one this field belongs to. */}
       <div className="max-w-xl flex items-center gap-3 mt-4">
         <button
           className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
@@ -207,5 +252,6 @@ function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
     bank_account_name: s.bank_account_name ?? "",
     bank_account_number: s.bank_account_number ?? "",
     bank_branch_code: s.bank_branch_code ?? "",
+    quote_show_line_prices: s.quote_show_line_prices !== false,
   };
 }

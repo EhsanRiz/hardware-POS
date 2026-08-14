@@ -1458,4 +1458,44 @@ begin
   delete from public.sales;
 end $$;
 
+-- 0042: a quote that prices the job rather than the shopping list ------------
+--
+-- An itemised quote is a list a competitor can read. Shops that quote on jobs
+-- want a total and nothing else, and this is a shop-wide choice rather than a
+-- tick somebody has to remember at the counter.
+
+do $$
+declare v_tok text; v_row record;
+begin
+  select token into v_tok from till;
+
+  -- The default has to be "show", or turning this on would silently change the
+  -- paper every existing shop hands out.
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.quote_show_line_prices, true,
+    'a shop that has never been asked still prices every line');
+
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('quote_show_line_prices', false));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.quote_show_line_prices, false,
+    'and a shop that asks for totals only gets it');
+
+  -- The awkward one. Every other field here is text, where coalesce on a
+  -- missing key does the right thing by accident. A boolean read for
+  -- truthiness rather than cast would treat `false` as "not supplied" and
+  -- refuse ever to turn the setting off again.
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('phone', '065 735 2766'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.quote_show_line_prices, false,
+    'editing the phone number does not put the prices back');
+
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('quote_show_line_prices', true));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.quote_show_line_prices, true,
+    'and it can be turned back on');
+end $$;
+
 select 'all database tests passed' as result;
