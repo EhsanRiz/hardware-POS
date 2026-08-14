@@ -423,8 +423,12 @@ export default function PaymentColumn({
             somebody to change a figure that has already been decided. */}
         <div className={`cash-in${settled ? " is-shut" : ""}`}>
           <span className="kicker-sm">{settled ? "Settled" : "Amount"}</span>
+          {/* The keys for this are directly underneath, so raising the device
+              keyboard on top of them helps nobody — on a tablet it covers the
+              keypad, the change due and the tender button. A real keyboard
+              still types here; only the on-screen one is refused. */}
           <input
-            inputMode="decimal"
+            inputMode="none"
             value={settled ? "" : entry}
             disabled={settled}
             onChange={(e) => setEntry(e.target.value.replace(/[^\d.,]/g, ""))}

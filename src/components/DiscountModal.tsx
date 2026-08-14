@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { money } from "../lib/format";
 import { CURRENCY } from "../lib/config";
+import NumberPad from "./NumberPad";
 
 /** What the modal knows about the discount somebody just agreed to. */
 export interface DiscountDetail {
@@ -103,9 +104,13 @@ export default function DiscountModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in">
+    <div className="vv-fixed bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in">
+      {/* Bounded by the visible screen and scrolling inside it. With a keypad
+          added this dialog is taller than a phone has left once a keyboard is
+          up, and a card centred in a short scrim spills equally off both ends —
+          the title above the screen and Apply below it. */}
       <div
-        className="bg-white rounded-2xl p-6 w-full max-w-sm animate-scale-in"
+        className="bg-white rounded-2xl p-6 w-full max-w-sm animate-scale-in max-h-full overflow-y-auto"
         role="dialog"
         aria-modal="true"
         aria-label="Apply discount"
@@ -145,16 +150,25 @@ export default function DiscountModal({
         <label className="block text-sm font-medium text-stone-600 mb-1">
           {mode === "percent" ? "Percent off" : `Amount (${CURRENCY})`}
         </label>
+        {/* inputMode="none" keeps the OS keyboard shut on a tablet without
+            keeping a real keyboard out: a desk types into this exactly as
+            before. The on-screen keys underneath are how a counter enters it.
+            Before this, focusing the box raised the iPad keyboard over the
+            middle of the screen and buried the dialog it belonged to. */}
         <input
-          type="number"
-          inputMode="decimal"
+          type="text"
+          inputMode="none"
           aria-label={mode === "percent" ? "Discount percent" : "Discount amount"}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ""))}
           autoFocus
-          className="w-full h-12 px-3 rounded-lg border border-stone-300 text-lg mb-2"
+          className="w-full h-12 px-3 rounded-lg border border-stone-300 text-lg mb-2 tabular-nums"
           placeholder={mode === "percent" ? "0" : "0.00"}
         />
+
+        <div className="mb-2">
+          <NumberPad value={value} onChange={setValue} />
+        </div>
 
         {/* What the percentage actually comes to, before it is applied. Nobody
             should have to do the arithmetic to find out what they just agreed

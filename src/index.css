@@ -54,6 +54,47 @@ button {
   }
 }
 
+/* A dialog sits in the VISIBLE screen, not the layout viewport.
+   iOS Safari does not shrink the layout viewport when the on-screen keyboard
+   opens, so `inset: 0` plus `items-center` centres a dialog on a full-height
+   page that is mostly behind the keyboard — on an iPad, tapping Discount showed
+   the title and nothing else. The vars are published by lib/visualViewport.ts;
+   100dvh is the fallback for a browser without visualViewport, not the
+   mechanism. */
+.vv-fixed {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-height, 100dvh);
+}
+
+/* On-screen number entry, so money is never typed on an OS keyboard that
+   covers the dialog asking for it. The same bargain the PIN pad already
+   makes, and what a counter wants anyway: bigger targets, usable in gloves. */
+.numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.numpad button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--divider, #d6d3d1);
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  font-family: var(--font-heading, inherit);
+  font-size: 18px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text, #1c1917);
+}
+.numpad button:active {
+  background: var(--state-pressed, rgba(0, 0, 0, 0.08));
+}
+
 /* Print isolation: only the receipt slip prints, never the app/popup chrome.
    The slip lives off-screen until print, then becomes the only visible thing.
    A flex column centres the logo reliably regardless of paper width. */

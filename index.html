@@ -5,9 +5,13 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- interactive-widget: Android Chrome shrinks the LAYOUT viewport when the
+         on-screen keyboard opens, so a centred dialog stays on screen by itself.
+         Safari ignores it, which is why lib/visualViewport.ts exists as well and
+         not instead. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#0e3a2d" />
     <!-- iOS: allow Add to Home Screen to launch full-screen like an app -->

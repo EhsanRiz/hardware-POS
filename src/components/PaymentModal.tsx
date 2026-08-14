@@ -241,7 +241,7 @@ export default function PaymentModal({
 
 function Backdrop({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+    <div className="vv-fixed bg-black/40 flex items-center justify-center p-4 z-50">
       {children}
     </div>
   );

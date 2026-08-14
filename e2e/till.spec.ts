@@ -2008,6 +2008,74 @@ test("a delivery is booked in against a reference and the shelves update", async
  * ring the sale — and the quote must close AGAINST that sale, so "did that
  * quote ever come back?" always has an answer.
  */
+test("money is entered on the till's own keys, not the device keyboard", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  const box = page.getByLabel("Discount amount");
+
+  // inputMode="none" is what shuts the on-screen keyboard on iOS and Android
+  // without shutting out a real one. Focusing this box used to raise the iPad
+  // keyboard over the middle of the screen, burying the dialog it belonged to:
+  // the cashier saw "Apply discount" and nothing else, and had to dismiss the
+  // keyboard by hand before they could see what they were doing.
+  await expect(box).toHaveAttribute("inputmode", "none");
+
+  // And the keys work, which is the other half — suppressing the keyboard
+  // without giving somebody a way to type would just be a broken field.
+  const pad = page.getByRole("group", { name: "Number keys" });
+  await pad.getByRole("button", { name: "1", exact: true }).click();
+  await pad.getByRole("button", { name: "5", exact: true }).click();
+  await expect(box).toHaveValue("15");
+  await pad.getByRole("button", { name: "Backspace" }).click();
+  await expect(box).toHaveValue("1");
+  await pad.getByRole("button", { name: "0", exact: true }).click();
+  await expect(box).toHaveValue("10");
+
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  await expect(page.locator(".total-row .fig")).toContainText("105.00");
+});
+
+test("a dialog stays inside the screen the keyboard left behind", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+
+  // iOS does not shrink the layout viewport for the keyboard, so a scrim on
+  // `inset: 0` covers a full-height page that is mostly hidden and centres the
+  // dialog behind the keyboard. The visible rectangle is published as custom
+  // properties instead; Chromium will not raise a keyboard here, so the
+  // rectangle is set by hand to stand in for one.
+  //
+  // What this cannot check is Safari's own behaviour — no engine available to
+  // this suite reproduces it. It checks the wiring: that the scrim follows the
+  // visible rectangle rather than the page.
+  const scrim = page.locator(".vv-fixed").first();
+  const full = await scrim.boundingBox();
+  expect(full, "the dialog scrim is on screen to begin with").not.toBeNull();
+
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty("--vv-height", "360px");
+    document.documentElement.style.setProperty("--vv-top", "0px");
+  });
+
+  const squeezed = await scrim.boundingBox();
+  expect(Math.round(squeezed!.height), "the scrim follows the visible screen").toBe(360);
+
+  // And the dialog is still inside it — centred on what can be seen rather
+  // than on a page half of which is behind a keyboard.
+  const card = page.getByRole("dialog", { name: "Apply discount" });
+  const box = await card.boundingBox();
+  expect(box!.y, "the dialog's top is on screen").toBeGreaterThanOrEqual(-1);
+  expect(
+    box!.y + box!.height,
+    "and its bottom, where Apply and Cancel are, is too"
+  ).toBeLessThanOrEqual(361);
+});
+
 test("the slip preview shows the slip, not a reflowed version of it", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
