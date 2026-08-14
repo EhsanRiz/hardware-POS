@@ -49,22 +49,42 @@ function normalizePhone(raw: string): string | null {
   return null;
 }
 
-async function sendSms(phone: string, body: string): Promise<void> {
+// The outcome of handing a message to BulkSMS. This function must never throw:
+// a thrown network error would escape to the top-level handler and turn into a
+// 500 — for registered numbers only, since unregistered ones never reach the
+// send. That is a probe's way of telling who works here, on top of being a
+// failure nobody recorded.
+//
+// The reason is written for the manager who will read it on the staff screen.
+// Whatever the provider actually said goes to the function log, where an
+// operator can see it and a caller cannot.
+type SendOutcome = { sent: true } | { sent: false; reason: string };
+
+async function sendSms(phone: string, body: string): Promise<SendOutcome> {
   const id = Deno.env.get("BULKSMS_TOKEN_ID");
   const secret = Deno.env.get("BULKSMS_TOKEN_SECRET");
   if (!id || !secret) {
     console.error("BulkSMS secrets missing; SMS not sent");
-    return;
+    return { sent: false, reason: "SMS sending is not configured" };
   }
-  const res = await fetch("https://api.bulksms.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Basic " + btoa(`${id}:${secret}`),
-    },
-    body: JSON.stringify([{ to: phone, body }]),
-  });
-  if (!res.ok) console.error("BulkSMS", res.status, await res.text());
+  try {
+    const res = await fetch("https://api.bulksms.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Basic " + btoa(`${id}:${secret}`),
+      },
+      body: JSON.stringify([{ to: phone, body }]),
+    });
+    if (!res.ok) {
+      console.error("BulkSMS", res.status, await res.text());
+      return { sent: false, reason: `The SMS service refused the message (${res.status})` };
+    }
+    return { sent: true };
+  } catch (e) {
+    console.error("BulkSMS unreachable", e);
+    return { sent: false, reason: "The SMS service could not be reached" };
+  }
 }
 
 async function requestCode(phone: string, purpose: string) {
@@ -82,32 +102,60 @@ async function requestCode(phone: string, purpose: string) {
   const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
   const { data: recent } = await supabase
     .from("auth_otps")
-    .select("created_at")
+    .select("created_at,sent_at")
     .eq("phone_e164", phone)
     .gte("created_at", dayAgo)
     .order("created_at", { ascending: false });
-  if (recent && recent.length >= DAILY_CAP) return UNIFORM;
+  // The cap is on the bill, so only messages the provider took count towards
+  // it. Five failed attempts cost nothing and must not lock the person out for
+  // a day on top of the outage that already failed them.
+  const sentToday = (recent ?? []).filter((r) => r.sent_at != null).length;
+  if (sentToday >= DAILY_CAP) return UNIFORM;
+  // The cooldown counts every attempt, sent or not — it is what stands between
+  // a stuck provider and a retry loop hammering it once a render.
   if (recent?.[0] && Date.now() - Date.parse(recent[0].created_at) < RESEND_COOLDOWN_S * 1000) {
     return UNIFORM;
   }
 
   const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
-  await supabase.from("auth_otps").insert({
-    phone_e164: phone,
-    purpose,
-    code_hash: await sha256(code),
-    expires_at: new Date(Date.now() + OTP_TTL_MIN * 60_000).toISOString(),
-  });
-  await sendSms(phone, `InnovaPOS code: ${code}. Valid ${OTP_TTL_MIN} minutes. Never share it.`);
+  const { data: otp } = await supabase
+    .from("auth_otps")
+    .insert({
+      phone_e164: phone,
+      purpose,
+      code_hash: await sha256(code),
+      expires_at: new Date(Date.now() + OTP_TTL_MIN * 60_000).toISOString(),
+    })
+    .select("id")
+    .single();
+  const out = await sendSms(
+    phone,
+    `InnovaPOS code: ${code}. Valid ${OTP_TTL_MIN} minutes. Never share it.`,
+  );
+  // The outcome lands on the attempt itself, where pos_admin_list_users can
+  // find it and put it on the staff screen. The reply below stays uniform
+  // either way: the caller may not learn whether the number is registered,
+  // but the shop's manager is owed the truth, and this is how it reaches them.
+  if (otp) {
+    await supabase
+      .from("auth_otps")
+      .update(out.sent ? { sent_at: new Date().toISOString() } : { send_error: out.reason })
+      .eq("id", otp.id);
+  }
   return UNIFORM;
 }
 
 async function verifyCode(phone: string, code: string) {
+  // A code that never went out is not a code: nobody legitimate can be holding
+  // it, and — because only the newest row is checked — leaving it here would
+  // let a failed resend shadow the delivered, still-valid code that came
+  // before it.
   const { data: otp } = await supabase
     .from("auth_otps")
     .select("*")
     .eq("phone_e164", phone)
     .eq("used", false)
+    .is("send_error", null)
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false })
     .limit(1)

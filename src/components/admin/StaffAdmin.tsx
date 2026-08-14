@@ -161,17 +161,41 @@ export default function StaffAdmin({
                     the row until it is finished — full width rather than a chip
                     on the right, because it has to survive a manager's phone and
                     because a thing you are meant to act on should not be the
-                    smallest thing on the row. */}
+                    smallest thing on the row.
+
+                    Two different situations wear this strip, and they must not
+                    read the same: amber is "waiting on them" (they have not
+                    asked for a code, or theirs went out fine), red is "waiting
+                    on us" (they asked, and the SMS failed on the shop's side).
+                    Telling a manager to chase the colleague when the fault is
+                    the shop's SMS account sends the chase in the wrong
+                    direction. */}
                 {needsEnrolment(s) && (
                   <button
-                    className="w-full text-left px-4 py-2.5 flex items-center gap-2 bg-amber-50 border-t border-amber-200 hover:bg-amber-100"
+                    className={`w-full text-left px-4 py-2.5 flex items-center gap-2 border-t ${
+                      s.last_code_error
+                        ? "bg-red-50 border-red-200 hover:bg-red-100"
+                        : "bg-amber-50 border-amber-200 hover:bg-amber-100"
+                    }`}
                     onClick={() => setInvited(s)}
                   >
-                    <span className="text-sm text-amber-900">
-                      <span className="font-medium">{s.name} cannot sign in yet.</span>{" "}
-                      Tap for the link to send them.
-                    </span>
-                    <span aria-hidden="true" className="ml-auto text-amber-700">
+                    {s.last_code_error ? (
+                      <span className="text-sm text-red-900">
+                        <span className="font-medium">
+                          {s.name}’s code never arrived: {s.last_code_error}.
+                        </span>{" "}
+                        Tap for what to do.
+                      </span>
+                    ) : (
+                      <span className="text-sm text-amber-900">
+                        <span className="font-medium">{s.name} cannot sign in yet.</span>{" "}
+                        Tap for the link to send them.
+                      </span>
+                    )}
+                    <span
+                      aria-hidden="true"
+                      className={`ml-auto ${s.last_code_error ? "text-red-700" : "text-amber-700"}`}
+                    >
                       ›
                     </span>
                   </button>
@@ -244,15 +268,31 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
   return (
     <div className="vv-fixed bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        {/* The one thing a manager gets wrong, said before anything else and in
-            the colour this screen already uses for "not finished". */}
-        <div className="bg-amber-100 text-amber-900 px-5 py-3">
-          <p className="font-semibold">No SMS has been sent.</p>
-          <p className="text-sm">
-            Nobody is ever sent a code they did not ask for, so {staff.name} has
-            to request it themselves. Here is what to tell them.
-          </p>
-        </div>
+        {/* The one thing a manager gets wrong, said before anything else. Two
+            versions, because there are two truths: usually no SMS was sent
+            because nobody asked for one, but when a requested code failed on
+            the shop's side, opening with "nobody asked" would be blaming the
+            one person who did everything right. */}
+        {staff.last_code_error ? (
+          <div className="bg-red-100 text-red-900 px-5 py-3">
+            <p className="font-semibold">
+              {staff.name} asked for a code, and it failed to send.
+            </p>
+            <p className="text-sm">
+              {staff.last_code_error}. The problem is on the shop’s side, not
+              theirs. Once it is put right, they follow the same steps again —
+              nothing they did is lost.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-amber-100 text-amber-900 px-5 py-3">
+            <p className="font-semibold">No SMS has been sent.</p>
+            <p className="text-sm">
+              Nobody is ever sent a code they did not ask for, so {staff.name}{" "}
+              has to request it themselves. Here is what to tell them.
+            </p>
+          </div>
+        )}
 
         <div className="p-5 space-y-4 overflow-auto">
           <h3 className="font-semibold">

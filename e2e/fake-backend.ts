@@ -175,13 +175,22 @@ export class Backend {
     status: string; active: boolean; permissions: string[];
     discount_limit_percent: number | null;
     discount_limit_amount: number | null;
+    /**
+     * Why the last enrolment SMS for this phone failed, as 0043 reports it —
+     * null when it went out, or when none was ever asked for. The OTP flow
+     * itself happens on the landing page, outside this app, so tests set this
+     * directly the way they set a discount limit.
+     */
+    last_code_error: string | null;
   }[] = [
     { id: "u1", name: "Manager", phone: "+27820000001", role: "admin",
       status: "active", active: true, permissions: [],
-      discount_limit_percent: null, discount_limit_amount: null },
+      discount_limit_percent: null, discount_limit_amount: null,
+      last_code_error: null },
     { id: "u2", name: "Sam", phone: "+27820000002", role: "employee",
       status: "active", active: true, permissions: [],
-      discount_limit_percent: null, discount_limit_amount: null },
+      discount_limit_percent: null, discount_limit_amount: null,
+      last_code_error: null },
   ];
   /**
    * The open till session, if any. `fromIndex` stands in for the server's
@@ -1177,6 +1186,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           permissions: (body.p_permissions as string[]) ?? [],
           discount_limit_percent: null,
           discount_limit_amount: null,
+          last_code_error: null,
         };
         be.staff.push(row);
         return json([row]);

@@ -259,6 +259,14 @@ export interface StaffUser {
    */
   discount_limit_percent: number | null;
   discount_limit_amount: number | null;
+  /**
+   * Why the most recent enrolment code for this phone did not go out, in words
+   * a manager can act on — or null when it went (or nothing was ever asked
+   * for). See 0043: the OTP sender records its outcome instead of swallowing
+   * it, so "they never asked for a code" and "they asked and the SMS service
+   * failed them" stop looking identical from the staff screen.
+   */
+  last_code_error: string | null;
 }
 
 export async function adminListUsers(pin: string): Promise<StaffUser[]> {

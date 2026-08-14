@@ -1744,6 +1744,7 @@ test("the link to send stays on the row of anyone who cannot sign in yet", async
     permissions: [],
     discount_limit_percent: null,
     discount_limit_amount: null,
+    last_code_error: null,
   });
 
   await pairAndSignIn(page, USERS.manager.pin);
@@ -1775,6 +1776,48 @@ test("the link to send stays on the row of anyone who cannot sign in yet", async
   await expect(page.getByRole("button", { name: /Sam cannot sign in yet/i })).toHaveCount(0);
 });
 
+test("a code that failed to send is reported as the shop's problem, not the colleague's", async ({ page }) => {
+  // The server used to swallow this: BulkSMS refused or was unreachable, the
+  // uniform "a code has been sent" went out anyway, and from the staff screen
+  // "they never asked" and "they asked and we failed them" looked identical.
+  // 0043 records the outcome and the roster now carries it.
+  be.staff.push({
+    id: "u9",
+    name: "Thabo",
+    phone: "+27825550100",
+    role: "employee",
+    status: "invited",
+    active: true,
+    permissions: [],
+    discount_limit_percent: null,
+    discount_limit_amount: null,
+    last_code_error: "The SMS service could not be reached",
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+
+  // The row says the code failed and why — not the generic "tell them to
+  // enrol", which would send the manager to chase the one person who already
+  // did everything right.
+  const failed = page.getByRole("button", { name: /Thabo.s code never arrived/i });
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText("The SMS service could not be reached");
+  await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i })).toHaveCount(0);
+
+  // And the dialog leads with the failure, aimed at the shop's side of it.
+  await failed.click();
+  await expect(page.getByText("asked for a code, and it failed to send")).toBeVisible();
+  await expect(page.getByText("No SMS has been sent.")).toHaveCount(0);
+
+  // The instructions are still there underneath: once the SMS account is put
+  // right, the same steps are the way back in.
+  await expect(
+    page.getByRole("link", { name: /pos\.innovaearth\.com\/enrol/ })
+  ).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
+});
+
 test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   // Manage is opened on a phone — issuing an approval code is something a
   // manager does away from the counter — and this row carries a sentence, so it
@@ -1790,6 +1833,7 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
     permissions: [],
     discount_limit_percent: null,
     discount_limit_amount: null,
+    last_code_error: null,
   });
 
   await pairAndSignIn(page, USERS.manager.pin);

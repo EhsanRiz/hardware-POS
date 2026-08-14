@@ -1498,4 +1498,57 @@ begin
     'and it can be turned back on');
 end $$;
 
+-- 0043: a code that failed to send is news the roster carries ----------------
+--
+-- The auth edge function used to hand each OTP to the SMS provider and throw
+-- the answer away, so "they never asked for a code" and "they asked and the
+-- provider failed them" were indistinguishable from the staff screen. The
+-- outcome now lands on the attempt, and pos_admin_list_users reports the most
+-- recent one per phone.
+
+do $$
+declare v_tok text; v_new uuid; v_err text;
+begin
+  select token into v_tok from till;
+
+  select id into v_new from public.pos_admin_invite_user(
+    v_tok, '1234', 'Waiting on SMS', '+27820000008', 'employee'::user_role,
+    array[]::text[]);
+
+  -- Nobody has asked for a code yet: nothing to report.
+  select u.last_code_error into v_err
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert_eq(v_err, null::text,
+    'no attempt yet reads as nothing to report');
+
+  -- The provider refused the first attempt.
+  insert into public.auth_otps (phone_e164, purpose, code_hash, expires_at,
+                                send_error, created_at)
+  values ('+27820000008', 'enrol', 'x', now() + interval '10 minutes',
+          'The SMS service could not be reached', now() - interval '2 minutes');
+
+  select u.last_code_error into v_err
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert_eq(v_err, 'The SMS service could not be reached',
+    'a failed send reaches the roster, in its own words');
+
+  -- And it stays on the row it belongs to: the manager's own line is clean.
+  select u.last_code_error into v_err
+    from public.pos_admin_list_users(v_tok, '1234') u
+   where u.phone = '+27820000001';
+  perform assert_eq(v_err, null::text,
+    'one person''s failure does not bleed onto another''s row');
+
+  -- A later attempt goes through; the failure has been dealt with and must
+  -- stop being reported, or it nags for ever about an outage that is over.
+  insert into public.auth_otps (phone_e164, purpose, code_hash, expires_at,
+                                sent_at)
+  values ('+27820000008', 'enrol', 'x', now() + interval '10 minutes', now());
+
+  select u.last_code_error into v_err
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert_eq(v_err, null::text,
+    'a send that went through clears the failure before it');
+end $$;
+
 select 'all database tests passed' as result;
