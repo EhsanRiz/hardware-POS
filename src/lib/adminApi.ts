@@ -230,7 +230,10 @@ export async function adminImportProducts(
 
 export async function adminSaveSettings(
   pin: string,
-  settings: Record<string, string>
+  // A boolean travels as a real jsonb boolean rather than the string "false",
+  // which `->> ... ::boolean` on the server reads correctly either way but
+  // which would read as truthy to anything that ever checks it in JavaScript.
+  settings: Record<string, string | boolean>
 ): Promise<void> {
   const { error } = await supabase.rpc("pos_admin_save_settings", {
     p_register_token: requireToken(),
@@ -368,6 +371,12 @@ export interface ShopDetails {
   bank_account_name: string;
   bank_account_number: string;
   bank_branch_code: string;
+  /**
+   * Whether a printed quote prices each line, or gives the scope and one total.
+   * The only non-text setting here, which is why the form and the RPC both
+   * handle it apart from the rest.
+   */
+  quote_show_line_prices: boolean;
 }
 
 // Units are global reference data (kg, ea, m) with nothing tenant-specific in

@@ -2008,6 +2008,115 @@ test("a delivery is booked in against a reference and the shelves update", async
  * ring the sale — and the quote must close AGAINST that sale, so "did that
  * quote ever come back?" always has an answer.
  */
+test("a quote adds up: the line shows what came off it, and so does the total", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("15");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
+
+  // A quote used to print the line at full price, no discount row at all, and
+  // a total R15 lower than the subtotal above it — a customer reading it saw
+  // R115, then R100, and nothing on the paper to account for the difference.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("R100.00");
+  await expect(slip).toContainText("less discount");
+  await expect(slip).toContainText("-R15.00");
+  // Subtotal less discount equals total, which is the one thing a quote has to
+  // do. R115 gross, R15 off, R100 to pay.
+  await expect(slip).toContainText("R115.00");
+});
+
+test("a trade customer's quote is priced at trade, line by line", async ({ page }) => {
+  be.customers.push({
+    id: "k9", code: "TRD-009", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: true, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
+
+  // The quote said "Trade pricing" at the top and then priced every line at
+  // retail, while the total underneath was worked out at trade. The paper
+  // disagreed with itself — R115 on the line, R108 in the total — and the
+  // customer was quoted more per item than they were actually being charged.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Trade pricing");
+  await expect(slip).toContainText("R108.00");
+  await expect(slip).not.toContainText("R115.00");
+});
+
+test("a shop can quote the job without pricing the shopping list", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // An itemised quote is a list a competitor can price against: the customer
+  // takes it down the road, gets the cement matched, and comes back only for
+  // the lines nobody else stocks. So a shop can print the scope and one total.
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  const tick = page.getByLabel("Show a price against each line on a quote");
+  await expect(tick).toBeChecked();
+  await tick.uncheck();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
+
+  const slip = page.locator("#print-area");
+  // What is included still prints. A quote that does not say what it covers is
+  // not a quote, it is a number.
+  await expect(slip).toContainText("Cement 42.5N 50kg");
+  await expect(slip).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(slip).toContainText("R1565.00");
+
+  // And nothing prices the parts: not the line, not the unit rate, not a
+  // subtotal that would be the total written twice.
+  await expect(slip).not.toContainText("R115.00");
+  await expect(slip).not.toContainText("R1450.00");
+  await expect(slip).not.toContainText("Subtotal");
+});
+
+test("turning line prices off never touches an invoice", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await page.getByLabel("Show a price against each line on a quote").uncheck();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // A tax invoice must itemise — SARS's rule, not the shop's preference. A
+  // setting about quotes that quietly stripped prices off invoices would turn
+  // a preference into an audit finding.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText(/tax invoice/i);
+  await expect(slip).toContainText("Cement 42.5N 50kg");
+  await expect(slip).toContainText("R115.00");
+});
+
 test("a saved quote is recalled by number and closes against its sale", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
 
