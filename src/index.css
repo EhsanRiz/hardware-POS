@@ -69,9 +69,15 @@ button {
   font-family: ui-monospace, "Courier New", monospace;
   font-size: 13px;
   line-height: 1.45;
-  white-space: pre-wrap;
+  /* A receipt is a fixed-width document: every line is padded to the column
+     count so the amounts stand in a right-hand margin. Allowed to wrap, a full
+     line folds and the amount lands under the description — which is exactly
+     what the on-screen preview was doing. `max-content` keeps the block as wide
+     as its widest line so nothing folds and nothing is clipped either. */
+  white-space: pre;
   margin: 0;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   text-align: left;
   color: #000;
   font-weight: 700; /* darker, closer to thermal output */
