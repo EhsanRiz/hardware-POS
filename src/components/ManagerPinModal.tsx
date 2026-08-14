@@ -33,7 +33,7 @@ export default function ManagerPinModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in"
+      className="vv-fixed bg-black/50 flex items-center justify-center p-6 z-50 animate-fade-in"
       role="dialog"
       aria-modal="true"
       aria-label={title}

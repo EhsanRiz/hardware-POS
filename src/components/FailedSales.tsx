@@ -29,7 +29,7 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
       .join(", ") || "—";
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+    <div className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
       <div className="bg-white rounded-2xl w-full max-w-md animate-scale-in max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-stone-200">
           <h2 className="text-xl font-bold text-stone-800">Failed sales</h2>

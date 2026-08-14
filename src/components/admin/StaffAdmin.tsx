@@ -210,7 +210,7 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
     `you will get an SMS code, and then you choose your own PIN.`;
 
   return (
-    <div className="fixed inset-0 bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+    <div className="vv-fixed bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl p-5 space-y-4">
         <h3 className="font-semibold">{staff.name} is on the staff list</h3>
 
@@ -424,7 +424,7 @@ function StaffEditor({
   const groups = Array.from(new Set(PERMISSIONS.map((p) => p.group)));
 
   return (
-    <div className="fixed inset-0 bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+    <div className="vv-fixed bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl max-h-[92vh] overflow-auto">
         <header className="px-5 py-4 border-b border-stone-200 flex items-center gap-3">
           <h3 className="font-semibold">{staff ? staff.name : "Invite someone"}</h3>

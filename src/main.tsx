@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { trackVisualViewport } from "./lib/visualViewport";
 import "./index.css";
 
 /**
@@ -16,6 +17,10 @@ import "./index.css";
  * would come up empty.
  */
 async function boot() {
+  // Before React mounts, so the first dialog opened on a tablet already knows
+  // where the screen is.
+  trackVisualViewport();
+
   if (import.meta.env.VITE_DEMO === "1") {
     const { installDemoBackend } = await import("./demo/backend");
     installDemoBackend();

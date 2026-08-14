@@ -823,7 +823,12 @@
    plain: a decision, a list, a way out. */
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  /* The visible screen rather than the layout viewport — see .vv-fixed in
+     index.css. A keyboard opening over a centred dialog is the whole reason. */
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-height, 100dvh);
   z-index: 60;
   display: flex;
   align-items: center;

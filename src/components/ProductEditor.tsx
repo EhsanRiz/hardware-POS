@@ -113,7 +113,7 @@ export default function ProductEditor({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto">
+    <div className="vv-fixed bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-2xl my-6">
         <div className="flex items-center justify-between p-4 border-b border-stone-200">
           <h2 className="text-lg font-semibold">

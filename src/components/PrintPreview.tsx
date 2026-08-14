@@ -79,7 +79,7 @@ export default function PrintPreview() {
       </div>
 
       <div
-        className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] animate-fade-in"
+        className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-[60] animate-fade-in"
         onClick={() => setSlip(null)}
       >
         {/* Wide enough for the full 48 columns at this size, so a desk does not
