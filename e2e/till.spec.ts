@@ -2008,6 +2008,53 @@ test("a delivery is booked in against a reference and the shelves update", async
  * ring the sale — and the quote must close AGAINST that sale, so "did that
  * quote ever come back?" always has an answer.
  */
+test("the slip preview shows the slip, not a reflowed version of it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
+
+  // A receipt is a fixed-width document: each line is padded so the amount sits
+  // in a right-hand margin. The preview let those lines wrap, so a full-width
+  // line folded and its amount dropped onto a line of its own — the box rule
+  // around the total came apart in the middle of itself. The paper was always
+  // right; only the preview lied, which is worse, because the preview is what
+  // anybody actually looks at.
+  //
+  // Squeezed to a width where a 48-column line cannot fit, which is the only
+  // width that tests anything: the dialog is now wide enough that a desk would
+  // not fold even if it were allowed to, so a check run there passes whether
+  // the slip is reflowable or not. Here it can only hold because it may not
+  // fold at all.
+  await page.setViewportSize({ width: 360, height: 740 });
+
+  // Measured rather than asserted on a class name: count how many lines the
+  // browser actually laid out and compare it with how many the text has.
+  const folded = await page.evaluate(() => {
+    const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre");
+    if (!pre) return { drawn: -1, real: -1 };
+    const lh = parseFloat(getComputedStyle(pre).lineHeight);
+    return {
+      drawn: Math.round(pre.getBoundingClientRect().height / lh),
+      real: (pre.textContent ?? "").replace(/\n$/, "").split("\n").length,
+    };
+  });
+  expect(folded.real, "the preview was found and has content").toBeGreaterThan(5);
+  // Drawn may come in a line under the text's own count — a trailing newline
+  // does not get a line box of its own. It may never come in ABOVE it: that
+  // can only mean the browser folded something.
+  expect(
+    folded.drawn,
+    "lines drawn on screen vs lines in the slip — more means it wrapped"
+  ).toBeLessThanOrEqual(folded.real);
+  expect(
+    folded.drawn,
+    "the preview is laid out at all, rather than collapsed or hidden"
+  ).toBeGreaterThanOrEqual(folded.real - 2);
+});
+
 test("a quote adds up: the line shows what came off it, and so does the total", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");

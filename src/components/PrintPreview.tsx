@@ -82,8 +82,10 @@ export default function PrintPreview() {
         className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60] animate-fade-in"
         onClick={() => setSlip(null)}
       >
+        {/* Wide enough for the full 48 columns at this size, so a desk does not
+            have to scroll sideways to read a slip. A phone still scrolls. */}
         <div
-          className="bg-white rounded-2xl shadow-xl w-full max-w-[320px] max-h-[90vh] flex flex-col animate-scale-in"
+          className="bg-white rounded-2xl shadow-xl w-full max-w-[min(94vw,26rem)] max-h-[90vh] flex flex-col animate-scale-in"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-4 h-12 border-b border-stone-100 shrink-0">
@@ -100,9 +102,14 @@ export default function PrintPreview() {
           {/* overflow-x too: the slip is a fixed 48-column document and must
               not be reflowed to fit — what is previewed has to be what the
               printer puts on paper. On a phone that is wider than the screen,
-              so it scrolls inside its own box rather than pushing the page. */}
+              so it scrolls inside its own box rather than pushing the page.
+              `whitespace-pre`, NOT pre-wrap: pre-wrap said the opposite of this
+              comment and broke every line that used the full width, so an
+              amount padded to the right margin dropped onto a line of its own
+              and the box rule around the total came apart in the middle. The
+              paper was always right; only the preview lied. */}
           <div className="overflow-y-auto overflow-x-auto p-4 bg-stone-50">
-            <pre className="font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-stone-900">
+            <pre className="font-mono text-[11px] leading-relaxed whitespace-pre text-stone-900">
               {renderMarkup(text)}
             </pre>
           </div>
