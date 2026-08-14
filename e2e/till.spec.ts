@@ -1693,10 +1693,15 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
   await page.getByRole("button", { name: /^Staff$/ }).click();
 
   await expect(page.getByText("Sam")).toBeVisible();
-  await page.getByRole("button", { name: /Invite someone/i }).click();
+  await page.getByRole("button", { name: /Add someone/i }).click();
   await page.getByLabel("Staff name").fill("Thabo");
   await page.getByLabel("Staff mobile number").fill("082 555 0100");
-  await page.getByRole("button", { name: /Send invite/i }).click();
+
+  // The button must not promise a message it does not send. "Send invite" did,
+  // and a shop believed it: a manager added a colleague, waited for an OTP that
+  // was never coming, and reported the till as broken.
+  await expect(page.getByRole("button", { name: /Send invite/i })).toHaveCount(0);
+  await page.getByRole("button", { name: /Add to staff list/i }).click();
 
   // Invited, not active: they choose their own PIN on their own phone, so a
   // manager never holds a credential that would ring up a sale as someone else.
@@ -1705,15 +1710,102 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
   // Stored in E.164, which is what the enrolment lookup matches on.
   expect(invited?.phone).toBe("+27825550100");
 
-  // The invite sends nothing, on purpose — so the screen has to say so, or it
-  // reads as a button that did nothing and the new cashier is never told what
-  // to do. This is the step a manager would otherwise have to already know.
+  // Adding somebody sends nothing, on purpose — so the screen has to say so
+  // first, not as an aside. This is the step a manager would otherwise have to
+  // already know.
+  await expect(page.getByText("No SMS has been sent.")).toBeVisible();
+
+  // And the enrolment address is a link that can be opened and checked, rather
+  // than a string to be read off a screen and retyped into somebody's phone.
+  await expect(
+    page.getByRole("link", { name: /pos\.innovaearth\.com\/enrol/ })
+  ).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
+
   const next = page.getByRole("button", { name: /copy a message for them/i });
   await expect(next).toContainText("pos.innovaearth.com/enrol/");
   await expect(next).toContainText("+27825550100");
-  await page.getByRole("button", { name: /^Done$/ }).click();
+  await page.getByRole("button", { name: /^Got it$/ }).click();
 
   await expect(page.getByText("PIN not set")).toBeVisible();
+});
+
+test("the link to send stays on the row of anyone who cannot sign in yet", async ({ page }) => {
+  // Somebody added on an earlier shift who never got as far as enrolling. This
+  // is the state a dialog shown once, at the moment of adding, cannot help
+  // with — the counter is rarely quiet enough for that to be the moment it gets
+  // dealt with, and afterwards there was nothing left on screen to act on.
+  be.staff.push({
+    id: "u9",
+    name: "Thabo",
+    phone: "+27825550100",
+    role: "employee",
+    status: "invited",
+    active: true,
+    permissions: [],
+    discount_limit_percent: null,
+    discount_limit_amount: null,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+
+  // In words on the row, and tappable — not a chip that reads as decoration.
+  const pending = page.getByRole("button", { name: /Thabo cannot sign in yet/i });
+  await expect(pending).toBeVisible();
+  await pending.click();
+
+  // It opens the same instructions, link and all.
+  await expect(page.getByText("No SMS has been sent.")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /pos\.innovaearth\.com\/enrol/ })
+  ).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
+  // Naming the right number matters: enrolment matches on it, and a code
+  // requested against any other number is silently never sent.
+  await expect(
+    page.getByRole("button", { name: /copy a message for them/i })
+  ).toContainText("+27825550100");
+  await page.getByRole("button", { name: /^Got it$/ }).click();
+
+  // Still there after the dialog is dismissed: it is the job, not a receipt for
+  // having been told about the job once.
+  await expect(pending).toBeVisible();
+
+  // And somebody who has set a PIN is not nagged about one.
+  await expect(page.getByRole("button", { name: /Sam cannot sign in yet/i })).toHaveCount(0);
+});
+
+test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
+  // Manage is opened on a phone — issuing an approval code is something a
+  // manager does away from the counter — and this row carries a sentence, so it
+  // is exactly the kind of thing that pushes the screen sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.staff.push({
+    id: "u9",
+    name: "Thabo",
+    phone: "+27825550100",
+    role: "employee",
+    status: "invited",
+    active: true,
+    permissions: [],
+    discount_limit_percent: null,
+    discount_limit_amount: null,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  const pending = page.getByRole("button", { name: /Thabo cannot sign in yet/i });
+  await expect(pending).toBeVisible();
+
+  // Measured on the row itself, not on the document. Manage sits in its own
+  // scrolling panel, so an element far wider than the phone leaves
+  // documentElement.scrollWidth untouched and a page-level overflow check
+  // passes while the row runs off the side of the screen — which is exactly
+  // what the first version of this assertion did.
+  const box = await pending.boundingBox();
+  expect(box!.width, "the row action's width").toBeLessThanOrEqual(390);
+  expect(box!.x + box!.width, "its right edge").toBeLessThanOrEqual(390);
 });
 
 test("a role's own permissions are shown fixed, and only the extras are saved", async ({ page }) => {

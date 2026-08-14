@@ -51,8 +51,9 @@ export default function StaffAdmin({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<StaffUser | "new" | null>(null);
-  // Who has just been invited, so the screen can say what happens next while
-  // the manager is still standing there.
+  // Who the "what happens next" dialog is open for: whoever was just added, or
+  // whoever a manager has since tapped on the staff list because that person
+  // still has no PIN.
   const [invited, setInvited] = useState<StaffUser | null>(null);
 
   const isAdmin = user?.role === "admin";
@@ -99,7 +100,7 @@ export default function StaffAdmin({
           className="ml-auto px-3 py-1.5 rounded-lg bg-stone-800 text-white text-sm"
           onClick={() => setEditing("new")}
         >
-          Invite someone
+          Add someone
         </button>
       </div>
 
@@ -154,6 +155,27 @@ export default function StaffAdmin({
                   </span>
                   <StatusChip status={s.status} active={s.active} />
                 </button>
+                {/* The dialog fires once, at the moment of adding somebody, and
+                    the counter is rarely quiet enough for that to be the moment
+                    it gets dealt with. So the unfinished half of the job sits on
+                    the row until it is finished — full width rather than a chip
+                    on the right, because it has to survive a manager's phone and
+                    because a thing you are meant to act on should not be the
+                    smallest thing on the row. */}
+                {needsEnrolment(s) && (
+                  <button
+                    className="w-full text-left px-4 py-2.5 flex items-center gap-2 bg-amber-50 border-t border-amber-200 hover:bg-amber-100"
+                    onClick={() => setInvited(s)}
+                  >
+                    <span className="text-sm text-amber-900">
+                      <span className="font-medium">{s.name} cannot sign in yet.</span>{" "}
+                      Tap for the link to send them.
+                    </span>
+                    <span aria-hidden="true" className="ml-auto text-amber-700">
+                      ›
+                    </span>
+                  </button>
+                )}
               </li>
             ))}
             {staff.length === 0 && (
@@ -189,18 +211,28 @@ export default function StaffAdmin({
   );
 }
 
+/** Somebody who has been added to the list but still cannot sign in. */
+function needsEnrolment(s: StaffUser): boolean {
+  return s.active && s.status === "invited";
+}
+
 /**
- * What happens after an invite, said at the moment the manager expects it.
+ * What happens after somebody is added, said where the manager will look.
  *
- * Inviting somebody sends them nothing, on purpose: an unsolicited SMS with a
+ * Adding somebody sends them nothing, on purpose: an unsolicited SMS with a
  * link is what a phishing message looks like, and the code that matters is the
- * one they ask for themselves. But nothing said so, so an invite looked like a
- * button that did nothing — the row appeared, no message arrived, and the
- * obvious conclusion was that it was broken.
+ * one they ask for themselves. But nothing said so, so it looked like a button
+ * that did nothing — the row appeared, no message arrived, and the obvious
+ * conclusion was that it was broken. A shop reached exactly that conclusion:
+ * a manager added a colleague, waited for an OTP that was never coming, and
+ * reported the feature as broken. Nothing was broken. Nobody had been told.
  *
- * So the step the manager has to perform is named, with the address to pass on
- * and the number it must be typed against. They are standing next to the person
- * they just invited; this is the one moment telling them costs nothing.
+ * Three things follow from that, and all three are the point of this dialog:
+ * the fact that no SMS was sent leads, rather than being the fourth sentence of
+ * a paragraph; the enrolment address is a link that can be opened and checked
+ * rather than a string to be copied off a screen by eye; and none of it depends
+ * on this dialog being read at the one moment it first appears, because it can
+ * be reopened from the person's row for as long as they have no PIN.
  */
 function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -210,46 +242,72 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
     `you will get an SMS code, and then you choose your own PIN.`;
 
   return (
-    <div className="vv-fixed bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
-      <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl p-5 space-y-4">
-        <h3 className="font-semibold">{staff.name} is on the staff list</h3>
+    <div className="vv-fixed bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+      <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        {/* The one thing a manager gets wrong, said before anything else and in
+            the colour this screen already uses for "not finished". */}
+        <div className="bg-amber-100 text-amber-900 px-5 py-3">
+          <p className="font-semibold">No SMS has been sent.</p>
+          <p className="text-sm">
+            Nobody is ever sent a code they did not ask for, so {staff.name} has
+            to request it themselves. Here is what to tell them.
+          </p>
+        </div>
 
-        <p className="text-sm text-stone-600">
-          They cannot sign in yet. Nobody is sent a PIN — they choose their own,
-          after proving the phone is theirs. Tell them to do this:
-        </p>
+        <div className="p-5 space-y-4 overflow-auto">
+          <h3 className="font-semibold">
+            {staff.name} is on the staff list, but cannot sign in yet
+          </h3>
 
-        <ol className="text-sm text-stone-700 list-decimal pl-5 space-y-1">
-          <li>
-            Open <span className="font-medium break-all">{ENROL_URL}</span>
-          </li>
-          <li>
-            Enter <span className="font-medium">{staff.phone}</span> — the number
-            they were added with, or no code is sent
-          </li>
-          <li>Type the SMS code, then choose a PIN nobody else knows</li>
-        </ol>
+          <ol className="text-sm text-stone-700 list-decimal pl-5 space-y-2">
+            <li>
+              {/* A link, not a line of text to be retyped into a phone. The
+                  manager can open it themselves and see it is real, which is
+                  the difference between passing on an address and vouching
+                  for one. */}
+              Open{" "}
+              <a
+                href={ENROL_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-blue-700 underline break-all"
+              >
+                {ENROL_URL}
+              </a>
+            </li>
+            <li>
+              Enter <span className="font-medium">{staff.phone}</span> — the number
+              they were added with, or no code is sent
+            </li>
+            <li>Type the SMS code, then choose a PIN nobody else knows</li>
+          </ol>
 
-        {/* The counter is busy and the person is standing right there, so the
-            message is ready to send rather than something to compose. */}
-        <button
-          className="w-full text-left text-sm bg-stone-50 border border-stone-200 rounded-lg p-3"
-          onClick={() => {
-            void navigator.clipboard?.writeText(message).then(
-              () => setCopied(true),
-              () => setCopied(false)
-            );
-          }}
-        >
-          <span className="block text-xs uppercase tracking-wide text-stone-400 mb-1">
-            {copied ? "Copied — send it to them" : "Tap to copy a message for them"}
-          </span>
-          {message}
-        </button>
+          {/* The counter is busy and the person is standing right there, so the
+              message is ready to send rather than something to compose. */}
+          <button
+            className="w-full text-left text-sm bg-stone-50 border border-stone-200 rounded-lg p-3"
+            onClick={() => {
+              void navigator.clipboard?.writeText(message).then(
+                () => setCopied(true),
+                () => setCopied(false)
+              );
+            }}
+          >
+            <span className="block text-xs uppercase tracking-wide text-stone-400 mb-1">
+              {copied ? "Copied — send it to them" : "Tap to copy a message for them"}
+            </span>
+            {message}
+          </button>
 
-        <div className="flex justify-end">
+          <p className="text-xs text-stone-500">
+            This stays on {staff.name}’s row until they have set a PIN, so it can
+            be picked up again later.
+          </p>
+        </div>
+
+        <div className="px-5 py-4 border-t border-stone-200 flex justify-end">
           <button className="px-4 py-2 rounded-lg bg-stone-800 text-white" onClick={onClose}>
-            Done
+            Got it
           </button>
         </div>
       </div>
@@ -427,7 +485,7 @@ function StaffEditor({
     <div className="vv-fixed bg-black/30 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl max-h-[92vh] overflow-auto">
         <header className="px-5 py-4 border-b border-stone-200 flex items-center gap-3">
-          <h3 className="font-semibold">{staff ? staff.name : "Invite someone"}</h3>
+          <h3 className="font-semibold">{staff ? staff.name : "Add someone"}</h3>
           <button className="ml-auto text-stone-500" onClick={onClose}>
             Close
           </button>
@@ -460,9 +518,14 @@ function StaffEditor({
                 aria-label="Staff mobile number"
               />
               {/* The number is the invitation: it is how they prove who they
-                  are and how they come to set a PIN nobody else knows. */}
+                  are and how they come to set a PIN nobody else knows. That it
+                  goes nowhere by itself is said here, before the button is
+                  pressed rather than only after — a manager who expects an SMS
+                  is not wrong to expect one, the screen never said otherwise
+                  until it was already done. */}
               <span className="text-xs text-stone-500">
-                They set their own PIN on this number. It cannot be changed here later.
+                They set their own PIN on this number. It cannot be changed here
+                later. Adding them sends no SMS — you will get a link to pass on.
               </span>
             </label>
           )}
@@ -636,7 +699,7 @@ function StaffEditor({
             disabled={busy || !name.trim() || (!staff && !phone.trim())}
             onClick={save}
           >
-            {busy ? "Saving…" : staff ? "Save" : "Send invite"}
+            {busy ? "Saving…" : staff ? "Save" : "Add to staff list"}
           </button>
         </footer>
       </div>
