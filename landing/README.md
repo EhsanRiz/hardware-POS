@@ -33,6 +33,29 @@ Settings → Domains & Routes → Add custom domain → `pos.innovaearth.com`**.
 Because the zone is in the same account, Cloudflare creates the DNS record and
 issues the certificate itself; nothing to configure by hand.
 
+### Which pushes should rebuild this
+
+Both Workers are also wired to Cloudflare's git integration, and as it stands
+**every push to the repository rebuilds both of them**, whatever changed. A
+database migration redeploys this marketing page; a comma moved in this file
+redeploys the till.
+
+The fix is **Build Watch Paths**, which is a dashboard setting and has no
+equivalent in `wrangler.toml` — there is nothing to commit here, which is why it
+is written down instead:
+
+**Workers & Pages → _the Worker_ → Settings → Builds → Build Watch Paths**
+
+- `innovaearth-pos-landing` — include only `landing/`
+- `hardware-pos` — exclude `landing/`
+
+Mirror images, and the second matters more than the first: a build that fires
+when it need not is noise, but a production deploy of the till triggered by a
+marketing-copy change is the thing this whole arrangement exists to prevent.
+
+The dashboard states the pattern format it accepts in the field itself; follow
+that rather than a remembered syntax.
+
 ### Why a separate Worker
 
 Adding a route to the existing `innovaearth` Worker would work, but it would
@@ -46,7 +69,12 @@ The till is a separate Worker — `hardware-pos`, at
 **app.innovaearth.com** — configured by `wrangler.toml` at the repo root. This
 page links to it for store sign-in rather than hosting a login of its own.
 
-Keeping them apart means a marketing-copy change can never take the till down,
-and the two can differ where they should: this page sets
+Keeping them apart means a marketing-copy change cannot take the till down, and
+the two can differ where they should: this page sets
 `not_found_handling = "none"` so a mistyped URL 404s properly, while the app
 sets `single-page-application` so its client-side routes work.
+
+That holds for what is *served* — the two Workers share no code, no assets and
+no runtime. It does not yet hold for what is *built*: until the watch paths
+above are set, a commit touching only this directory still triggers a deploy of
+the till.
