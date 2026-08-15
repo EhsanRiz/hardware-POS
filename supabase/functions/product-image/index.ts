@@ -56,16 +56,27 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, message: "Missing details" }, 400);
   }
 
-  // 1. May this till, with this PIN, manage this shop's catalogue? The org it
-  //    returns also becomes the storage prefix, so one shop's photographs can
-  //    never land under another's.
-  const { data: orgId, error: permError } = await supabase.rpc("pos_admin_org_for", {
-    p_register_token: token,
-    p_pin: pin,
-    p_perm: "manage_catalogue",
-  });
-  if (permError || !orgId) {
-    return json({ ok: false, message: permError?.message ?? "Not permitted" }, 403);
+  // 1. May this till, with this PIN, photograph this shop's catalogue? Either
+  //    right will do: shelf_capture is the grant made for exactly this job
+  //    (0044), manage_catalogue is the broader power that contains it. The org
+  //    it returns also becomes the storage prefix, so one shop's photographs
+  //    can never land under another's.
+  let orgId: string | null = null;
+  let permMessage: string | undefined;
+  for (const perm of ["shelf_capture", "manage_catalogue"]) {
+    const { data, error } = await supabase.rpc("pos_admin_org_for", {
+      p_register_token: token,
+      p_pin: pin,
+      p_perm: perm,
+    });
+    if (!error && data) {
+      orgId = data;
+      break;
+    }
+    permMessage = error?.message;
+  }
+  if (!orgId) {
+    return json({ ok: false, message: permMessage ?? "Not permitted" }, 403);
   }
 
   // 2. Decode. data:image/jpeg;base64,AAAA…

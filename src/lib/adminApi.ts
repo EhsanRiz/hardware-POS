@@ -417,6 +417,73 @@ export interface ProductImage {
 }
 
 /** Every photograph on a product, primary first. */
+/** What the Shelf screen knows about an item: enough to say "this one", and
+ * deliberately no more — no cost, no margin, no supplier. */
+export interface ShelfItem {
+  id: string;
+  name: string;
+  barcode: string;
+  unit_code: string;
+  price_retail: number;
+  active: boolean;
+  has_photo: boolean;
+}
+
+/** The barcode either names an item in this shop's catalogue, or it doesn't. */
+export async function shelfLookup(pin: string, barcode: string): Promise<ShelfItem | null> {
+  const { data, error } = await supabase.rpc("pos_shelf_lookup", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_barcode: barcode,
+  });
+  if (error) throw error;
+  return (data as ShelfItem[])[0] ?? null;
+}
+
+/**
+ * Record an item the catalogue has never heard of. It lands HIDDEN — the
+ * server enforces that, not this comment — and the price travels along as a
+ * proposal for whoever reviews it in Catalogue.
+ */
+export async function shelfAddItem(
+  pin: string,
+  barcode: string,
+  name: string,
+  priceRetail: number
+): Promise<ShelfItem> {
+  const { data, error } = await supabase.rpc("pos_shelf_add_item", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_barcode: barcode,
+    p_name: name,
+    p_price_retail: priceRetail,
+  });
+  if (error) throw error;
+  const rows = data as ShelfItem[];
+  if (!rows?.[0]) throw new Error("The item could not be saved");
+  return rows[0];
+}
+
+/**
+ * Fix a retail price from the shelf. Requires catalogue rights — the server
+ * refuses the shelf grant alone, which is the property that makes the shelf
+ * phone safe to hand to anybody.
+ */
+export async function shelfSetPrice(
+  pin: string,
+  productId: string,
+  priceRetail: number
+): Promise<number> {
+  const { data, error } = await supabase.rpc("pos_shelf_set_price", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_product_id: productId,
+    p_price_retail: priceRetail,
+  });
+  if (error) throw error;
+  return data as number;
+}
+
 export async function listProductImages(productId: string): Promise<ProductImage[]> {
   const { data, error } = await supabase.rpc("pos_product_images", {
     p_register_token: requireToken(),

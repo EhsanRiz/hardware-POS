@@ -1506,13 +1506,45 @@ test("a manager can open the catalogue", async ({ page }) => {
 });
 
 /** Open Manage and get past the PIN, which every back-office test needs first. */
-async function openManage(page: import("@playwright/test").Page) {
+async function openManage(
+  page: import("@playwright/test").Page,
+  pin: string = USERS.manager.pin
+) {
   await page.getByRole("button", { name: /^Manage$/ }).click();
   const dialog = page.getByRole("dialog", { name: "Manage" });
-  for (const d of USERS.manager.pin.split("")) {
+  for (const d of pin.split("")) {
     await dialog.locator(`button:text-is("${d}")`).first().click();
   }
   await dialog.locator('button:text-is("OK")').click();
+}
+
+/**
+ * A BarcodeDetector the tests can feed. Installed before the app loads, so
+ * lib/barcode.ts picks it up exactly as it would the real one on an Android
+ * phone — everything downstream of a "detection" (the lookup, the sheets,
+ * the upload) runs for real. Push codes with scanCode().
+ */
+async function installFakeDetector(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      BarcodeDetector: unknown;
+      __scanQueue: string[];
+    };
+    w.__scanQueue = [];
+    w.BarcodeDetector = class {
+      async detect(): Promise<{ rawValue: string }[]> {
+        const code = w.__scanQueue.shift();
+        return code ? [{ rawValue: code }] : [];
+      }
+    };
+  });
+}
+
+async function scanCode(page: import("@playwright/test").Page, code: string) {
+  await page.evaluate(
+    (c) => (window as unknown as { __scanQueue: string[] }).__scanQueue.push(c),
+    code
+  );
 }
 
 test("a day is opened on a float, cashed up, and the variance is what prints", async ({ page }) => {
@@ -1854,6 +1886,105 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   const box = await pending.boundingBox();
   expect(box!.width, "the row action's width").toBeLessThanOrEqual(390);
   expect(box!.x + box!.width, "its right edge").toBeLessThanOrEqual(390);
+});
+
+test("a scanned item takes a photo and a price fix, then the camera is back", async ({ page }) => {
+  await installFakeDetector(page);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shelf$/ }).click();
+
+  // The viewfinder is up and the typed fallback is beside it.
+  await expect(page.getByLabel("Barcode digits")).toBeVisible();
+
+  await scanCode(page, "6001234000015");
+  await expect(page.getByText("In the catalogue · 6001234000015")).toBeVisible();
+  await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
+  await expect(page.getByText("no photo yet")).toBeVisible();
+
+  // A manager holds manage_catalogue, so the price is editable right here.
+  await page.getByLabel("Retail price").fill("120");
+  await page.getByRole("button", { name: /^Take photo$/ }).click();
+  await expect(page.getByAltText("Captured")).toBeVisible();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  // The photograph went through the upload endpoint under this PIN, the
+  // price landed, and the first photo became the thumbnail — as 0020 does it.
+  await expect.poll(() => be.uploadedPhotos.length).toBe(1);
+  expect(be.uploadedPhotos[0].product_id).toBe("p1");
+  expect(be.uploadedPhotos[0].by_pin).toBe(USERS.manager.pin);
+  expect(PRODUCTS.find((p) => p.id === "p1")!.image_url).not.toBeNull();
+  await expect.poll(() => PRODUCTS.find((p) => p.id === "p1")!.price_retail).toBe(120);
+
+  // Scan-snap-next: the sheet is gone and the viewfinder is live again.
+  await expect(page.getByText(/photo added/)).toBeVisible();
+  await expect(page.getByLabel("Barcode digits")).toBeVisible();
+});
+
+test("a shelf-only signer gets the camera, no catalogue, and no price field", async ({ page }) => {
+  await installFakeDetector(page);
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+
+  // Manage IS the shelf for this person: no catalogue to wander into, and
+  // the camera is the landing screen rather than a tab to find.
+  await expect(page.getByLabel("Barcode digits")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Catalogue$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bulk import$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Staff$/ })).toHaveCount(0);
+
+  await scanCode(page, "6001234000015");
+  await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
+
+  // The price is a fact on display, not a field: the whole safety story of
+  // the shelf grant is that its holder cannot change what the till charges.
+  await expect(page.getByLabel("Retail price")).toHaveCount(0);
+  await expect(page.getByText(/R115\.00 per bag/)).toBeVisible();
+
+  await page.getByRole("button", { name: /^Take photo$/ }).click();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect.poll(() => be.uploadedPhotos.length).toBe(1);
+  expect(be.uploadedPhotos[0].by_pin).toBe(USERS.shelf.pin);
+});
+
+test("an unknown barcode is recorded hidden, and a rescan finds it", async ({ page }) => {
+  await installFakeDetector(page);
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+
+  await scanCode(page, "6009876543210");
+  await expect(page.getByText("Not in the catalogue · 6009876543210")).toBeVisible();
+
+  // The sheet says out loud that nothing here goes on sale.
+  await expect(page.getByText(/New items do not go on sale from here/)).toBeVisible();
+
+  await page.getByLabel("Item name").fill("Padlock 60mm brass");
+  await page.getByLabel("Shelf price").fill("96");
+  await page.getByRole("button", { name: /Save hidden for review/ }).click();
+  await expect(page.getByText(/saved hidden for review/)).toBeVisible();
+
+  // Born hidden on the record, not only in the toast.
+  expect(be.shelfAdded).toHaveLength(1);
+  expect(be.shelfAdded[0].active).toBe(false);
+  expect(be.shelfAdded[0].sku).toBe("SHELF-6009876543210");
+
+  // Scanning the same packet again closes the loop: it is in the catalogue
+  // now, and the sheet says it is hidden rather than pretending otherwise.
+  await scanCode(page, "6009876543210");
+  await expect(page.getByText("In the catalogue · 6009876543210")).toBeVisible();
+  await expect(page.getByText(/hidden from the till/)).toBeVisible();
+});
+
+test("without a detector, typing the code is the same road", async ({ page }) => {
+  // No fake detector installed, and headless Chromium has no real one — so
+  // this is the browser the fallback exists for.
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+
+  await expect(page.getByText(/cannot scan — type the code below/)).toBeVisible();
+  await page.getByLabel("Barcode digits").fill("6001234000015");
+  await page.getByRole("button", { name: /^Find$/ }).click();
+  await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
 });
 
 test("the phone menu says who is waiting, and steps aside without stealing the page", async ({ page }) => {

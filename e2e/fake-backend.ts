@@ -69,12 +69,20 @@ function mk(
 }
 
 export const USERS = {
-  manager: { pin: "1234", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports"] } },
+  manager: { pin: "1234", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports","shelf_capture"] } },
   employee: { pin: "5678", phone: "+27820000002", row: { id: "u2", name: "Sam", role: "employee", phone: "+27820000002", email: null, permissions: ["take_payments","apply_discount"] } },
+  // The aisle: somebody whose only management right is the shelf. As on the
+  // server, permissions here are the EFFECTIVE set — role defaults plus the
+  // one grant — because that is what pos_login returns.
+  shelf: { pin: "7777", phone: "+27820000031", row: { id: "u3", name: "Nomsa", role: "employee", phone: "+27820000031", email: null, permissions: ["take_payments","apply_discount","shelf_capture"] } },
 };
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
 export const REGISTER_TOKEN = "test-register-token";
+
+// PRODUCTS is module state and the shelf screen edits prices on it; taken at
+// load, before any test has run, so installBackend can put them back.
+const SEED_RETAIL = new Map(PRODUCTS.map((p) => [p.id, p.price_retail]));
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -191,7 +199,15 @@ export class Backend {
       status: "active", active: true, permissions: [],
       discount_limit_percent: null, discount_limit_amount: null,
       last_code_error: null },
+    { id: "u3", name: "Nomsa", phone: "+27820000031", role: "employee",
+      status: "active", active: true, permissions: ["shelf_capture"],
+      discount_limit_percent: null, discount_limit_amount: null,
+      last_code_error: null },
   ];
+  /** Items recorded from the aisle (0044) — born hidden, priced as a proposal. */
+  shelfAdded: (FakeProduct & { active: boolean })[] = [];
+  /** Photographs the product-image function accepted, newest last. */
+  uploadedPhotos: { product_id: string; bytes: number; by_pin: string }[] = [];
   /**
    * The open till session, if any. `fromIndex` stands in for the server's
    * opened_at window: the real one attributes sales by register and time, and
@@ -563,6 +579,9 @@ export async function installBackend(page: Page): Promise<Backend> {
   for (const p of PRODUCTS) {
     p.max_discount_percent = null;
     p.max_discount_amount = null;
+    // The shelf screen writes photographs and price fixes onto module state.
+    p.image_url = null;
+    p.price_retail = SEED_RETAIL.get(p.id)!;
   }
 
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
@@ -572,6 +591,45 @@ export async function installBackend(page: Page): Promise<Backend> {
   await page.route("**/auth/v1/health*", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+
+  // The product-image edge function: the till never writes to storage
+  // directly, it hands the photo and the PIN to this endpoint. The fake keeps
+  // the same order the real one documents — check, then "upload", then record
+  // — and accepts the same two rights (shelf_capture or manage_catalogue).
+  await page.route("**/functions/v1/product-image", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, string> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* not JSON, falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    const u = Object.values(USERS).find((x) => x.pin === b.pin);
+    if (!u || !u.row.permissions.some((p) => p === "shelf_capture" || p === "manage_catalogue")) {
+      return respond(403, { ok: false, message: "Not permitted" });
+    }
+    const target =
+      PRODUCTS.find((p) => p.id === b.product_id) ??
+      be.shelfAdded.find((p) => p.id === b.product_id);
+    if (!target) return respond(400, { ok: false, message: "Product not found" });
+    if (!/^data:image\/(jpeg|png|webp);base64,./.test(String(b.image ?? ""))) {
+      return respond(400, { ok: false, message: "Unreadable image" });
+    }
+
+    const path = `org1/${b.product_id}/${be.uploadedPhotos.length + 1}.jpg`;
+    be.uploadedPhotos.push({
+      product_id: String(b.product_id),
+      bytes: String(b.image).length,
+      by_pin: String(b.pin),
+    });
+    // The first photograph becomes the thumbnail, as 0020 does it.
+    target.image_url = target.image_url ?? path;
+    return respond(200, { ok: true, id: "img" + be.uploadedPhotos.length, path });
   });
 
   await page.route("**/rest/v1/**", async (route: Route) => {
@@ -857,7 +915,89 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_admin_list_products": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        return json(PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })));
+        // Shelf-recorded items ride along with their real active flag, so the
+        // catalogue's "hidden" filter can show a reviewer what the aisle
+        // captured — hardcoding active:true here would hide exactly the rows
+        // this screen exists to review.
+        return json([
+          ...PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })),
+          ...be.shelfAdded.map((p) => ({ ...p, cost: null, description: null })),
+        ]);
+      }
+      case "rpc/pos_shelf_lookup": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        if (!u.row.permissions.some((p) => p === "shelf_capture" || p === "manage_catalogue")) {
+          return fail("Not permitted: shelf_capture");
+        }
+        const code = String(body.p_barcode ?? "").trim();
+        const hit =
+          PRODUCTS.find((p) => p.barcode === code) ??
+          be.shelfAdded.find((p) => p.barcode === code);
+        if (!hit) return json([]);
+        return json([{
+          id: hit.id, name: hit.name, barcode: hit.barcode,
+          unit_code: hit.unit_code, price_retail: hit.price_retail,
+          active: (hit as { active?: boolean }).active ?? true,
+          has_photo: hit.image_url != null,
+        }]);
+      }
+      case "rpc/pos_shelf_add_item": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        if (!u.row.permissions.some((p) => p === "shelf_capture" || p === "manage_catalogue")) {
+          return fail("Not permitted: shelf_capture");
+        }
+        const code = String(body.p_barcode ?? "").trim();
+        if (!/^\d{6,14}$/.test(code)) return fail("A barcode is 6 to 14 digits");
+        if (String(body.p_name ?? "").trim() === "") return fail("A name is required");
+        const price = body.p_price_retail;
+        if (price == null || Number(price) < 0) {
+          return fail("A price is required — put the shelf price, it is checked before going live");
+        }
+        if (PRODUCTS.some((p) => p.barcode === code) || be.shelfAdded.some((p) => p.barcode === code)) {
+          return fail("That barcode is already in the catalogue — scan it again to add a photo");
+        }
+        const row = {
+          id: "sh" + (be.shelfAdded.length + 1),
+          sku: "SHELF-" + code, barcode: code,
+          name: String(body.p_name).trim(),
+          category_id: null, category_name: null,
+          unit_code: "ea", unit_name: "Each", allows_fraction: false,
+          price_retail: Number(price), price_trade: null, tax_code: "standard",
+          stock_qty: null, reorder_level: null, image_url: null,
+          sort_order: 0, bin: null,
+          max_discount_percent: null, max_discount_amount: null,
+          // Born hidden, exactly as 0044 insists — there is no argument to
+          // say otherwise, here or on the server.
+          active: false,
+        };
+        be.shelfAdded.push(row);
+        return json([{
+          id: row.id, name: row.name, barcode: row.barcode,
+          unit_code: row.unit_code, price_retail: row.price_retail,
+          active: false, has_photo: false,
+        }]);
+      }
+      case "rpc/pos_shelf_set_price": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        // manage_catalogue and NOT the shelf grant: the fence the whole
+        // permission exists to hold.
+        if (!u.row.permissions.includes("manage_catalogue")) {
+          return fail("Not permitted: manage_catalogue");
+        }
+        const target =
+          PRODUCTS.find((p) => p.id === body.p_product_id) ??
+          be.shelfAdded.find((p) => p.id === body.p_product_id);
+        if (!target) return fail("Product not found");
+        const v = Number(body.p_price_retail);
+        if (!(v >= 0)) return fail("A retail price is required");
+        target.price_retail = v;
+        return json(v);
       }
       case "rpc/pos_admin_save_product": {
         if (!tokenOk) return fail("Register not paired or revoked");

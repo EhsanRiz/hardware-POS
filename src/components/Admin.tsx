@@ -22,10 +22,12 @@ import SalesHistory from "./admin/SalesHistory";
 import ShopSettings from "./admin/ShopSettings";
 import Approvals from "./admin/Approvals";
 import StaffAdmin from "./admin/StaffAdmin";
+import Shelf from "./admin/Shelf";
 
 type TabKey =
   | "catalogue"
   | "import"
+  | "shelf"
   | "sales"
   | "approvals"
   | "cashup"
@@ -52,10 +54,18 @@ export default function Admin({
   // re-check the permission anyway; this is so a counter supervisor is not
   // shown a Staff tab that will only refuse them.
   const tabs = useMemo(() => {
-    const t: { key: TabKey; label: string }[] = [
-      { key: "catalogue", label: "Catalogue" },
-      { key: "import", label: "Bulk import" },
-    ];
+    const t: { key: TabKey; label: string }[] = [];
+    // Catalogue and Bulk import were unconditional, which was harmless while
+    // everybody who could open Manage held manage_catalogue. The shelf grant
+    // ends that: somebody whose only right is photographing shelves must not
+    // be shown a catalogue screen that would only refuse them.
+    if (can(user, "manage_catalogue")) {
+      t.push({ key: "catalogue", label: "Catalogue" });
+      t.push({ key: "import", label: "Bulk import" });
+    }
+    if (can(user, "shelf_capture") || can(user, "manage_catalogue")) {
+      t.push({ key: "shelf", label: "Shelf" });
+    }
     if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
     // Its own tab rather than a corner of Settings: issuing a code is something
     // a manager does standing in a bank queue with a phone to their ear, not
@@ -67,7 +77,9 @@ export default function Admin({
     return t;
   }, [user]);
 
-  const [tab, setTab] = useState<TabKey>("catalogue");
+  // The first tab this person may actually open — a shelf-only user's Manage
+  // is the camera, not a catalogue that would refuse to load.
+  const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "catalogue");
   // On a phone the tabs live behind a burger (see the header); this is it.
   const [menuOpen, setMenuOpen] = useState(false);
   // How many colleagues are on the list but cannot sign in yet. Carried on the
@@ -111,6 +123,13 @@ export default function Admin({
   const canSeeCost = can(user, "view_cost_prices");
 
   const load = useCallback(async () => {
+    // The catalogue load feeds the Catalogue, Bulk import and Staff screens —
+    // none of which a shelf-only user is shown. Asking anyway would put a
+    // permission refusal in the error bar of a screen that did nothing wrong.
+    if (!can(user, "manage_catalogue")) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [p, c, u] = await Promise.all([
@@ -127,7 +146,7 @@ export default function Admin({
     } finally {
       setLoading(false);
     }
-  }, [pin]);
+  }, [pin, user]);
 
   useEffect(() => {
     void load();
@@ -458,6 +477,8 @@ export default function Admin({
       {tab === "import" && (
         <ImportPanel pin={pin} onDone={load} />
       )}
+
+      {tab === "shelf" && <Shelf user={user} pin={pin} />}
 
       {tab === "sales" && <SalesHistory pin={pin} />}
 

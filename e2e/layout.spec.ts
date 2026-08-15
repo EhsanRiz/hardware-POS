@@ -116,7 +116,7 @@ test.describe("manager's phone, 390", () => {
     await burger.click();
 
     // One tap, every section — visible, unwrapped, and inside the screen.
-    for (const label of ["Catalogue", "Bulk import", "Sales", "Approvals", "Cash-up", "Staff", "Shop"]) {
+    for (const label of ["Catalogue", "Bulk import", "Shelf", "Sales", "Approvals", "Cash-up", "Staff", "Shop"]) {
       const row = page.getByRole("button", { name: label, exact: true });
       await expect(row, `${label} is offered`).toBeVisible();
       const rb = await row.boundingBox();
