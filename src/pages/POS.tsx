@@ -12,7 +12,7 @@ import {
   type QuoteLine,
   type QuoteSummary,
 } from "../lib/api";
-import { adminListProducts, stockMovements } from "../lib/adminApi";
+import { adminListProducts, shelfLookup, stockMovements } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { isPaired } from "../lib/device";
@@ -626,7 +626,7 @@ export default function POS() {
       online={online}
       pending={pending}
       failed={failed}
-      canManage={canAny(user, ["manage_catalogue", "manage_inventory"])}
+      canManage={canAny(user, ["manage_catalogue", "manage_inventory", "shelf_capture"])}
       section={section}
       canAccounts={can(user, "take_payments")}
       canQuotes={can(user, "take_payments")}
@@ -1012,9 +1012,14 @@ export default function POS() {
           title="Manage"
           subtitle="Enter your PIN to open the back office"
           onApprove={async (entered) => {
-            // Proved against the server by the first admin call, which fails
-            // loudly if the PIN is wrong or lacks the permission.
-            await adminListProducts(entered);
+            // Proved against the server by a first call this signer is
+            // actually entitled to make — the catalogue for catalogue
+            // rights, a shelf lookup for the shelf grant. Proving with the
+            // catalogue alone locked shelf-only staff out of the one screen
+            // their permission exists to open. Either call fails loudly on a
+            // wrong PIN.
+            if (can(user, "manage_catalogue")) await adminListProducts(entered);
+            else await shelfLookup(entered, "0");
             setAdminPin(entered);
             setAskAdminPin(false);
           }}

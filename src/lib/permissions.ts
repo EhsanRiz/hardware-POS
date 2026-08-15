@@ -15,6 +15,10 @@ export const PERMISSIONS = [
   // Deliberately separate from manage_catalogue: a counter supervisor can fix a
   // price or a barcode without being shown the shop's margins.
   { key: "view_cost_prices", label: "See cost prices & margins", group: "Management" },
+  // The aisle permission: photograph items, record barcodes, propose new
+  // items (which land hidden). Deliberately NOT a road to prices — its whole
+  // point is that the phone can be handed to whoever walks the shelf today.
+  { key: "shelf_capture", label: "Photograph & record shelf items", group: "Management" },
   { key: "cash_management", label: "Cash-up & reconciliation", group: "Management" },
   { key: "manage_staff", label: "Manage staff", group: "Admin" },
   { key: "manage_settings", label: "Manage settings & tills", group: "Admin" },
@@ -61,6 +65,7 @@ export const ROLE_DEFAULTS: Record<RoleKey, PermKey[]> = {
     "view_reports",
     "view_cost_prices",
     "cash_management",
+    "shelf_capture",
   ],
   employee: ["take_payments", "apply_discount"],
 };
@@ -78,6 +83,7 @@ export const MANAGEMENT_PERMS: PermKey[] = [
   "cash_management",
   "manage_staff",
   "manage_settings",
+  "shelf_capture",
 ];
 
 interface PermHolder {

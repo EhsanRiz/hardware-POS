@@ -35,11 +35,22 @@ export default defineConfig({
       testIgnore: /live\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
-        // The environment ships Chromium at a fixed path and blocks the
-        // download Playwright would otherwise attempt.
-        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_PATH
-          ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
-          : {},
+        launchOptions: {
+          // The environment ships Chromium at a fixed path and blocks the
+          // download Playwright would otherwise attempt.
+          ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
+            ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
+            : {}),
+          // A synthetic camera, granted without a prompt: the Shelf screen's
+          // viewfinder and photo capture run against this stream in the
+          // suite. What it cannot supply is a frame with a real barcode in
+          // it — decoding is faked at the BarcodeDetector seam instead (see
+          // lib/barcode.ts), and verified on an actual phone.
+          args: [
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+          ],
+        },
       },
     },
   ],

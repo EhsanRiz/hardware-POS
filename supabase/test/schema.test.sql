@@ -1551,4 +1551,111 @@ begin
     'a send that went through clears the failure before it');
 end $$;
 
+-- 0044: shelf capture --------------------------------------------------------
+--
+-- The aisle permission. The properties that matter: it opens exactly the
+-- shelf RPCs and nothing else in the back office; what it records cannot
+-- change what the till sells (photos are cosmetic, new items are born
+-- hidden); and both roads in — the grant, and manage_catalogue as the
+-- broader power — arrive at the same place.
+
+do $$
+declare v_tok text; v_shelf uuid; v_super uuid; v_row record; v_new record; v_img uuid;
+begin
+  select token into v_tok from till;
+
+  perform assert(
+    exists (select 1 from public.permissions where code = 'shelf_capture'),
+    'the shelf permission is in the catalogue');
+  perform assert('shelf_capture' = any(public.role_default_permissions('manager')),
+    'a manager holds it through the role');
+  perform assert(not ('shelf_capture' = any(public.role_default_permissions('employee'))),
+    'a counter hand does not, until granted');
+
+  -- Somebody granted exactly the shelf, nothing else.
+  select id into v_shelf from public.pos_admin_invite_user(
+    v_tok, '1234', 'Shelf hand', '+27820000031', 'employee'::user_role,
+    array['shelf_capture']);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('7777', gen_salt('bf')) where id = v_shelf;
+
+  -- The branch point: a barcode either names an item or it does not.
+  select * into v_row from public.pos_shelf_lookup(v_tok, '7777', '6001234000015');
+  perform assert_eq(v_row.name, 'Cement 42.5N 50kg', 'the barcode finds the item');
+  perform assert_eq(v_row.has_photo, false, 'and says it has no photo yet');
+  perform assert_eq(
+    (select count(*)::int from public.pos_shelf_lookup(v_tok, '7777', '6000000000009')),
+    0, 'an unknown barcode returns nothing');
+
+  -- A new item is born hidden, and the same barcode cannot be born twice.
+  select * into v_new from public.pos_shelf_add_item(
+    v_tok, '7777', '6009876543210', 'Padlock 60mm brass', 96);
+  perform assert_eq(v_new.active, false, 'a shelf-recorded item is born hidden');
+  perform assert_eq(
+    (select p.active from public.products p where p.id = v_new.id), false,
+    'hidden in the table, not only in the reply');
+  perform assert_eq(
+    (select p.sku from public.products p where p.id = v_new.id),
+    'SHELF-6009876543210', 'its stock code says where it came from');
+  perform assert_refuses(
+    format('select public.pos_shelf_add_item(%L, %L, %L, %L, 50)',
+           v_tok, '7777', '6009876543210', 'Padlock again'),
+    'the same barcode cannot be recorded twice');
+  perform assert_refuses(
+    format('select public.pos_shelf_add_item(%L, %L, %L, %L, 50)',
+           v_tok, '7777', 'not-a-code', 'Mystery item'),
+    'a barcode is digits, not prose');
+  perform assert_refuses(
+    format('select public.pos_shelf_add_item(%L, %L, %L, %L, null)',
+           v_tok, '7777', '6001111111119', 'Priceless'),
+    'a proposed price is required even though the item is hidden');
+
+  -- The fence: the shelf permission opens the shelf and nothing else.
+  perform assert_refuses(
+    format('select public.pos_admin_list_products(%L, %L)', v_tok, '7777'),
+    'a shelf hand cannot read the catalogue screen');
+  perform assert_refuses(
+    format('select public.pos_admin_list_users(%L, %L)', v_tok, '7777'),
+    'nor the staff list');
+
+  -- The photo path: recording an image is exactly what the grant is for.
+  select public.pos_admin_add_product_image(
+    v_tok, '7777', v_row.id, 'org/test/cement.jpg') into v_img;
+  perform assert(v_img is not null, 'a shelf hand can record a photograph');
+  select * into v_row from public.pos_shelf_lookup(v_tok, '7777', '6001234000015');
+  perform assert_eq(v_row.has_photo, true, 'and the lookup now says so');
+
+  -- The other road in: manage_catalogue without the shelf grant also opens
+  -- the shelf — a supervisor who can already edit every product must not be
+  -- refused the quicker path.
+  select id into v_super from public.pos_admin_invite_user(
+    v_tok, '1234', 'Counter supervisor', '+27820000032', 'employee'::user_role,
+    array['manage_catalogue']);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('8888', gen_salt('bf')) where id = v_super;
+  perform assert_eq(
+    (select count(*)::int from public.pos_shelf_lookup(v_tok, '8888', '6001234000015')),
+    1, 'manage_catalogue opens the shelf too');
+
+  -- A price fixed at the shelf needs catalogue rights, and the shelf grant
+  -- alone must NOT be enough — that is the whole safety story of handing the
+  -- phone to whoever walks the aisle.
+  perform assert_eq(
+    public.pos_shelf_set_price(v_tok, '8888', v_new.id, 99.50), 99.50::numeric,
+    'catalogue rights can fix a price from the shelf');
+  perform assert_refuses(
+    format('select public.pos_shelf_set_price(%L, %L, %L, 1)',
+           v_tok, '7777', v_new.id),
+    'the shelf grant alone cannot touch a price');
+
+  -- And no permission at all opens nothing. An ACTIVE counter hand, so the
+  -- refusal is about the permission — '5678' would also refuse, but only
+  -- because its owner was disabled two tests ago, which proves nothing here.
+  update public.app_users set pin_hash = crypt('2222', gen_salt('bf'))
+   where id = (select employee_id from fixture);
+  perform assert_refuses(
+    format('select public.pos_shelf_lookup(%L, %L, %L)', v_tok, '2222', '6001234000015'),
+    'a plain counter PIN does not open the shelf');
+end $$;
+
 select 'all database tests passed' as result;
