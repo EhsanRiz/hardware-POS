@@ -1888,7 +1888,7 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   expect(box!.x + box!.width, "its right edge").toBeLessThanOrEqual(390);
 });
 
-test("a scanned item takes a photo and a price fix, then the camera is back", async ({ page }) => {
+test("a scan captures the picture with the barcode, and a price fix rides along", async ({ page }) => {
   await installFakeDetector(page);
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
@@ -1902,10 +1902,12 @@ test("a scanned item takes a photo and a price fix, then the camera is back", as
   await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
   await expect(page.getByText("no photo yet")).toBeVisible();
 
+  // The scan took the picture too: the frame that carried the barcode is
+  // already on the sheet, nothing more to tap. One scan, both facts.
+  await expect(page.getByAltText("Photo 1")).toBeVisible();
+
   // A manager holds manage_catalogue, so the price is editable right here.
   await page.getByLabel("Retail price").fill("120");
-  await page.getByRole("button", { name: /^Take photo$/ }).click();
-  await expect(page.getByAltText("Captured")).toBeVisible();
   await page.getByRole("button", { name: /^Save$/ }).click();
 
   // The photograph went through the upload endpoint under this PIN, the
@@ -1919,6 +1921,13 @@ test("a scanned item takes a photo and a price fix, then the camera is back", as
   // Scan-snap-next: the sheet is gone and the viewfinder is live again.
   await expect(page.getByText(/photo added/)).toBeVisible();
   await expect(page.getByLabel("Barcode digits")).toBeVisible();
+
+  // A rescan of an item that now HAS a photo does not smuggle another one in:
+  // the strip starts empty and adding more is a deliberate tap.
+  await scanCode(page, "6001234000015");
+  await expect(page.getByText("has a photo")).toBeVisible();
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Take photo$/ })).toBeVisible();
 });
 
 test("a shelf-only signer gets the camera, no catalogue, and no price field", async ({ page }) => {
@@ -1941,7 +1950,8 @@ test("a shelf-only signer gets the camera, no catalogue, and no price field", as
   await expect(page.getByLabel("Retail price")).toHaveCount(0);
   await expect(page.getByText(/R115\.00 per bag/)).toBeVisible();
 
-  await page.getByRole("button", { name: /^Take photo$/ }).click();
+  // The scan already took the picture; saving it is one tap.
+  await expect(page.getByAltText("Photo 1")).toBeVisible();
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect.poll(() => be.uploadedPhotos.length).toBe(1);
   expect(be.uploadedPhotos[0].by_pin).toBe(USERS.shelf.pin);
@@ -1958,33 +1968,111 @@ test("an unknown barcode is recorded hidden, and a rescan finds it", async ({ pa
   // The sheet says out loud that nothing here goes on sale.
   await expect(page.getByText(/New items do not go on sale from here/)).toBeVisible();
 
+  // The scan pre-filled a picture, but every photo is optional: removed, the
+  // item still saves — a barcode and a name are the facts that matter.
+  await expect(page.getByAltText("Photo 1")).toBeVisible();
+  await page.getByRole("button", { name: "Remove photo 1" }).click();
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+
   await page.getByLabel("Item name").fill("Padlock 60mm brass");
   await page.getByLabel("Shelf price").fill("96");
   await page.getByRole("button", { name: /Save hidden for review/ }).click();
   await expect(page.getByText(/saved hidden for review/)).toBeVisible();
 
-  // Born hidden on the record, not only in the toast.
+  // Born hidden on the record, not only in the toast — and with no photo,
+  // because none was kept.
   expect(be.shelfAdded).toHaveLength(1);
   expect(be.shelfAdded[0].active).toBe(false);
   expect(be.shelfAdded[0].sku).toBe("SHELF-6009876543210");
+  expect(be.uploadedPhotos).toHaveLength(0);
 
   // Scanning the same packet again closes the loop: it is in the catalogue
   // now, and the sheet says it is hidden rather than pretending otherwise.
   await scanCode(page, "6009876543210");
   await expect(page.getByText("In the catalogue · 6009876543210")).toBeVisible();
   await expect(page.getByText(/hidden from the till/)).toBeVisible();
+
+  // Up to four photographs, and no more: the pre-filled snap plus three
+  // added fills the strip and the add tile withdraws; removing one brings
+  // it back. Saved, all four go up in order.
+  await expect(page.getByAltText("Photo 1")).toBeVisible();
+  await page.getByRole("button", { name: /^Add another$/ }).click();
+  await page.getByRole("button", { name: /^Add another$/ }).click();
+  await page.getByRole("button", { name: /^Add another$/ }).click();
+  await expect(page.getByAltText("Photo 4")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Add another$/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Remove photo 2" }).click();
+  await expect(page.getByRole("button", { name: /^Add another$/ })).toBeVisible();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect.poll(() => be.uploadedPhotos.length).toBe(3);
+  expect(be.uploadedPhotos.every((u) => u.product_id === "sh1")).toBe(true);
 });
 
-test("without a detector, typing the code is the same road", async ({ page }) => {
-  // No fake detector installed, and headless Chromium has no real one — so
-  // this is the browser the fallback exists for.
+test("typing the code is the same road, and the snap still happens", async ({ page }) => {
+  // No fake detector installed, and headless Chromium has no native one — so
+  // the bundled ZXing decoder loads, exactly as it does on an iPhone. The
+  // hint no longer says "cannot scan": there is now always something that
+  // can, and typing stays for worn labels and dead cameras.
   await pairAndSignIn(page, USERS.shelf.pin);
   await openManage(page, USERS.shelf.pin);
 
-  await expect(page.getByText(/cannot scan — type the code below/)).toBeVisible();
+  await expect(page.getByText("Point at the barcode")).toBeVisible();
   await page.getByLabel("Barcode digits").fill("6001234000015");
   await page.getByRole("button", { name: /^Find$/ }).click();
   await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
+
+  // The camera was live and pointed at the item, so a typed code captures
+  // the picture the same way a scan does.
+  await expect(page.getByAltText("Photo 1")).toBeVisible();
+});
+
+test("the bundled decoder really reads an EAN-13, so iPhones scan too", async ({ page }) => {
+  // The suite fakes optical input at the BarcodeDetector seam, so the one
+  // claim nothing else proves is that the bundled ZXing fallback DECODES.
+  // This draws a real EAN-13 in the page — bar by bar, from the standard's
+  // encoding tables — and asks the very reader the Shelf screen is holding
+  // to read it back. No fixture image to go stale, no faking at the seam.
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+  // Reader loaded (and, in the e2e build, exposed for exactly this test).
+  await expect(page.getByText("Point at the barcode")).toBeVisible();
+
+  const decoded = await page.evaluate(async () => {
+    // EAN-13 for "6001234000013" (valid check digit, unlike some seed codes).
+    const L: Record<string, string> = { "0": "0001101", "1": "0011001", "2": "0010011", "3": "0111101", "4": "0100011", "5": "0110001", "6": "0101111", "7": "0111011", "8": "0110111", "9": "0001011" };
+    const G: Record<string, string> = { "0": "0100111", "1": "0110011", "2": "0011011", "3": "0100001", "4": "0011101", "5": "0111001", "6": "0000101", "7": "0010001", "8": "0001001", "9": "0010111" };
+    const R: Record<string, string> = { "0": "1110010", "1": "1100110", "2": "1101100", "3": "1000010", "4": "1011100", "5": "1001110", "6": "1010000", "7": "1000100", "8": "1001000", "9": "1110100" };
+    const PARITY: Record<string, string> = { "0": "LLLLLL", "1": "LLGLGG", "2": "LLGGLG", "3": "LLGGGL", "4": "LGLLGG", "5": "LGGLLG", "6": "LGGGLL", "7": "LGLGLG", "8": "LGLGGL", "9": "LGGLGL" };
+    const code = "6001234000013";
+    const parity = PARITY[code[0]];
+    let modules = "101";
+    for (let i = 1; i <= 6; i++) modules += (parity[i - 1] === "L" ? L : G)[code[i]];
+    modules += "01010";
+    for (let i = 7; i <= 12; i++) modules += R[code[i]];
+    modules += "101";
+
+    const mod = 4;
+    const quiet = 15 * mod;
+    const canvas = document.createElement("canvas");
+    canvas.width = modules.length * mod + quiet * 2;
+    canvas.height = 160;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000";
+    for (let i = 0; i < modules.length; i++) {
+      if (modules[i] === "1") ctx.fillRect(quiet + i * mod, 20, mod, 120);
+    }
+
+    const reader = (window as unknown as {
+      __zxingReader?: { detect(s: unknown): Promise<{ rawValue: string }[]> };
+    }).__zxingReader;
+    if (!reader) return "NO READER EXPOSED";
+    const found = await reader.detect(canvas);
+    return found[0]?.rawValue ?? "NOT DECODED";
+  });
+
+  expect(decoded).toBe("6001234000013");
 });
 
 test("the phone menu says who is waiting, and steps aside without stealing the page", async ({ page }) => {
