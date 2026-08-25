@@ -480,7 +480,7 @@ export default function Admin({
 
       {tab === "shelf" && <Shelf user={user} pin={pin} />}
 
-      {tab === "sales" && <SalesHistory pin={pin} />}
+      {tab === "sales" && <SalesHistory pin={pin} user={user} />}
 
       {tab === "approvals" && <Approvals pin={pin} />}
 

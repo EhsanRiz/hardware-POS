@@ -484,6 +484,91 @@ export async function shelfSetPrice(
   return data as number;
 }
 
+/** A credit note as the sales screen shows and reprints it. */
+export interface SaleReturn {
+  id: string;
+  doc_number: string;
+  reason: string;
+  refund_method: "cash" | "account";
+  total: number;
+  tax_total: number;
+  by_name: string;
+  created_at: string;
+  items: {
+    sale_item_id: string;
+    name: string;
+    qty: number;
+    line_total: number;
+    restock: boolean;
+  }[];
+}
+
+/** Every credit note already written against a sale, lines grouped under it. */
+export async function saleReturns(pin: string, saleId: string): Promise<SaleReturn[]> {
+  const { data, error } = await supabase.rpc("pos_sale_returns", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_sale_id: saleId,
+  });
+  if (error) throw error;
+  const grouped = new Map<string, SaleReturn>();
+  for (const row of data as (Omit<SaleReturn, "items"> & {
+    sale_item_id: string;
+    item_name: string;
+    item_qty: number;
+    item_line_total: number;
+    item_restock: boolean;
+  })[]) {
+    let r = grouped.get(row.id);
+    if (!r) {
+      r = {
+        id: row.id,
+        doc_number: row.doc_number,
+        reason: row.reason,
+        refund_method: row.refund_method,
+        total: row.total,
+        tax_total: row.tax_total,
+        by_name: row.by_name,
+        created_at: row.created_at,
+        items: [],
+      };
+      grouped.set(row.id, r);
+    }
+    r.items.push({
+      sale_item_id: row.sale_item_id,
+      name: row.item_name,
+      qty: row.item_qty,
+      line_total: row.item_line_total,
+      restock: row.item_restock,
+    });
+  }
+  return Array.from(grouped.values());
+}
+
+/**
+ * Take goods back against a sale. The server decides the refund method from
+ * how the sale was paid, refuses over-returns, and writes the credit note —
+ * this call returns its number and totals so the slip can print.
+ */
+export async function returnSale(
+  pin: string,
+  saleId: string,
+  items: { sale_item_id: string; qty: number; restock: boolean }[],
+  reason: string
+): Promise<{ return_id: string; doc_number: string; refund_method: string; total: number; tax_total: number }> {
+  const { data, error } = await supabase.rpc("pos_return_sale", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_sale_id: saleId,
+    p_items: items,
+    p_reason: reason,
+  });
+  if (error) throw error;
+  const rows = data as { return_id: string; doc_number: string; refund_method: string; total: number; tax_total: number }[];
+  if (!rows?.[0]) throw new Error("The return was not recorded");
+  return rows[0];
+}
+
 export async function listProductImages(productId: string): Promise<ProductImage[]> {
   const { data, error } = await supabase.rpc("pos_product_images", {
     p_register_token: requireToken(),

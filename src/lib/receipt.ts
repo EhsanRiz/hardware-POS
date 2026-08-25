@@ -588,3 +588,65 @@ export function buildTestText(): string {
   out.push("");
   return out.join("\n");
 }
+
+/**
+ * The credit note.
+ *
+ * Prints what a customer and an auditor both need from the same piece of
+ * paper: which invoice it reverses, what came back and where each item went
+ * (shelf or written off), the VAT being returned, how the money went back,
+ * and who approved it. The figures come from the stored return, never
+ * recomputed — a credit note reprinted next year must restate what was
+ * actually refunded, exactly as a tax invoice must.
+ */
+export function buildCreditNoteText(cn: {
+  doc_number: string;
+  created_at: string;
+  sale_doc_number: string | null;
+  sale_payment_method: string | null;
+  reason: string;
+  refund_method: string;
+  total: number;
+  tax_total: number;
+  by_name: string;
+  items: { name: string; unit_code: string; qty: number; line_total: number; restock: boolean }[];
+}): string {
+  const out: string[] = [];
+  shopHeader(out, "CREDIT NOTE");
+  out.push("");
+  out.push(bold(center(cn.doc_number)));
+  if (cn.sale_doc_number) out.push(center(`against Tax Invoice ${cn.sale_doc_number}`));
+  out.push(fmtDateTime(new Date(cn.created_at)));
+  out.push(solid());
+
+  for (const i of cn.items) {
+    out.push(lineItem(itemLabel(i.qty, i.unit_code, i.name), `-${amount(i.line_total)}`));
+    out.push(i.restock ? "  returned to shelf" : "  damaged - written off");
+  }
+
+  out.push(solid());
+  out.push(boxTop());
+  out.push(boxRow("REFUND", `-${amount(cn.total)}`));
+  out.push(boxTop());
+  out.push(lineItem("VAT included", `-${amount(cn.tax_total)}`));
+  out.push("");
+
+  if (cn.refund_method === "account") {
+    out.push("Credited to the customer's account");
+  } else if (cn.sale_payment_method && cn.sale_payment_method !== "cash") {
+    // Said on the paper, because it is the question the customer asks: the
+    // till cannot put money back on a card, so the drawer paid out.
+    out.push(`Refunded in cash (sale was paid by ${cn.sale_payment_method})`);
+  } else {
+    out.push("Refunded in cash");
+  }
+  out.push(`Reason: ${cn.reason}`);
+  out.push(`Approved: ${cn.by_name}`);
+  out.push(solid());
+  out.push(center("Goods received back in store"));
+  out.push("");
+  out.push(center("Customer signature: ______________"));
+  out.push("");
+  out.push("");
+  return out.join("\n");
+}
