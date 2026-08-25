@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   shelfAddItem,
   shelfLookup,
@@ -6,7 +6,7 @@ import {
   uploadProductImage,
   type ShelfItem,
 } from "../../lib/adminApi";
-import { createBarcodeReader } from "../../lib/barcode";
+import { loadBarcodeReader, type BarcodeReader } from "../../lib/barcode";
 import { CURRENCY } from "../../lib/config";
 import { errorMessage } from "../../lib/errors";
 import { downscaleImage } from "../../lib/images";
@@ -21,15 +21,24 @@ import type { User } from "../../lib/types";
  * hand. The screen is built around the barcode, not the photo, because the
  * barcode is what makes the work land in the right place: scan first, and
  * the flow branches on whether the code already names an item. Known item →
- * put a photo on it (and fix the price, if this person may touch prices).
+ * put photos on it (and fix the price, if this person may touch prices).
  * Unknown code → record it, and it lands HIDDEN for review — the server
  * enforces that, so nothing captured here changes what the till charges.
+ *
+ * The scan captures the picture too: at the moment the code locks, the
+ * camera is already pointed at the item, so that frame becomes the first
+ * photograph — removable, and joined by up to three more. One scan, both
+ * facts. An item that already has a photo is NOT silently given another on
+ * every rescan; adding more stays a deliberate tap.
  *
  * Who may do what is the point of the design: `shelf_capture` alone takes
  * photos and proposes items; the price field exists only for people who also
  * hold manage_catalogue. That split is what makes the shelf phone safe to
  * hand to whoever is walking the aisle today.
  */
+
+/** As many photographs as an aisle stop is worth. All of them optional. */
+const MAX_PHOTOS = 4;
 
 type Sheet =
   | { kind: "found"; item: ShelfItem }
@@ -38,18 +47,28 @@ type Sheet =
 export default function Shelf({ user, pin }: { user: User | null; pin: string }) {
   const canPrice = can(user, "manage_catalogue");
 
-  // The reader is created once; null means "no detector on this browser",
-  // which leaves the typed fallback as the only road — slower, never a dead
-  // end.
-  const reader = useMemo(() => createBarcodeReader(), []);
+  // undefined while the reader is still loading — the native detector where
+  // the browser has one, the bundled ZXing decoder where it does not (every
+  // iPhone), null only if even that failed to load.
+  const [reader, setReader] = useState<BarcodeReader | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void loadBarcodeReader().then((r) => {
+      if (!cancelled) setReader(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
   const [typed, setTyped] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
@@ -75,6 +94,16 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
         }
         acquired = s;
         setStream(s);
+        try {
+          // Shown only where it can work: iOS reports no torch capability,
+          // and a button that does nothing reads as a broken app.
+          const caps = s.getVideoTracks()[0]?.getCapabilities() as
+            | (MediaTrackCapabilities & { torch?: boolean })
+            | undefined;
+          setTorchSupported(Boolean(caps?.torch));
+        } catch {
+          setTorchSupported(false);
+        }
       } catch {
         if (!cancelled) {
           setCameraError(
@@ -100,9 +129,6 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     const track = stream?.getVideoTracks()[0];
     if (!track) return;
     try {
-      // Not in the lib typings, but real on the phones this runs on.
-      const caps = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
-      if (!caps.torch) return;
       await track.applyConstraints({
         advanced: [{ torch: !torchOn } as MediaTrackConstraintSet],
       });
@@ -112,21 +138,53 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     }
   }
 
+  // ---- the photographs ------------------------------------------------------
+
+  /** The current viewfinder frame, downscaled — or null with no live camera. */
+  const captureFrameData = useCallback(async (): Promise<string | null> => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || !video.videoWidth) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")!.drawImage(video, 0, 0);
+    const blob: Blob | null = await new Promise((r) =>
+      canvas.toBlob(r, "image/jpeg", 0.92)
+    );
+    return blob ? await downscaleImage(blob) : null;
+  }, []);
+
+  function addPhoto(dataUrl: string | null) {
+    if (!dataUrl) return;
+    setPhotos((p) => (p.length >= MAX_PHOTOS ? p : [...p, dataUrl]));
+  }
+
+  async function pickFile(file: File | undefined) {
+    if (file) addPhoto(await downscaleImage(file));
+  }
+
   // ---- finding the item -----------------------------------------------------
 
+  /**
+   * A code has been read — optically or typed. `snap` is the viewfinder frame
+   * from that same moment: the scan captures the picture as well as the
+   * barcode, except for an item that already has one, where more photographs
+   * stay a deliberate choice rather than a side effect of every rescan.
+   */
   const handleCode = useCallback(
-    async (raw: string) => {
+    async (raw: string, snap: string | null) => {
       const code = raw.replace(/\D/g, "");
       if (!code || busy) return;
       setBusy(true);
       setError(null);
       try {
         const item = await shelfLookup(pin, code);
-        setPhoto(null);
         if (item) {
+          setPhotos(item.has_photo || !snap ? [] : [snap]);
           setPriceEdit(String(item.price_retail));
           setSheet({ kind: "found", item });
         } else {
+          setPhotos(snap ? [snap] : []);
           setNewName("");
           setNewPrice("");
           setSheet({ kind: "new", barcode: code });
@@ -152,7 +210,11 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
       detecting.current = true;
       try {
         const found = await reader.detect(video);
-        if (found[0]?.rawValue) void handleCode(found[0].rawValue);
+        if (found[0]?.rawValue) {
+          // The frame that carried the barcode is the first photograph.
+          const snap = await captureFrameData();
+          void handleCode(found[0].rawValue, snap);
+        }
       } catch {
         /* a frame that will not decode is just the next frame's problem */
       } finally {
@@ -160,34 +222,21 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
       }
     }, 400);
     return () => window.clearInterval(id);
-  }, [reader, sheet, stream, handleCode]);
-
-  // ---- the photograph -------------------------------------------------------
-
-  async function captureFrame() {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")!.drawImage(video, 0, 0);
-    const blob: Blob | null = await new Promise((r) =>
-      canvas.toBlob(r, "image/jpeg", 0.92)
-    );
-    if (blob) setPhoto(await downscaleImage(blob));
-  }
-
-  async function pickFile(file: File | undefined) {
-    if (file) setPhoto(await downscaleImage(file));
-  }
+  }, [reader, sheet, stream, handleCode, captureFrameData]);
 
   // ---- saving ---------------------------------------------------------------
 
   function reset() {
     setSheet(null);
-    setPhoto(null);
+    setPhotos([]);
     setTyped("");
     setError(null);
+  }
+
+  async function uploadAll(productId: string) {
+    for (let i = 0; i < photos.length; i++) {
+      await uploadProductImage(pin, productId, photos[i], i);
+    }
   }
 
   async function saveFound(item: ShelfItem) {
@@ -195,9 +244,9 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     setError(null);
     try {
       const did: string[] = [];
-      if (photo) {
-        await uploadProductImage(pin, item.id, photo);
-        did.push("photo added");
+      if (photos.length) {
+        await uploadAll(item.id);
+        did.push(photos.length === 1 ? "photo added" : `${photos.length} photos added`);
       }
       if (canPrice && priceEdit.trim() !== "" && Number(priceEdit) !== item.price_retail) {
         await shelfSetPrice(pin, item.id, Number(priceEdit));
@@ -217,7 +266,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     setError(null);
     try {
       const item = await shelfAddItem(pin, barcode, newName, Number(newPrice));
-      if (photo) await uploadProductImage(pin, item.id, photo);
+      await uploadAll(item.id);
       setToast(`✓ ${item.name} — saved hidden for review`);
       reset();
     } catch (e) {
@@ -235,35 +284,48 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
 
   // ---- render ---------------------------------------------------------------
 
-  const photoBlock = (
-    <div className="flex gap-3 items-start">
-      {photo ? (
-        <div className="shrink-0">
-          <img src={photo} alt="Captured" className="w-24 h-24 object-cover rounded-xl border border-stone-200" />
-          <button className="block w-full text-center text-xs text-stone-500 mt-1" onClick={() => setPhoto(null)}>
-            Retake
+  // Up to four photographs, every one of them removable and none required.
+  // The first is usually the scan-moment frame; the add tile disappears when
+  // the strip is full.
+  const photoStrip = (
+    <div className="flex gap-2 items-start flex-wrap">
+      {photos.map((p, i) => (
+        <div key={i} className="relative shrink-0">
+          <img
+            src={p}
+            alt={`Photo ${i + 1}`}
+            className="w-20 h-20 object-cover rounded-xl border border-stone-200"
+          />
+          <button
+            aria-label={`Remove photo ${i + 1}`}
+            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-stone-800 text-white text-xs leading-none"
+            onClick={() => setPhotos((ps) => ps.filter((_, j) => j !== i))}
+          >
+            ✕
           </button>
         </div>
-      ) : stream ? (
-        <button
-          className="shrink-0 w-24 h-24 rounded-xl border-2 border-dashed border-stone-300 text-xs text-stone-500"
-          onClick={() => void captureFrame()}
-        >
-          Take photo
-        </button>
-      ) : (
-        <label className="shrink-0 w-24 h-24 rounded-xl border-2 border-dashed border-stone-300 text-xs text-stone-500 flex items-center justify-center text-center cursor-pointer">
-          Add photo
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            aria-label="Add photo"
-            onChange={(e) => void pickFile(e.target.files?.[0])}
-          />
-        </label>
-      )}
+      ))}
+      {photos.length < MAX_PHOTOS &&
+        (stream ? (
+          <button
+            className="shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-stone-300 text-xs text-stone-500"
+            onClick={() => void captureFrameData().then(addPhoto)}
+          >
+            {photos.length ? "Add another" : "Take photo"}
+          </button>
+        ) : (
+          <label className="shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-stone-300 text-xs text-stone-500 flex items-center justify-center text-center cursor-pointer">
+            Add photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              aria-label="Add photo"
+              onChange={(e) => void pickFile(e.target.files?.[0])}
+            />
+          </label>
+        ))}
     </div>
   );
 
@@ -288,13 +350,15 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
           <>
             <p className="absolute top-3 left-0 right-0 text-center text-sm text-stone-100 drop-shadow">
               {cameraError ??
-                (reader
-                  ? "Point at the barcode"
-                  : "This browser cannot scan — type the code below")}
+                (reader === undefined
+                  ? "Starting…"
+                  : reader
+                    ? "Point at the barcode"
+                    : "This browser cannot scan — type the code below")}
             </p>
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-60 h-36 rounded-2xl border-2 border-amber-400/90" />
             <div className="absolute bottom-0 left-0 right-0 p-3 flex gap-2 items-center bg-gradient-to-t from-black/60 to-transparent">
-              {stream && (
+              {torchSupported && (
                 <button
                   className="px-3 py-2 rounded-full text-sm text-white border border-white/40 bg-white/10"
                   onClick={() => void toggleTorch()}
@@ -310,13 +374,17 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleCode(typed);
+                  if (e.key === "Enter") {
+                    void captureFrameData().then((snap) => handleCode(typed, snap));
+                  }
                 }}
               />
               <button
                 className="px-4 py-2 rounded-full text-sm bg-white text-stone-900 disabled:opacity-50"
                 disabled={busy || !typed.trim()}
-                onClick={() => void handleCode(typed)}
+                onClick={() =>
+                  void captureFrameData().then((snap) => handleCode(typed, snap))
+                }
               >
                 Find
               </button>
@@ -351,41 +419,41 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
           {error && (
             <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg">{error}</p>
           )}
-          <div className="flex gap-3 items-start">
-            {photoBlock}
-            <div className="flex-1">
-              {canPrice ? (
-                <label className="block">
-                  <span className="text-xs text-stone-500">Retail price</span>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="text-stone-500">{CURRENCY}</span>
-                    <input
-                      className="w-full border border-stone-300 rounded-lg px-3 py-2"
-                      value={priceEdit}
-                      onChange={(e) => setPriceEdit(e.target.value)}
-                      inputMode="decimal"
-                      aria-label="Retail price"
-                    />
-                  </div>
-                </label>
-              ) : (
-                // Read-only on purpose: prices are exactly what the shelf
-                // grant does not confer. The figure is on the shelf label the
-                // person is looking at anyway.
-                <p className="text-sm text-stone-600 mt-1">
-                  {CURRENCY}
-                  {sheet.item.price_retail.toFixed(2)} per {sheet.item.unit_code}
-                </p>
-              )}
-            </div>
-          </div>
+          {photoStrip}
+          {canPrice ? (
+            <label className="block">
+              <span className="text-xs text-stone-500">Retail price</span>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-stone-500">{CURRENCY}</span>
+                <input
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                  value={priceEdit}
+                  onChange={(e) => setPriceEdit(e.target.value)}
+                  inputMode="decimal"
+                  aria-label="Retail price"
+                />
+              </div>
+            </label>
+          ) : (
+            // Read-only on purpose: prices are exactly what the shelf grant
+            // does not confer. The figure is on the shelf label the person is
+            // looking at anyway.
+            <p className="text-sm text-stone-600">
+              {CURRENCY}
+              {sheet.item.price_retail.toFixed(2)} per {sheet.item.unit_code}
+            </p>
+          )}
           <div className="flex gap-2">
             <button className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700" onClick={reset} disabled={busy}>
               Skip
             </button>
             <button
               className="flex-1 py-2.5 rounded-xl bg-stone-800 text-white disabled:opacity-40"
-              disabled={busy || (!photo && !(canPrice && Number(priceEdit) !== sheet.item.price_retail))}
+              disabled={
+                busy ||
+                (photos.length === 0 &&
+                  !(canPrice && Number(priceEdit) !== sheet.item.price_retail))
+              }
               onClick={() => void saveFound(sheet.item)}
             >
               {busy ? "Saving…" : "Save"}
@@ -402,32 +470,30 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
           {error && (
             <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg">{error}</p>
           )}
-          <div className="flex gap-3 items-start">
-            {photoBlock}
-            <div className="flex-1 space-y-2">
-              <label className="block">
-                <span className="text-xs text-stone-500">Name</span>
+          {photoStrip}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-stone-500">Name</span>
+              <input
+                className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                aria-label="Item name"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-stone-500">Shelf price</span>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-stone-500">{CURRENCY}</span>
                 <input
-                  className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  aria-label="Item name"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2"
+                  value={newPrice}
+                  onChange={(e) => setNewPrice(e.target.value)}
+                  inputMode="decimal"
+                  aria-label="Shelf price"
                 />
-              </label>
-              <label className="block">
-                <span className="text-xs text-stone-500">Shelf price</span>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="text-stone-500">{CURRENCY}</span>
-                  <input
-                    className="w-full border border-stone-300 rounded-lg px-3 py-2"
-                    value={newPrice}
-                    onChange={(e) => setNewPrice(e.target.value)}
-                    inputMode="decimal"
-                    aria-label="Shelf price"
-                  />
-                </div>
-              </label>
-            </div>
+              </div>
+            </label>
           </div>
           <div className="flex gap-2">
             <button className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700" onClick={reset} disabled={busy}>

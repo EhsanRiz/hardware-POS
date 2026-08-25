@@ -42,3 +42,30 @@ export function createBarcodeReader(): BarcodeReader | null {
     return null;
   }
 }
+
+/**
+ * The reader the Shelf screen actually asks for: the native detector where it
+ * exists, otherwise the bundled ZXing decoder — which is what every iPhone
+ * gets, since all iOS browsers are WebKit and WebKit ships no
+ * BarcodeDetector. The fallback loads as its own chunk, so nothing pays for
+ * it until a detector-less browser opens the Shelf. Null only when even the
+ * bundled decoder failed to load, which leaves typing the digits.
+ */
+export async function loadBarcodeReader(): Promise<BarcodeReader | null> {
+  const native = createBarcodeReader();
+  if (native) return native;
+  try {
+    const zxing = await import("./barcodeZxing");
+    const reader = zxing.createZXingReader();
+    if (import.meta.env.MODE === "e2e") {
+      // The suite fakes optical input at this seam, so the one thing it
+      // cannot otherwise prove is that the bundled decoder truly decodes.
+      // The e2e build exposes the real reader for exactly that test — see
+      // "the bundled decoder really reads an EAN-13" in till.spec.ts.
+      (window as { __zxingReader?: BarcodeReader }).__zxingReader = reader;
+    }
+    return reader;
+  } catch {
+    return null;
+  }
+}

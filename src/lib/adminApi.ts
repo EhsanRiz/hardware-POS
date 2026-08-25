@@ -504,7 +504,8 @@ export async function listProductImages(productId: string): Promise<ProductImage
 export async function uploadProductImage(
   pin: string,
   productId: string,
-  dataUrl: string
+  dataUrl: string,
+  sortOrder = 0
 ): Promise<{ id: string; path: string }> {
   const res = await fetch(`${API_BASE}/functions/v1/product-image`, {
     method: "POST",
@@ -518,6 +519,7 @@ export async function uploadProductImage(
       pin,
       product_id: productId,
       image: dataUrl,
+      sort_order: sortOrder,
     }),
   });
 
