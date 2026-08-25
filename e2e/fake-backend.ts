@@ -83,6 +83,7 @@ export const REGISTER_TOKEN = "test-register-token";
 // PRODUCTS is module state and the shelf screen edits prices on it; taken at
 // load, before any test has run, so installBackend can put them back.
 const SEED_RETAIL = new Map(PRODUCTS.map((p) => [p.id, p.price_retail]));
+const SEED_STOCK = new Map(PRODUCTS.map((p) => [p.id, p.stock_qty]));
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -204,6 +205,14 @@ export class Backend {
       discount_limit_percent: null, discount_limit_amount: null,
       last_code_error: null },
   ];
+  /** Credit notes written against sales (0045), newest last. */
+  returns: {
+    id: string; sale_id: string; doc_number: string; reason: string;
+    refund_method: string; total: number; tax_total: number;
+    by_name: string; created_at: string;
+    items: { sale_item_id: string; product_id: string | null; name: string;
+             qty: number; line_total: number; restock: boolean }[];
+  }[] = [];
   /** Items recorded from the aisle (0044) — born hidden, priced as a proposal. */
   shelfAdded: (FakeProduct & { active: boolean })[] = [];
   /** Photographs the product-image function accepted, newest last. */
@@ -570,6 +579,48 @@ function searchProducts(q: string) {
  * Install the fake backend on a page. Returns the Backend so a test can flip it
  * offline and inspect what it received.
  */
+
+/**
+ * A sale's lines as pos_sale_items serves them, ids included — one place, so
+ * the return handlers and the reprint can never price the same line two ways.
+ * line_total carries the line's own discount AND its share of the sale-level
+ * one, exactly as the server stores it.
+ */
+export function fakeSaleLines(be: Backend, saleId: string) {
+  const idx = Number(String(saleId).replace("s", ""));
+  const sale = be.sales[idx];
+  if (!sale) return [];
+  const gross = (it: (typeof sale.items)[number]) =>
+    Math.round(
+      (PRODUCTS.find((p) => p.id === it.product_id)?.price_retail ?? 0) *
+        it.qty * 100
+    ) / 100;
+  const own = (it: (typeof sale.items)[number]) =>
+    it.discount_percent != null
+      ? Math.round(gross(it) * (it.discount_percent / 100) * 100) / 100
+      : Math.round((it.discount_amount ?? 0) * 100) / 100;
+  const net = sale.items.reduce((t, it) => t + gross(it) - own(it), 0);
+  return sale.items.map((it, n) => {
+    const prod = PRODUCTS.find((p) => p.id === it.product_id)!;
+    const line_total =
+      net > 0
+        ? Math.round(((gross(it) - own(it)) * sale.total * 100) / net) / 100
+        : 0;
+    return {
+      id: `${saleId}-i${n}`,
+      product_id: prod.id,
+      name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
+      allows_fraction: prod.allows_fraction,
+      qty: it.qty, unit_price: prod.price_retail,
+      line_total,
+      tax_amount: Math.round((line_total - line_total / 1.15) * 100) / 100,
+      discount_amount: own(it),
+      discount_percent: it.discount_percent ?? null,
+      discount_reason: it.discount_reason ?? null,
+    };
+  });
+}
+
 export async function installBackend(page: Page): Promise<Backend> {
   const be = new Backend();
 
@@ -582,6 +633,7 @@ export async function installBackend(page: Page): Promise<Backend> {
     // The shelf screen writes photographs and price fixes onto module state.
     p.image_url = null;
     p.price_retail = SEED_RETAIL.get(p.id)!;
+    p.stock_qty = SEED_STOCK.get(p.id) ?? null;
   }
 
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
@@ -1243,45 +1295,153 @@ export async function installBackend(page: Page): Promise<Backend> {
 
       case "rpc/pos_sale_items": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
-        const sale = be.sales[idx];
-        if (!sale) return json([]);
-        // What each line lost, as the server stores it: line_total is the share
-        // after this line's own discount AND its share of the sale-level one, so
-        // a reprint adds up to the total that was actually taken.
-        const gross = (it: (typeof sale.items)[number]) =>
-          Math.round(
-            (PRODUCTS.find((p) => p.id === it.product_id)?.price_retail ?? 0) *
-              it.qty * 100
-          ) / 100;
-        const own = (it: (typeof sale.items)[number]) =>
-          it.discount_percent != null
-            ? Math.round(gross(it) * (it.discount_percent / 100) * 100) / 100
-            : Math.round((it.discount_amount ?? 0) * 100) / 100;
-        const net = sale.items.reduce((t, it) => t + gross(it) - own(it), 0);
-        return json(
-          sale.items.map((it) => {
-            const prod = PRODUCTS.find((p) => p.id === it.product_id)!;
-            return {
-              name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
-              qty: it.qty, unit_price: prod.price_retail,
-              line_total:
-                net > 0
-                  ? Math.round(((gross(it) - own(it)) * sale.total * 100) / net) / 100
-                  : 0,
-              tax_amount: 0,
-              discount_amount: own(it),
-              discount_percent: it.discount_percent ?? null,
-              discount_reason: it.discount_reason ?? null,
-            };
-          })
-        );
+        // Served from the same helper the return handlers price with, so a
+        // reprint and a refund can never disagree about a line.
+        return json(fakeSaleLines(be, String(body.p_sale_id ?? "")));
       }
 
       case "rpc/pos_sale_payments": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const idx = Number(String(body.p_sale_id ?? "").replace("s", ""));
         return json(be.sales[idx]?.payments ?? []);
+      }
+
+      case "rpc/pos_sale_returns": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const saleId = String(body.p_sale_id ?? "");
+        return json(
+          be.returns
+            .filter((r) => r.sale_id === saleId)
+            .flatMap((r) =>
+              r.items.map((i) => ({
+                id: r.id, doc_number: r.doc_number, reason: r.reason,
+                refund_method: r.refund_method, total: r.total,
+                tax_total: r.tax_total, by_name: r.by_name,
+                created_at: r.created_at,
+                sale_item_id: i.sale_item_id, item_name: i.name,
+                item_qty: i.qty, item_line_total: i.line_total,
+                item_restock: i.restock,
+              }))
+            )
+        );
+      }
+
+      case "rpc/pos_return_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        if (!u.row.permissions.includes("void_refund")) {
+          return fail("Not permitted: void_refund");
+        }
+        const saleId = String(body.p_sale_id ?? "");
+        const idx = Number(saleId.replace("s", ""));
+        const sale = be.sales[idx];
+        if (!sale) return fail("Sale not found");
+        const parked = sale.discount_amount > 0 && !sale.approved_by && !sale.within_limit;
+        if (parked) return fail("Only a completed sale can take a return");
+        if (String(body.p_reason ?? "").trim() === "") {
+          return fail("A reason is required — it goes on the credit note");
+        }
+        const items = (body.p_items ?? []) as {
+          sale_item_id: string; qty: number; restock?: boolean;
+        }[];
+        if (!items.length) return fail("Nothing to return");
+
+        // How the money goes back is decided by how it came in.
+        let method = "cash";
+        if (sale.payment_method === "account") {
+          method = "account";
+        } else if (!be.cashSession) {
+          return fail(
+            "A cash refund needs the till session open — money cannot leave a drawer nobody is counting"
+          );
+        }
+
+        const lines = fakeSaleLines(be, saleId);
+        const returnedQty = (lineId: string) =>
+          be.returns
+            .filter((r) => r.sale_id === saleId)
+            .flatMap((r) => r.items)
+            .filter((i) => i.sale_item_id === lineId)
+            .reduce((t, i) => t + i.qty, 0);
+        const returnedTotal = (lineId: string) =>
+          be.returns
+            .filter((r) => r.sale_id === saleId)
+            .flatMap((r) => r.items)
+            .filter((i) => i.sale_item_id === lineId)
+            .reduce((t, i) => t + i.line_total, 0);
+
+        const seen = new Set<string>();
+        let total = 0;
+        let tax = 0;
+        const outItems: (typeof be.returns)[number]["items"] = [];
+        for (const it of items) {
+          const line = lines.find((l) => l.id === it.sale_item_id);
+          if (!line) return fail("That line is not on this sale");
+          if (seen.has(line.id)) return fail(`${line.name} appears twice on this return`);
+          seen.add(line.id);
+          const qty = Number(it.qty);
+          if (!(qty > 0)) return fail("A returned quantity must be more than nothing");
+          if (!line.allows_fraction && qty !== Math.trunc(qty)) {
+            return fail(`${line.name} is sold whole and comes back whole`);
+          }
+          const prev = returnedQty(line.id);
+          if (qty > line.qty - prev) {
+            return fail(
+              `Only ${line.qty - prev} of ${line.qty} ${line.unit_code} left to return on ${line.name}`
+            );
+          }
+          // The server's cents rule: the last of a line refunds exactly what
+          // remains un-refunded, however earlier partials rounded.
+          const refund =
+            qty === line.qty - prev
+              ? Math.round((line.line_total - returnedTotal(line.id)) * 100) / 100
+              : Math.round((line.line_total * qty) / line.qty * 100) / 100;
+          const lineTax = Math.round((refund - refund / 1.15) * 100) / 100;
+          total = Math.round((total + refund) * 100) / 100;
+          tax = Math.round((tax + lineTax) * 100) / 100;
+          outItems.push({
+            sale_item_id: line.id, product_id: line.product_id,
+            name: line.name, qty, line_total: refund,
+            restock: it.restock ?? true,
+          });
+          if (it.restock ?? true) {
+            const prod = PRODUCTS.find((exists) => exists.id === line.product_id);
+            if (prod && prod.stock_qty != null) prod.stock_qty += qty;
+          }
+        }
+        if (!(total > 0)) return fail("This return refunds nothing");
+
+        const row = {
+          id: "r" + (be.returns.length + 1),
+          sale_id: saleId,
+          doc_number: "CRN-" + String(be.returns.length + 1).padStart(6, "0"),
+          reason: String(body.p_reason).trim(),
+          refund_method: method,
+          total, tax_total: tax,
+          by_name: u.row.name,
+          created_at: new Date().toISOString(),
+          items: outItems,
+        };
+        be.returns.push(row);
+
+        // Cash leaves the drawer through the same door as every other
+        // pay-out, so cash-up already counts it.
+        if (method === "cash") {
+          be.cashMovements.push({
+            id: "m" + (be.cashMovements.length + 1),
+            kind: "pay_out", amount: total,
+            reason: `Refund ${row.doc_number}`,
+            by_name: u.row.name, created_at: row.created_at,
+          });
+        }
+
+        return json([{
+          return_id: row.id, doc_number: row.doc_number,
+          refund_method: row.refund_method, total: row.total,
+          tax_total: row.tax_total,
+        }]);
       }
 
       case "rpc/pos_staff_for_login":

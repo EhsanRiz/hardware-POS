@@ -1658,4 +1658,178 @@ begin
     'a plain counter PIN does not open the shelf');
 end $$;
 
+-- 0045: returns --------------------------------------------------------------
+--
+-- The properties that make a return trustworthy: the refund is what was paid
+-- (discounts included, cents exact across partial returns); nothing can come
+-- back twice; the money moves the way it came in — cash out of an OPEN
+-- drawer, or credit onto the account; and the shelf gains only what is fit
+-- to sell again.
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_cust uuid;
+  v_cem uuid; v_stock_before numeric;
+  v_sale public.sales; v_li public.sale_items;
+  r1 record; r2 record; r3 record;
+  v_bal numeric;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, stock_qty into v_cem, v_stock_before
+    from public.products where sku = 'CEM-425-50';
+
+  -- A drawer nobody is counting refuses to pay out: close anything open,
+  -- then try a cash refund with no session.
+  update public.cash_sessions set closed_at = now() where closed_at is null;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_cem, 'qty', 3, 'discount_amount', 0.01)),
+    p_payment_method => 'cash');
+  select * into v_li from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_li.line_total, 344.99::numeric,
+    'the fixture line carries an uneven total so the cents matter');
+
+  -- Not assert_refuses: with the guard deleted this still fails, but on
+  -- cash_movements' not-null session — a lucky crash, not a rule. The DESIGNED
+  -- refusal names the drawer, so the message is what proves the guard exists.
+  begin
+    perform public.pos_return_sale(v_tok, '1234', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      'no drawer open');
+    raise exception 'FAILED: a cash refund with no till session open — it was allowed';
+  exception when others then
+    if sqlerrm not like '%till session open%' then
+      raise exception 'FAILED: the no-session refusal is the deliberate one — got: %', sqlerrm;
+    end if;
+  end;
+
+  perform public.pos_cash_session_open(v_tok, '1234', 500);
+
+  -- Guards that hold regardless of the drawer.
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '2222', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      'not my right'),
+    'a counter PIN without void_refund cannot take a return');
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '1234', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      '  '),
+    'a return with no reason');
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '1234', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 0.5)),
+      'half a bag'),
+    'whole-unit goods come back whole');
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '1234', v_sale.id,
+      jsonb_build_array(
+        jsonb_build_object('sale_item_id', v_li.id, 'qty', 1),
+        jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      'twice in one note'),
+    'the same line cannot appear twice on one credit note');
+
+  -- First partial: 1 of 3, back to the shelf. Rounded per unit: 115.00.
+  select * into r1 from public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object(
+      'sale_item_id', v_li.id, 'qty', 1, 'restock', true)),
+    'burst bag');
+  perform assert(r1.doc_number like 'CRN-%', 'the credit note is numbered CRN-');
+  perform assert_eq(r1.refund_method, 'cash', 'a cash sale refunds cash');
+  perform assert_eq(r1.total, 115.00::numeric, 'a third of R344.99, rounded');
+  perform assert_eq(
+    (select stock_qty from public.products where id = v_cem),
+    v_stock_before - 3 + 1, 'one bag is back on the shelf');
+  perform assert_eq(
+    (select count(*)::int from public.cash_movements
+      where kind = 'pay_out' and amount = 115.00
+        and reason like 'Refund ' || r1.doc_number || '%'),
+    1, 'the cash left the drawer as a recorded pay-out');
+  -- Not "the latest row": everything here shares one transaction timestamp,
+  -- so recency is a coin toss. The claim is that a movement with the honest
+  -- reason exists, and gained exactly one bag.
+  perform assert_eq(
+    (select count(*)::int from public.stock_movements sm
+      where sm.product_id = v_cem and sm.reason::text = 'return'
+        and sm.qty_delta = 1),
+    1, 'the shelf knows WHY it gained a bag');
+
+  -- Second partial, damaged: recorded, refunded, never on the shelf.
+  select * into r2 from public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object(
+      'sale_item_id', v_li.id, 'qty', 1, 'restock', false)),
+    'bag torn in the bakkie');
+  perform assert_eq(r2.total, 115.00::numeric, 'same arithmetic for the second');
+  perform assert_eq(
+    (select stock_qty from public.products where id = v_cem),
+    v_stock_before - 3 + 1, 'a damaged bag never reaches the count');
+
+  -- The last of the line refunds EXACTLY what remains: 344.99 - 230.00.
+  select * into r3 from public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object(
+      'sale_item_id', v_li.id, 'qty', 1, 'restock', true)),
+    'changed his mind');
+  perform assert_eq(r3.total, 114.99::numeric,
+    'the last return pays out the remainder to the cent — no drift, no invention');
+
+  -- And now the line is spent.
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '1234', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      'greedy'),
+    'a fourth bag cannot come back off a sale of three');
+
+  -- The listing carries what the screen needs: every credit note, per line.
+  perform assert_eq(
+    (select count(*)::int from public.pos_sale_returns(v_tok, '1234', v_sale.id)),
+    3, 'three credit notes, one line each, all listed');
+  perform assert_eq(
+    (select sum(item_qty)::numeric from public.pos_sale_returns(v_tok, '1234', v_sale.id)
+      where sale_item_id = v_li.id),
+    3::numeric, 'and they sum to what the stepper must subtract');
+
+  -- A voided sale has nothing left to return.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'cash');
+  perform public.pos_void_sale(v_sale.id, v_tok, '1234', 'mistake');
+  select * into v_li from public.sale_items where sale_id = v_sale.id;
+  perform assert_refuses(
+    format('select public.pos_return_sale(%L, %L, %L, %L::jsonb, %L)',
+      v_tok, '1234', v_sale.id,
+      jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)),
+      'after the void'),
+    'a voided sale takes no return');
+
+  -- An account sale refunds the account — the customer never handed over
+  -- cash, so none is handed back. The balance falls through the ONE function
+  -- everything reads.
+  select id into v_cust from public.customers limit 1;
+  update public.customers set credit_limit = 100000 where id = v_cust;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 2)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+  select * into v_li from public.sale_items where sale_id = v_sale.id;
+  v_bal := public.customer_balance(v_cust);
+
+  select * into r1 from public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object(
+      'sale_item_id', v_li.id, 'qty', 1, 'restock', true)),
+    'wrong grade');
+  perform assert_eq(r1.refund_method, 'account',
+    'an account sale credits the account');
+  perform assert_eq(public.customer_balance(v_cust), v_bal - r1.total,
+    'and the customer owes exactly that much less');
+end $$;
+
 select 'all database tests passed' as result;

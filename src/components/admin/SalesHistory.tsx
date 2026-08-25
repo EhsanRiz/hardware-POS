@@ -11,8 +11,10 @@ import {
   type SaleRow,
   type SalesHistory as History,
 } from "../../lib/sales";
-import type { Sale, SaleItem } from "../../lib/types";
+import type { Sale, SaleItem, User } from "../../lib/types";
+import { can } from "../../lib/permissions";
 import ManagerPinModal from "../ManagerPinModal";
+import ReturnSheet from "./ReturnSheet";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "today", label: "Today" },
@@ -56,7 +58,7 @@ function saleWideDiscount(s: SaleRow, items: SaleItem[]): number {
  * because "can I have another copy of that slip" is the reason most people go
  * looking for an old sale in the first place.
  */
-export default function SalesHistory({ pin }: { pin: string }) {
+export default function SalesHistory({ pin, user }: { pin: string; user: User | null }) {
   const [range, setRange] = useState<RangeKey>("today");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -66,6 +68,8 @@ export default function SalesHistory({ pin }: { pin: string }) {
   const [printing, setPrinting] = useState<string | null>(null);
   // The sale a manager is being asked to release, if any.
   const [releasing, setReleasing] = useState<SaleRow | null>(null);
+  // The sale taking a return, if any.
+  const [returning, setReturning] = useState<SaleRow | null>(null);
   // Which sale has its discounts open, and the lines once they have been
   // fetched. Kept per sale rather than cleared on close: an owner working down
   // a day opens several, and a second look should not cost a second round trip.
@@ -361,6 +365,19 @@ export default function SalesHistory({ pin }: { pin: string }) {
                   </button>
                 )}
 
+                {/* Returns live where the invoice is found, because the
+                    customer arrives holding the slip. Only on completed
+                    sales, and only for the right that voids — the manager
+                    called to the counter. */}
+                {s.status === "completed" && can(user, "void_refund") && (
+                  <button
+                    className="text-sm text-red-800 underline underline-offset-2"
+                    onClick={() => setReturning(s)}
+                  >
+                    Return
+                  </button>
+                )}
+
                 <button
                   className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
                   disabled={printing === s.id}
@@ -418,6 +435,18 @@ export default function SalesHistory({ pin }: { pin: string }) {
               </li>
             ))}
           </ul>
+        )}
+
+        {returning && (
+          <ReturnSheet
+            pin={pin}
+            sale={returning}
+            onClose={() => setReturning(null)}
+            onDone={async () => {
+              setReturning(null);
+              await load();
+            }}
+          />
         )}
 
         {releasing && (

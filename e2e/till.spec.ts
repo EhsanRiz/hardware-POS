@@ -2708,3 +2708,144 @@ test("a search result opens the closer look, and the quantity is settled there",
   await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
   await expect(page.getByLabel("Quantity of Chain 6mm Galvanised")).toHaveValue("6");
 });
+
+test("goods come back against the invoice: partial, then the rest, then nothing", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // Three bags of cement, paid cash: R345.
+  for (let i = 0; i < 3; i++) {
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+  }
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  // The drawer is being counted, so it may pay out.
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  const p1 = PRODUCTS.find((p) => p.id === "p1")!;
+  const stockBefore = p1.stock_qty!;
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  await page.getByRole("button", { name: /^Return$/ }).click();
+
+  // Two of the three come back to the shelf.
+  await expect(page.getByText("sold 3 bag")).toBeVisible();
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("burst bags");
+  // Two thirds of R345, rounded the way the server rounds it.
+  await page.getByRole("button", { name: /Refund R230\.00 & print credit note/ }).click();
+
+  // The credit note is on the paper, not only in the database.
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("CREDIT NOTE");
+  await expect(slip).toContainText("CRN-000001");
+  await expect(slip).toContainText("returned to shelf");
+  await expect(slip).toContainText("REFUND");
+  await page.getByLabel("Close").click();
+
+  expect(be.returns).toHaveLength(1);
+  expect(be.returns[0].total).toBe(230);
+  expect(be.returns[0].refund_method).toBe("cash");
+  expect(be.returns[0].items[0].restock).toBe(true);
+  // The shelf gained the two bags, and the drawer paid out through the same
+  // door as every other pay-out.
+  expect(p1.stock_qty).toBe(stockBefore + 2);
+  const payout = be.cashMovements.find((m) => m.kind === "pay_out");
+  expect(payout?.amount).toBe(230);
+  expect(payout?.reason).toContain("CRN-000001");
+
+  // The last bag, damaged: the cents are the remainder, exactly, and the
+  // shelf never sees it.
+  await page.getByRole("button", { name: /^Return$/ }).click();
+  await expect(page.getByText(/2 already returned/)).toBeVisible();
+  const more = page.getByLabel("More Cement 42.5N 50kg");
+  await more.click();
+  // The stepper is capped at what remains — more taps change nothing.
+  await expect(more).toBeDisabled();
+  await page
+    .locator("li", { hasText: "Cement" })
+    .getByRole("button", { name: /^Damaged$/ })
+    .click();
+  await page.getByLabel("Return reason").fill("bag torn in the bakkie");
+  await page.getByRole("button", { name: /Refund R115\.00 & print credit note/ }).click();
+  await expect(slip).toContainText("CRN-000002");
+  await expect(slip).toContainText("damaged - written off");
+  await page.getByLabel("Close").click();
+
+  expect(be.returns).toHaveLength(2);
+  expect(be.returns[1].total).toBe(115);
+  expect(be.returns[1].items[0].restock).toBe(false);
+  expect(p1.stock_qty).toBe(stockBefore + 2);
+
+  // And now the sale is spent: nothing to step, nothing to refund.
+  await page.getByRole("button", { name: /^Return$/ }).click();
+  await expect(page.getByText("nothing left to return")).toBeVisible();
+  await expect(page.getByRole("button", { name: /& print credit note/ })).toBeDisabled();
+});
+
+test("no open till session means no cash refund", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  be.cashSession = null;
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  await page.getByRole("button", { name: /^Return$/ }).click();
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("no drawer open");
+  await page.getByRole("button", { name: /& print credit note/ }).click();
+
+  // The server's refusal reaches the person, in its own words, and nothing
+  // was recorded anywhere.
+  await expect(page.getByText(/till session open/)).toBeVisible();
+  expect(be.returns).toHaveLength(0);
+  expect(be.cashMovements.filter((m) => m.kind === "pay_out")).toHaveLength(0);
+});
+
+test("an account sale refunds the account, not the drawer", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  // No till session on purpose: an account credit never touches the drawer,
+  // so the missing session must not stand in its way.
+  be.cashSession = null;
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  await page.getByRole("button", { name: /^Return$/ }).click();
+  await expect(page.getByText(/Credited to the customer's account/)).toBeVisible();
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("wrong grade");
+  await page.getByRole("button", { name: /Refund R115\.00 & print credit note/ }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Credited to the customer's account");
+  await page.getByLabel("Close").click();
+
+  expect(be.returns).toHaveLength(1);
+  expect(be.returns[0].refund_method).toBe("account");
+  expect(be.cashMovements.filter((m) => m.kind === "pay_out")).toHaveLength(0);
+});

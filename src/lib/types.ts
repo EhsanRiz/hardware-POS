@@ -240,6 +240,8 @@ export interface Sale {
 }
 
 export interface SaleItem {
+  /** The sale line's own id — what a return names when it points at a line. */
+  id: string;
   name: string;
   sku: string | null;
   unit_code: string;
