@@ -39,7 +39,7 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="p-4 overflow-y-auto">
-          <p className="text-sm text-taupe mb-3">
+          <p className="text-sm text-stone-500 mb-3">
             These sales were taken on this device while offline, but the server
             rejected them on sync — so they are <b>not</b> in your totals. Retry
             once the menu is up to date, or discard if the sale wasn't real.
@@ -54,11 +54,11 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-stone-800">
                     {money(it.total)}
-                    <span className="ml-2 text-xs font-normal text-taupe capitalize">
+                    <span className="ml-2 text-xs font-normal text-stone-500 capitalize">
                       {it.paymentMethod}
                     </span>
                   </span>
-                  <span className="text-xs text-taupe">
+                  <span className="text-xs text-stone-500">
                     {new Date(it.createdAt).toLocaleString([], {
                       day: "2-digit",
                       month: "short",
@@ -68,7 +68,7 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
                   </span>
                 </div>
                 <p className="text-sm text-stone-600 mt-1">{summary(it)}</p>
-                <p className="text-xs text-taupe-light mt-0.5">
+                <p className="text-xs text-stone-400 mt-0.5">
                   by {it.cashierName}
                 </p>
                 {it.lastError && (
@@ -83,7 +83,7 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
                       void syncNow();
                     }}
                     disabled={!online}
-                    className="flex-1 h-10 rounded-lg bg-brand text-white text-sm font-semibold active:bg-brand-dark disabled:opacity-40"
+                    className="flex-1 h-10 rounded-lg bg-gold-400 text-colophon text-sm font-semibold active:bg-gold disabled:opacity-40"
                   >
                     {online ? "Try again" : "Offline"}
                   </button>

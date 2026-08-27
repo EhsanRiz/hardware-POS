@@ -123,7 +123,7 @@ export default function PrintPreview() {
             </button>
             <button
               onClick={handlePrint}
-              className="flex-1 h-11 rounded-lg bg-brand text-white font-semibold active:bg-brand-dark"
+              className="flex-1 h-11 rounded-lg bg-gold-400 text-colophon font-semibold active:bg-gold"
             >
               🖨️ Print
             </button>

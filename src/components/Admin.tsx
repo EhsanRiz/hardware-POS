@@ -193,8 +193,8 @@ export default function Admin({
     // 100dvh, not just inset-0: a phone's address bar overlays the layout
     // viewport, so the bottom of the last card sat underneath it with no way to
     // scroll clear. The dynamic unit tracks the chrome as it comes and goes.
-    <div className="fixed inset-0 h-[100dvh] bg-stone-50 z-40 flex flex-col">
-      <header className="flex items-center gap-2 px-4 py-3 bg-white border-b border-stone-200">
+    <div className="fixed inset-0 h-[100dvh] bg-paper z-40 flex flex-col">
+      <header className="flex items-center gap-2 px-4 py-3 bg-colophon">
         {/* On a phone the tabs collapse behind this burger. A strip of seven
             scrolled sideways there, and the far tabs — Staff and Shop, the
             ones a manager pulls a phone out FOR — were three screen-widths
@@ -202,7 +202,7 @@ export default function Admin({
             better tool (every section one tap, none hidden), so the burger
             exists only under sm. */}
         <button
-          className="sm:hidden shrink-0 w-9 h-9 flex flex-col items-center justify-center gap-1 rounded-lg border border-stone-300"
+          className="sm:hidden shrink-0 w-9 h-9 flex flex-col items-center justify-center gap-1 rounded-lg border border-white/30"
           aria-label="Sections"
           aria-expanded={menuOpen}
           onClick={() => {
@@ -213,14 +213,14 @@ export default function Admin({
             if (!menuOpen) void refreshWaiting();
           }}
         >
-          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
-          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
-          <span aria-hidden="true" className="block w-4 h-0.5 bg-stone-700 rounded-full" />
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-paper rounded-full" />
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-paper rounded-full" />
+          <span aria-hidden="true" className="block w-4 h-0.5 bg-paper rounded-full" />
         </button>
-        <h1 className="text-lg font-semibold shrink-0">Manage</h1>
+        <h1 className="text-lg font-semibold shrink-0 text-paper">Manage</h1>
         {/* A burger hides where you are, so the header says it instead. */}
-        <span className="sm:hidden min-w-0 truncate text-stone-500">
-          · <span className="font-medium text-stone-800">
+        <span className="sm:hidden min-w-0 truncate text-white/60">
+          · <span className="font-medium text-paper">
             {tabs.find((t) => t.key === tab)?.label}
           </span>
         </span>
@@ -236,7 +236,7 @@ export default function Admin({
               key={t.key}
               onClick={() => setTab(t.key)}
               className={`px-3 py-1.5 rounded-lg text-sm shrink-0 whitespace-nowrap ${
-                tab === t.key ? "bg-stone-800 text-white" : "text-stone-600"
+                tab === t.key ? "bg-white/10 text-gold-400 font-medium" : "text-white/70"
               }`}
             >
               {t.label}
@@ -246,7 +246,7 @@ export default function Admin({
         {/* Never inside the menu: the way out must not need finding. */}
         <button
           onClick={onClose}
-          className="ml-auto shrink-0 text-stone-500 px-2 py-1.5 text-sm whitespace-nowrap"
+          className="ml-auto shrink-0 text-white/70 px-2 py-1.5 text-sm whitespace-nowrap"
         >
           Back to till
         </button>
@@ -273,7 +273,7 @@ export default function Admin({
                 }}
                 aria-current={tab === t.key ? "page" : undefined}
                 className={`w-full flex items-center gap-2 text-left px-4 py-3 text-[15px] border-b border-stone-100 last:border-b-0 ${
-                  tab === t.key ? "bg-stone-100 font-medium" : "hover:bg-stone-50"
+                  tab === t.key ? "bg-gold-100 font-medium" : "hover:bg-stone-50"
                 }`}
               >
                 {t.label}
@@ -315,7 +315,7 @@ export default function Admin({
             />
             <button
               onClick={() => setEditing("new")}
-              className="px-4 rounded-xl bg-emerald-600 text-white font-medium"
+              className="px-4 rounded-xl bg-gold-400 text-colophon font-semibold"
             >
               New product
             </button>
@@ -337,7 +337,7 @@ export default function Admin({
                 }}
                 className={`px-3 py-1.5 rounded-full text-sm border ${
                   onSale === key
-                    ? "bg-stone-800 text-white border-stone-800"
+                    ? "bg-colophon text-paper border-colophon"
                     : "bg-white text-stone-600 border-stone-300"
                 }`}
               >
@@ -596,7 +596,7 @@ function ImportPanel({ pin, onDone }: { pin: string; onDone: () => void }) {
         <button
           onClick={run}
           disabled={busy || !text.trim()}
-          className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-40"
+          className="px-5 py-2.5 rounded-xl bg-gold-400 text-colophon font-semibold disabled:opacity-40"
         >
           {busy ? "Importing…" : "Import"}
         </button>

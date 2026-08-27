@@ -299,7 +299,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
           />
           <button
             aria-label={`Remove photo ${i + 1}`}
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-stone-800 text-white text-xs leading-none"
+            className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-colophon text-paper text-xs leading-none"
             onClick={() => setPhotos((ps) => ps.filter((_, j) => j !== i))}
           >
             ✕
@@ -448,7 +448,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
               Skip
             </button>
             <button
-              className="flex-1 py-2.5 rounded-xl bg-stone-800 text-white disabled:opacity-40"
+              className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
               disabled={
                 busy ||
                 (photos.length === 0 &&
@@ -500,7 +500,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
               Cancel
             </button>
             <button
-              className="flex-1 py-2.5 rounded-xl bg-stone-800 text-white disabled:opacity-40"
+              className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
               disabled={busy || !newName.trim() || newPrice.trim() === ""}
               onClick={() => void saveNew(sheet.barcode)}
             >

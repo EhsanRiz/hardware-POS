@@ -108,7 +108,7 @@ export default function CashUp({ pin }: { pin: string }) {
             />
           </label>
           <button
-            className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+            className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
             disabled={busy}
             onClick={() => run(() => openSession(pin, Number(float.replace(",", ".")) || 0))}
           >
@@ -182,7 +182,7 @@ export default function CashUp({ pin }: { pin: string }) {
 
             <div className="flex gap-2 items-center">
               <button
-                className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+                className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
                 disabled={busy || counted.trim() === ""}
                 onClick={() => {
                   // Closing is the end of the day and cannot be undone from
@@ -367,7 +367,7 @@ function Movements({
           <button
             key={k}
             className={`px-3 py-1.5 rounded-lg text-sm ${
-              kind === k ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-600"
+              kind === k ? "bg-colophon text-paper" : "bg-stone-100 text-stone-600"
             }`}
             onClick={() => setKind(k)}
           >
@@ -397,7 +397,7 @@ function Movements({
       </label>
       <div className="flex gap-2">
         <button
-          className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+          className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
           disabled={busy || !reason.trim() || !(Number(amount.replace(",", ".")) > 0)}
           onClick={() =>
             void onDone(async () => {

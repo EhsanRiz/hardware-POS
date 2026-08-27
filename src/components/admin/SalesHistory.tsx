@@ -178,7 +178,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
               onClick={() => setRange(r.key)}
               className={`px-3 py-1.5 rounded-full text-sm border ${
                 range === r.key
-                  ? "bg-stone-800 text-white border-stone-800"
+                  ? "bg-colophon text-paper border-stone-800"
                   : "bg-white text-stone-600 border-stone-300"
               }`}
             >
@@ -342,7 +342,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                     came off the shelf. */}
                 {s.status === "pending_approval" && (
                   <button
-                    className="text-sm text-emerald-700 underline underline-offset-2"
+                    className="text-sm text-gold-700 underline underline-offset-2"
                     onClick={() => setReleasing(s)}
                   >
                     Release

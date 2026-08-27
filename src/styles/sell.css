@@ -1848,3 +1848,20 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 
 .scan-field { box-shadow: var(--shadow-sm); }
+
+/* The header's calculator: an icon-only control that reads as part of the
+   green bar until touched — cream stroke, amber on press, 44px target. */
+.head-calc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 38px;
+  border-radius: 7px;
+  border: 1px solid rgba(245, 242, 234, 0.28);
+  background: transparent;
+  color: rgba(245, 242, 234, 0.85);
+  cursor: pointer;
+}
+.head-calc-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.head-calc-btn:active { color: var(--color-accent-400); border-color: var(--color-accent-400); }

@@ -2868,3 +2868,52 @@ test("a photographed product carries its picture onto the line", async ({ page }
   await expect(page.locator(".line-thumb")).toHaveCount(1);
   await expect(page.locator(".line-thumb")).toHaveAttribute("src", /^data:image/);
 });
+
+test("the header calculator does a quick sum and leaves the sale alone", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Calculator" }).click();
+  const calc = page.getByRole("dialog", { name: "Calculator" });
+  await expect(calc).toBeVisible();
+
+  // 12 × 3 = 36 — tapped, the way a counter uses it.
+  for (const key of ["1", "2", "×", "3", "="]) {
+    await calc.getByRole("button", { name: key, exact: true }).click();
+  }
+  await expect(calc.getByTestId("calc-display")).toHaveText("36");
+
+  // It floats: the sale underneath was never touched.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+
+  await calc.getByRole("button", { name: "Close calculator" }).click();
+  await expect(calc).toHaveCount(0);
+});
+
+test("Manage and the pop-ups wear the shop's colours, not a stranger's", async ({ page }) => {
+  // The two colours that make the scheme: colophon green and lifted amber.
+  // Asserted as computed styles because this is exactly the regression that
+  // happened — a stray palette shadowed the brand one and every primary
+  // button quietly turned another company's green.
+  const GREEN = "rgb(14, 58, 45)"; //  --color-colophon
+  const AMBER = "rgb(224, 180, 92)"; // --color-accent-400
+  const bg = (l: import("@playwright/test").Locator) =>
+    l.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  const head = page.locator("header").filter({ hasText: "Back to till" });
+  expect(await bg(head)).toBe(GREEN);
+  expect(await bg(page.getByRole("button", { name: "New product" }))).toBe(AMBER);
+  await page.getByRole("button", { name: "Back to till" }).click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  const dlg = page.getByRole("dialog", { name: "Apply discount" });
+  await expect(dlg).toBeVisible();
+  expect(await bg(dlg.getByRole("button", { name: "Apply" }))).toBe(AMBER);
+  expect(await bg(dlg.getByRole("button", { name: /^Amount/ }))).toBe(GREEN);
+});
