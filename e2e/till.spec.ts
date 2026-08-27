@@ -667,20 +667,20 @@ test("Manage → Sales shows what came off a sale, on what, and why", async ({ p
   // was given for was nowhere at all — the only way to find out was to reprint
   // the slip and read it, which is a strange thing to do at a desk.
   const row = page.locator("li", { has: page.getByRole("button", { name: /Reprint/ }) }).first();
-  await expect(row).toContainText("R165.00 off");
+  await expect(row).toContainText("R 165.00 off");
 
   await row.getByRole("button", { name: /Discounts on/i }).click();
 
   // The line that was marked down, named, with the words behind it.
   await expect(row).toContainText("Twin & Earth 2.5mm 100m");
   await expect(row).toContainText("less 10%");
-  await expect(row).toContainText("R145.00 off");
+  await expect(row).toContainText("R 145.00 off");
   await expect(row).toContainText("church job");
 
   // And the blanket discount said separately — spreading it across the lines it
   // touched would report a decision nobody made.
   await expect(row).toContainText("Off the whole sale");
-  await expect(row).toContainText("R20.00 off");
+  await expect(row).toContainText("R 20.00 off");
   await expect(row).toContainText("regular customer");
 });
 
@@ -1004,7 +1004,7 @@ test("a cent past the limit and the manager is still fetched", async ({ page }) 
   // than discovering at the tender screen that somebody has to be found. On a
   // single-line sale a blanket discount is the whole line, so 10% of R115 is
   // the ceiling either way.
-  await expect(page.getByText(/Over your R11.50/i)).toBeVisible();
+  await expect(page.getByText(/Over your R\s11\.50/i)).toBeVisible();
   await page.getByRole("button", { name: /^Apply$/ }).click();
   await expect(page.getByText(/Manager approval/i)).toBeVisible();
 });
@@ -1037,7 +1037,7 @@ test("an item cap refuses the owner, not only the counter", async ({ page }) => 
 
   // R115 of cement, capped at 5% — R5.75. The ceiling is stated up front, so
   // nobody promises 20% and then takes it back.
-  await expect(page.getByText(/Capped at R5.75 off/i)).toBeVisible();
+  await expect(page.getByText(/Capped at R\s5\.75 off/i)).toBeVisible();
   await page.getByLabel("Discount amount").fill("10");
   await expect(page.getByText(/no PIN will lift it/i)).toBeVisible();
   await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
@@ -1063,7 +1063,7 @@ test("a blanket discount cannot walk around an item cap", async ({ page }) => {
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: /^Discount$/ }).click();
 
-  await expect(page.getByText(/Capped at R5.75 off/i)).toBeVisible();
+  await expect(page.getByText(/Capped at R\s5\.75 off/i)).toBeVisible();
   await page.getByLabel("Discount amount").fill("20");
   await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
 });
@@ -1674,7 +1674,7 @@ test("a sale can be found again, and the day's takings add up", async ({ page })
   // are both sales together.
   await page.getByRole("button", { name: /^Last 7 days$/ }).click();
   await expect(rows).toHaveCount(2);
-  await expect(page.getByText("R615.00")).toBeVisible();
+  await expect(page.getByText("R 615.00")).toBeVisible();
 });
 
 test("an old slip reprints from the sales list", async ({ page }) => {
@@ -1948,7 +1948,7 @@ test("a shelf-only signer gets the camera, no catalogue, and no price field", as
   // The price is a fact on display, not a field: the whole safety story of
   // the shelf grant is that its holder cannot change what the till charges.
   await expect(page.getByLabel("Retail price")).toHaveCount(0);
-  await expect(page.getByText(/R115\.00 per bag/)).toBeVisible();
+  await expect(page.getByText(/R 115\.00 per bag/)).toBeVisible();
 
   // The scan already took the picture; saving it is one tap.
   await expect(page.getByAltText("Photo 1")).toBeVisible();
@@ -2740,7 +2740,7 @@ test("goods come back against the invoice: partial, then the rest, then nothing"
   await page.getByLabel("More Cement 42.5N 50kg").click();
   await page.getByLabel("Return reason").fill("burst bags");
   // Two thirds of R345, rounded the way the server rounds it.
-  await page.getByRole("button", { name: /Refund R230\.00 & print credit note/ }).click();
+  await page.getByRole("button", { name: /Refund R\s230\.00 & print credit note/ }).click();
 
   // The credit note is on the paper, not only in the database.
   const slip = page.locator("#print-area");
@@ -2774,7 +2774,7 @@ test("goods come back against the invoice: partial, then the rest, then nothing"
     .getByRole("button", { name: /^Damaged$/ })
     .click();
   await page.getByLabel("Return reason").fill("bag torn in the bakkie");
-  await page.getByRole("button", { name: /Refund R115\.00 & print credit note/ }).click();
+  await page.getByRole("button", { name: /Refund R\s115\.00 & print credit note/ }).click();
   await expect(slip).toContainText("CRN-000002");
   await expect(slip).toContainText("damaged - written off");
   await page.getByLabel("Close").click();
@@ -2840,7 +2840,7 @@ test("an account sale refunds the account, not the drawer", async ({ page }) => 
   await expect(page.getByText(/Credited to the customer's account/)).toBeVisible();
   await page.getByLabel("More Cement 42.5N 50kg").click();
   await page.getByLabel("Return reason").fill("wrong grade");
-  await page.getByRole("button", { name: /Refund R115\.00 & print credit note/ }).click();
+  await page.getByRole("button", { name: /Refund R\s115\.00 & print credit note/ }).click();
   const slip = page.locator("#print-area");
   await expect(slip).toContainText("Credited to the customer's account");
   await page.getByLabel("Close").click();
@@ -2848,4 +2848,23 @@ test("an account sale refunds the account, not the drawer", async ({ page }) => 
   expect(be.returns).toHaveLength(1);
   expect(be.returns[0].refund_method).toBe("account");
   expect(be.cashMovements.filter((m) => m.kind === "pay_out")).toHaveLength(0);
+});
+
+test("a photographed product carries its picture onto the line", async ({ page }) => {
+  // A 1x1 gif: imageSrc passes data: URLs straight through, so the fake needs
+  // no storage. installBackend resets image_url between tests.
+  PRODUCTS.find((p) => p.id === "p1")!.image_url =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
+
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "chain", "Chain 6mm Galvanised", "2");
+
+  // The photographed line shows its picture; the unphotographed one simply
+  // starts at the text — a grey placeholder box on every bare line would
+  // punish the catalogue for being a work in progress.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+  await expect(page.locator(".line-thumb")).toHaveCount(1);
+  await expect(page.locator(".line-thumb")).toHaveAttribute("src", /^data:image/);
 });

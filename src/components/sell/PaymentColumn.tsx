@@ -390,6 +390,7 @@ export default function PaymentColumn({
             <button
               key={t.method}
               type="button"
+              data-method={t.method}
               className={`tender-btn${
                 taken.some((x) => x.payment.method === t.method) ? " is-taken" : ""
               }`}
@@ -453,7 +454,7 @@ export default function PaymentColumn({
                 <button
                   key={k}
                   type="button"
-                  className={quick ? "quick" : undefined}
+                  className={quick ? `quick note-${k.toLowerCase()}` : undefined}
                   disabled={settled}
                   onClick={() => (quick ? setEntry(k.slice(1)) : key(k))}
                   aria-label={k === "⌫" ? "Backspace" : quick ? `${k} note` : k}

@@ -1691,3 +1691,160 @@ tr.is-void td:last-child { text-decoration: none; }
   .sync-chip.is-failed { font-size: 12px; }
   .sell-head-right .btn-line { padding: 0 10px; font-size: 13px; }
 }
+
+/* ---- Direction A ---------------------------------------------------------
+ *
+ * The client's word for the till was "dull", and the diagnosis held up: under
+ * "colour is stroke, not fill" every element whispers at the same volume, and
+ * the brand's other half — the landing page's green ground with amber on it —
+ * never reached the screen the shop looks at all day.
+ *
+ * This layer brings it in, deliberately narrow: colour concentrates where
+ * identity and money live (the header, the total, the one committing button,
+ * the notes in the drawer), and the workspace stays calm cream. Nothing moves;
+ * no target shrinks; the layout tiers above are untouched. It is written as an
+ * override layer rather than edits-in-place so the pass reads as one decision.
+ */
+
+/* The header takes the green ground the sign-in screen already owns: the brand
+   speaks from the frame, not from the workspace. */
+.sell-head {
+  background: var(--color-colophon);
+  border-bottom-color: rgba(0, 0, 0, 0.25);
+}
+.sell-wordmark { color: var(--color-bg); }
+.sell-wordmark span { color: var(--color-accent-400); }
+.sell-edition { color: var(--color-accent-400); }
+.sell-nav button { color: var(--color-neutral-400); }
+.sell-nav button:hover:not(:disabled) { color: var(--color-accent-400); }
+.sell-nav button[aria-current="page"] {
+  color: var(--color-bg);
+  border-bottom-color: var(--color-accent-400);
+}
+.sell-till { color: var(--color-neutral-400); }
+.sell-divider-v { background: var(--divider-dark); }
+.sell-cashier-name { color: var(--color-bg); }
+.sell-cashier-role { color: var(--color-neutral-400); }
+.sync-chip { border-color: var(--color-accent-400); color: var(--color-accent-400); }
+.sync-chip.is-offline { border-color: var(--divider-dark); color: var(--color-neutral-400); }
+/* Owing-red fails contrast on green; the same alarm, lifted for the ground. */
+.sync-chip.is-failed { border-color: #f0a99e; color: #f0a99e; }
+
+/* Manage is the one filled control in the header — amber ground, ink text,
+   the pairing the brand sheet audited. Sign out stays quiet. */
+.sell-head .btn-line {
+  background: var(--color-accent-400);
+  border-color: var(--color-accent-400);
+  color: var(--color-colophon);
+  font-weight: 600;
+}
+.sell-head .btn-line:hover:not(:disabled) {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-colophon);
+}
+.sell-head .btn-line.quiet {
+  background: none;
+  border-color: transparent;
+  color: var(--color-neutral-400);
+  font-weight: 500;
+}
+.sell-head .btn-line.quiet:hover:not(:disabled) {
+  color: var(--color-bg);
+  background: rgba(245, 242, 234, 0.08);
+}
+
+/* The total gets a stage: the same green, as a card. It is the figure the
+   customer reads from a metre away, and now it reads like the shop's own
+   signage — amber label, white figure, the change in the money-green that
+   means "coming back to you". */
+.pay { background: var(--color-neutral-100); }
+.totals {
+  background: var(--color-colophon);
+  border-radius: 10px;
+  border-bottom: 0;
+  margin: 14px var(--sell-pad) 0;
+  padding: 16px 18px 20px;
+  box-shadow: var(--shadow-md);
+}
+.totals-row { color: var(--color-neutral-400); }
+.totals-row.is-discount { color: var(--color-accent-400); }
+.double-rule, .double-rule::after { background: var(--color-accent-400); }
+.total-row .lbl { color: var(--color-accent-400); }
+.total-row .fig { color: var(--color-bg); }
+
+/* Tender buttons become buttons: a light card, a shadow, and each method's
+   icon in its own colour — the cue a cashier reads before the word. */
+.tender-btn {
+  background: var(--color-neutral-100);
+  box-shadow: var(--shadow-sm);
+}
+.tender-btn[data-method="cash"] svg { color: #2f7d4f; }
+.tender-btn[data-method="card"] svg { color: #3b5e8c; }
+.tender-btn[data-method="eft"] svg { color: var(--color-accent-700); }
+.tender-btn[data-method="zapper"] svg { color: #6b4b8a; }
+.tender-btn[data-method="account"] svg { color: var(--color-accent-700); }
+.tender-btn:disabled { box-shadow: none; background: transparent; }
+
+/* Keys with an edge to press: the bottom border is the key's depth, and it
+   flattens on :active the way a key should. */
+.keypad button {
+  background: var(--color-neutral-100);
+  border-bottom-width: 2.5px;
+  border-bottom-color: var(--color-neutral-300);
+}
+.keypad button:active {
+  border-bottom-width: 1px;
+  margin-top: 1.5px;
+}
+/* The quick keys wear the banknotes' own colours — R200 orange, R100 blue,
+   R50 pink, exactly as they come out of the drawer. Recognition beats
+   reading at a busy counter. */
+.keypad .quick { font-weight: 650; font-size: 14px; }
+.keypad .note-r200 { background: #fdf0e3; border-color: #e5b98a; border-bottom-color: #d5a976; color: #a35e17; }
+.keypad .note-r100 { background: #e9eef6; border-color: #a9bcd8; border-bottom-color: #99acc8; color: #3b5e8c; }
+.keypad .note-r50  { background: #fbe9ec; border-color: #e3a9b4; border-bottom-color: #d399a4; color: #a13a52; }
+
+/* The committing button, finally allowed to look like one: amber ground, ink
+   text — the header's Manage pairing at full size. Still the only filled
+   control on the cream. */
+.btn-tender {
+  background: var(--color-accent-400);
+  border-color: var(--color-accent-400);
+  color: var(--color-colophon);
+  box-shadow: 0 3px 10px rgba(200, 145, 47, 0.35);
+}
+.btn-tender:hover:not(:disabled) {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.btn-tender:disabled {
+  background: rgba(200, 145, 47, 0.1);
+  border-color: var(--color-accent);
+  color: var(--color-accent-700);
+  box-shadow: none;
+}
+.pay-foot { background: var(--color-neutral-100); }
+
+/* The goods on the screen: the photographs Shelf capture is filling the
+   catalogue with, on the lines themselves. A fixed box keeps the rows on a
+   grid whether or not this product has been photographed yet. */
+.line-main { display: flex; gap: 12px; align-items: flex-start; }
+.line-main-text { min-width: 0; flex: 1; }
+.line-thumb {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--divider);
+  background: var(--color-surface);
+  flex: none;
+  display: block;
+}
+/* Rows alternate a breath of tint, so a long sale reads as rows rather than
+   as a page of text. Fresh-scan tint and hover both outrank it. */
+.lines-scroll .line-row:nth-child(even):not(.is-fresh):not(:hover) {
+  background: var(--color-neutral-100);
+}
+
+.scan-field { box-shadow: var(--shadow-sm); }

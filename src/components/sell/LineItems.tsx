@@ -1,4 +1,5 @@
 import { money, quantity } from "../../lib/money";
+import { imageSrc } from "../../lib/images";
 import type { CartLine } from "../../lib/types";
 
 /**
@@ -74,6 +75,16 @@ export default function LineItems({
               <span className="line-n">{i + 1}</span>
 
               <span className="line-main">
+                {/* The photograph, when the catalogue has one — the same
+                    picture the search result showed, so the line confirms the
+                    choice it came from. Absent, the text simply starts where
+                    it always did; an empty grey box on every unphotographed
+                    line would punish the catalogue for being a work in
+                    progress. */}
+                {p.image_url != null && (
+                  <img className="line-thumb" src={imageSrc(p.image_url) ?? undefined} alt="" />
+                )}
+                <span className="line-main-text">
                 {/* The name is a button: "is that the right one?" gets asked
                     about a line already in the sale at least as often as about
                     a search result. */}
@@ -116,6 +127,7 @@ export default function LineItems({
                   ) : (
                     "not stock-tracked"
                   )}
+                </span>
                 </span>
               </span>
 
