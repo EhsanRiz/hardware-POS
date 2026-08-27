@@ -250,7 +250,7 @@ export default function ReturnSheet({
                           shown only once there is a quantity for it to bind. */}
                       <span className={`flex text-xs border border-stone-300 rounded-lg overflow-hidden ${st.qty === 0 ? "invisible" : ""}`}>
                         <button
-                          className={`px-2.5 py-2 ${st.restock ? "bg-stone-800 text-white" : "text-stone-500"}`}
+                          className={`px-2.5 py-2 ${st.restock ? "bg-colophon text-paper" : "text-stone-500"}`}
                           onClick={() => setState((s) => ({ ...s, [li.id]: { ...st, restock: true } }))}
                         >
                           Shelf
@@ -309,7 +309,7 @@ export default function ReturnSheet({
                   Cancel
                 </button>
                 <button
-                  className="flex-1 py-2.5 rounded-xl bg-stone-800 text-white disabled:opacity-40"
+                  className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
                   disabled={busy || chosen.length === 0 || !reason.trim()}
                   onClick={() => void confirm()}
                 >

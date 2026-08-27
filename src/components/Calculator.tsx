@@ -136,9 +136,9 @@ export default function Calculator({ onClose }: { onClose: () => void }) {
   }) => {
     const styles: Record<string, string> = {
       num: "bg-stone-100 text-stone-800 active:bg-stone-200",
-      op: "bg-brand-light text-brand-dark font-semibold active:bg-brand/20",
+      op: "bg-gold-100 text-gold-700 font-semibold active:bg-surface",
       fn: "bg-stone-200 text-stone-700 active:bg-stone-300",
-      eq: "bg-brand text-white font-semibold active:bg-brand-dark",
+      eq: "bg-gold-400 text-colophon font-semibold active:bg-gold",
     };
     return (
       <button
@@ -153,13 +153,17 @@ export default function Calculator({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed top-16 right-4 z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in">
-      <div className="flex items-center justify-between px-4 h-12 border-b border-stone-100">
-        <span className="font-semibold text-stone-800">Calculator</span>
+    <div
+      className="fixed top-16 right-4 z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in"
+      role="dialog"
+      aria-label="Calculator"
+    >
+      <div className="flex items-center justify-between px-4 h-12 rounded-t-2xl bg-colophon">
+        <span className="font-semibold text-paper">Calculator</span>
         <button
           onClick={onClose}
           aria-label="Close calculator"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-stone-500 hover:bg-stone-100 active:bg-stone-200 text-xl leading-none"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-white/70 hover:bg-white/10 active:bg-white/20 text-xl leading-none"
         >
           ✕
         </button>
@@ -170,7 +174,10 @@ export default function Calculator({ onClose }: { onClose: () => void }) {
           <div className="h-5 text-sm text-stone-400 truncate">
             {history || " "}
           </div>
-          <div className="text-4xl font-semibold text-stone-900 leading-tight overflow-x-auto whitespace-nowrap">
+          <div
+            data-testid="calc-display"
+            className="text-4xl font-semibold text-stone-900 leading-tight overflow-x-auto whitespace-nowrap tabular-nums"
+          >
             {display}
           </div>
         </div>

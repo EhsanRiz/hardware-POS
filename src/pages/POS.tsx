@@ -43,6 +43,7 @@ import Accounts from "../components/accounts/Accounts";
 import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quotes";
 import Stock from "../components/stock/Stock";
 import Admin from "../components/Admin";
+import Calculator from "../components/Calculator";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
 import PairRegister from "../components/PairRegister";
@@ -189,6 +190,8 @@ export default function POS() {
   // The line a discount is being set on. The sale-level one has no product id.
   const [discountLine, setDiscountLine] = useState<string | null>(null);
   const [showFailed, setShowFailed] = useState(false);
+  // The header's pocket calculator. A toggle, so the same button dismisses it.
+  const [showCalc, setShowCalc] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
   // The back office asks for the PIN once and keeps it in memory only: every
   // admin RPC re-verifies it server-side, so it has to travel with each call.
@@ -641,6 +644,7 @@ export default function POS() {
       onShowFailed={() => setShowFailed(true)}
       onManage={() => setAskAdminPin(true)}
       onSignOut={logout}
+      onCalculator={() => setShowCalc((v) => !v)}
     />
   );
 
@@ -665,6 +669,9 @@ export default function POS() {
             © {new Date().getFullYear()} InnovaEarth · All rights reserved
           </span>
         </footer>
+        {/* The calculator follows the header, so a quick sum works from
+            Accounts or a quote as well as from the counter. */}
+        {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
       </div>
     );
   }
@@ -1039,6 +1046,7 @@ export default function POS() {
       )}
 
       {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
+      {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
     </div>
   );
 }

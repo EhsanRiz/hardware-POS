@@ -219,7 +219,7 @@ export default function ShopSettings({ pin }: { pin: string }) {
           only raise the question of which one this field belongs to. */}
       <div className="max-w-xl flex items-center gap-3 mt-4">
         <button
-          className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+          className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
           disabled={busy || !f.shop_name.trim()}
           onClick={save}
         >

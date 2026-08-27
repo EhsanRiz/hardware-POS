@@ -1,5 +1,5 @@
 import { InnovaLockup } from "../InnovaMark";
-import { CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
+import { CalcIcon, CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
 import { registerName } from "../../lib/device";
 import { roleTitle } from "../../lib/permissions";
 import { shopSettings } from "../../lib/settings";
@@ -26,6 +26,7 @@ export default function SellHeader({
   onShowFailed,
   onManage,
   onSignOut,
+  onCalculator,
 }: {
   user: User | null;
   online: boolean;
@@ -44,6 +45,8 @@ export default function SellHeader({
   onShowFailed: () => void;
   onManage: () => void;
   onSignOut: () => void;
+  /** Open or close the floating calculator. */
+  onCalculator?: () => void;
 }) {
   return (
     <header className="sell-head">
@@ -87,6 +90,18 @@ export default function SellHeader({
       </nav>
 
       <div className="sell-head-right">
+        {/* Quick sums — a builder's "3 sheets at 289 less 10%" worked out
+            without touching the sale in progress. Floats over the till. */}
+        {onCalculator && (
+          <button
+            className="head-calc-btn"
+            aria-label="Calculator"
+            title="Calculator"
+            onClick={onCalculator}
+          >
+            <CalcIcon />
+          </button>
+        )}
         <SyncChip
           online={online}
           pending={pending}

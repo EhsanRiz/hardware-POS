@@ -45,23 +45,11 @@ export default {
         s1: "4.6px", s2: "9.2px", s3: "13.8px",
         s4: "18.4px", s6: "27.6px", s8: "36.8px",
       },
-      // Palette pulled directly from the 4D Climate Solutions logo.
-      colors: {
-        brand: {
-          DEFAULT: "#189c3a", // "4D" leaf green (primary actions)
-          dark: "#0f7a2c",
-          light: "#e9f6ec",
-        },
-        accent: {
-          DEFAULT: "#8dc63f", // lime green (icon centre bar)
-          dark: "#6fa32f",
-        },
-        info: "#29abe2", // sky blue (icon left bar)
-        taupe: {
-          DEFAULT: "#7a6a5d", // tagline brown (muted text/borders)
-          light: "#9a8478",
-        },
-      },
+      // A second `colors` key used to sit here with a palette lifted from a
+      // different project's logo. In a JS object literal the later key wins,
+      // so it silently REPLACED the brand block above — which is why bright
+      // leaf-green buttons kept appearing on a green-and-gold till. The brand
+      // block above is the only palette now; do not add another `colors` key.
       keyframes: {
         "fade-in": {
           "0%": { opacity: "0" },

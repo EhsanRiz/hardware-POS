@@ -90,7 +90,7 @@ export default function Approvals({ pin }: { pin: string }) {
                 aria-pressed={minutes === m}
                 className={`flex-1 h-11 rounded-lg text-sm font-medium ${
                   minutes === m
-                    ? "bg-stone-800 text-white"
+                    ? "bg-colophon text-paper"
                     : "bg-stone-100 text-stone-600"
                 }`}
               >
@@ -134,7 +134,7 @@ export default function Approvals({ pin }: { pin: string }) {
         </label>
 
         <button
-          className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+          className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
           disabled={busy}
           onClick={issue}
         >

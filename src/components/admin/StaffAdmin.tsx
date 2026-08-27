@@ -97,7 +97,7 @@ export default function StaffAdmin({
           {staff.filter((s) => s.active).length} active
         </span>
         <button
-          className="ml-auto px-3 py-1.5 rounded-lg bg-stone-800 text-white text-sm"
+          className="ml-auto px-3 py-1.5 rounded-lg bg-colophon text-paper text-sm"
           onClick={() => setEditing("new")}
         >
           Add someone
@@ -346,7 +346,7 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
         </div>
 
         <div className="px-5 py-4 border-t border-stone-200 flex justify-end">
-          <button className="px-4 py-2 rounded-lg bg-stone-800 text-white" onClick={onClose}>
+          <button className="px-4 py-2 rounded-lg bg-colophon text-paper" onClick={onClose}>
             Got it
           </button>
         </div>
@@ -735,7 +735,7 @@ function StaffEditor({
             Cancel
           </button>
           <button
-            className="px-4 py-2 rounded-lg bg-stone-800 text-white disabled:opacity-40"
+            className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
             disabled={busy || !name.trim() || (!staff && !phone.trim())}
             onClick={save}
           >

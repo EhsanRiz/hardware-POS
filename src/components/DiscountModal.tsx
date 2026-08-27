@@ -138,7 +138,7 @@ export default function DiscountModal({
               aria-pressed={mode === k}
               className={`flex-1 h-11 rounded-lg text-sm font-medium ${
                 mode === k
-                  ? "bg-stone-800 text-white"
+                  ? "bg-colophon text-paper"
                   : "bg-stone-100 text-stone-600"
               }`}
             >
@@ -225,7 +225,7 @@ export default function DiscountModal({
           <button
             onClick={apply}
             disabled={invalid}
-            className="flex-1 h-12 rounded-lg bg-brand text-white font-semibold active:bg-brand-dark disabled:opacity-40"
+            className="flex-1 h-12 rounded-lg bg-gold-400 text-colophon font-semibold active:bg-gold disabled:opacity-40"
           >
             Apply
           </button>

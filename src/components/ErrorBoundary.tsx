@@ -21,13 +21,13 @@ export default class ErrorBoundary extends Component<
       return (
         <div className="min-h-full flex flex-col items-center justify-center p-6 text-center gap-4 bg-stone-50">
           <p className="text-2xl font-bold text-stone-800">Something went wrong</p>
-          <p className="text-taupe max-w-xs">
+          <p className="text-stone-500 max-w-xs">
             The app hit an unexpected error. Reload to get back to the till — your
             saved orders are safe.
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="h-14 px-8 rounded-xl bg-brand text-white font-semibold text-lg active:bg-brand-dark"
+            className="h-14 px-8 rounded-xl bg-gold-400 text-colophon font-semibold text-lg active:bg-gold"
           >
             Reload
           </button>

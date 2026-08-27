@@ -64,12 +64,12 @@ export default function InstallButton({ className = "" }: { className?: string }
     <div className={`flex flex-col items-center ${className}`}>
       <button
         onClick={handleClick}
-        className="h-10 px-5 rounded-lg bg-brand text-white font-semibold text-sm active:bg-brand-dark transition-transform active:scale-95"
+        className="h-10 px-5 rounded-lg bg-gold-400 text-colophon font-semibold text-sm active:bg-gold transition-transform active:scale-95"
       >
         📲 Install app
       </button>
       {showIosHint && (
-        <p className="mt-2 max-w-xs text-center text-xs text-taupe">
+        <p className="mt-2 max-w-xs text-center text-xs text-stone-500">
           Tap the <b>Share</b> icon in Safari, then choose{" "}
           <b>Add to Home Screen</b>.
         </p>
