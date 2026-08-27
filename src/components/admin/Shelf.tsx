@@ -8,6 +8,7 @@ import {
 } from "../../lib/adminApi";
 import { loadBarcodeReader, type BarcodeReader } from "../../lib/barcode";
 import { CURRENCY } from "../../lib/config";
+import { money } from "../../lib/money";
 import { errorMessage } from "../../lib/errors";
 import { downscaleImage } from "../../lib/images";
 import { can } from "../../lib/permissions";
@@ -439,8 +440,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
             // does not confer. The figure is on the shelf label the person is
             // looking at anyway.
             <p className="text-sm text-stone-600">
-              {CURRENCY}
-              {sheet.item.price_retail.toFixed(2)} per {sheet.item.unit_code}
+              {money(sheet.item.price_retail)} per {sheet.item.unit_code}
             </p>
           )}
           <div className="flex gap-2">

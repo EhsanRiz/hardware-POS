@@ -47,7 +47,7 @@ export default function SellHeader({
 }) {
   return (
     <header className="sell-head">
-      <InnovaLockup edition="Hardware" />
+      <InnovaLockup edition="Hardware" onGreen />
 
       {/* Every section lives on the till, because the people doing this work
           are standing at this tablet: the cashier quoting a builder, the
