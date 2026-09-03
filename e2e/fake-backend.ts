@@ -320,6 +320,13 @@ export class Backend {
       this.cashMovements.filter((m) => m.kind === "pay_out").reduce((t, m) => t + m.amount, 0)
     );
     const cashSales = tenders.cash ?? 0;
+    // 0047: every settlement method, and the money that went back.
+    const accountPayments: Record<string, number> = {};
+    for (const p of this.accountPayments.slice(s.fromPayments)) {
+      if (p.voided) continue;
+      accountPayments[p.method] = round2((accountPayments[p.method] ?? 0) + p.amount);
+    }
+    const refunds = this.returns.filter((r) => r.created_at >= s.opened_at);
     return {
       sales_count: inWindow.length,
       sales_total: total,
@@ -328,6 +335,9 @@ export class Backend {
       tenders,
       cash_sales: cashSales,
       account_cash: accountCash,
+      account_payments: accountPayments,
+      refunds_count: refunds.length,
+      refunds_total: round2(refunds.reduce((t, r) => t + r.total, 0)),
       pay_in: payIn,
       pay_out: payOut,
       expected_cash: round2(s.opening_float + cashSales + accountCash + payIn - payOut),
@@ -1098,6 +1108,19 @@ export async function installBackend(page: Page): Promise<Backend> {
         };
         be.cashMovements = [];
         return json(be.cashSession);
+      }
+
+      case "rpc/pos_cash_session_status": {
+        // Register token only, as 0047 has it: a time and a name, no figures.
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!be.cashSession) return json(null);
+        const hours = (Date.now() - new Date(be.cashSession.opened_at).getTime()) / 36e5;
+        return json({
+          id: be.cashSession.id,
+          opened_at: be.cashSession.opened_at,
+          opened_by_name: be.cashSession.opened_by_name,
+          hours_open: Math.round(hours * 10) / 10,
+        });
       }
 
       case "rpc/pos_cash_session_current": {

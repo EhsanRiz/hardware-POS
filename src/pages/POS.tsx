@@ -24,6 +24,7 @@ import {
 } from "../lib/discountLimits";
 import { money } from "../lib/money";
 import { cacheGet, cacheSet } from "../lib/localCache";
+import { cashSessionStatus, STALE_SESSION_HOURS, type CashSessionStatus } from "../lib/cashup";
 import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
@@ -199,6 +200,10 @@ export default function POS() {
   const [askAdminPin, setAskAdminPin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  // A drawer opened on another day. Asked of the server on every refresh so
+  // the notice appears at sign-in and disappears the moment the day is closed.
+  const [staleSession, setStaleSession] = useState<CashSessionStatus | null>(null);
+  const [adminTab, setAdminTab] = useState<"cashup" | undefined>(undefined);
 
   // A trade customer prices off the trade list. Resolved server-side too — this
   // is only so the cashier sees the same numbers the invoice will show.
@@ -213,6 +218,12 @@ export default function POS() {
       // from the same cache and may be opened with the line down.
       cacheSet(CATEGORIES_KEY, c);
       void refreshSettings();
+      try {
+        const st = await cashSessionStatus();
+        setStaleSession(st && st.hours_open >= STALE_SESSION_HOURS ? st : null);
+      } catch {
+        // No answer is no notice; the cash-up screen still says what it says.
+      }
       try {
         const cust = await listCustomers();
         setCustomers(cust);
@@ -687,6 +698,34 @@ export default function POS() {
         </div>
       )}
 
+      {/* Not dismissable: a drawer open since yesterday swallows today's sales
+          into yesterday's window, and the only cure is closing it. Managers
+          get the door; everyone else is told whom to fetch. */}
+      {staleSession && (
+        <div className="sell-banner is-warning" role="alert">
+          <span>
+            The cash-up on this till has been open since{" "}
+            {new Date(staleSession.opened_at).toLocaleString("en-ZA", {
+              weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+            })}{" "}
+            ({staleSession.opened_by_name}). Close it before today's sales pile onto yesterday's.
+            {!can(user, "cash_management") && " Ask a manager to cash up."}
+          </span>
+          {can(user, "cash_management") && (
+            <button
+              type="button"
+              className="cash-up-now"
+              onClick={() => {
+                setAdminTab("cashup");
+                setAskAdminPin(true);
+              }}
+            >
+              Cash up
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="sell-body">
         <section className="sell-left">
           <ScanBar
@@ -1038,8 +1077,10 @@ export default function POS() {
         <Admin
           user={user}
           pin={adminPin}
+          initialTab={adminTab}
           onClose={() => {
             setAdminPin(null);
+            setAdminTab(undefined);
             void refresh();
           }}
         />

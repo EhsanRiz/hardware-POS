@@ -18,10 +18,35 @@ export interface CashFigures {
   cash_sales: number;
   /** Account settlements paid in cash over the counter — drawer money too. */
   account_cash: number;
+  /** Account settlements by method, every method — the card machine's batch
+      total includes these, so the slip has to. Cash is also in account_cash. */
+  account_payments?: Record<string, number>;
+  refunds_count?: number;
+  refunds_total?: number;
   pay_in: number;
   pay_out: number;
   expected_cash: number;
 }
+
+/** Whether a drawer is open on this till, and since when. No PIN: it names a
+    time and a person, never a figure, so the sign-in screen may ask. */
+export interface CashSessionStatus {
+  id: string;
+  opened_at: string;
+  opened_by_name: string;
+  hours_open: number;
+}
+
+export async function cashSessionStatus(): Promise<CashSessionStatus | null> {
+  const { data, error } = await supabase.rpc("pos_cash_session_status", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  return (data as CashSessionStatus | null) ?? null;
+}
+
+/** A drawer opened this long ago belongs to another day. */
+export const STALE_SESSION_HOURS = 18;
 
 export interface CashMovement {
   id: string;

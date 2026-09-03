@@ -285,10 +285,22 @@ function Figures({ session }: { session: CashSession }) {
         <Row label="Discounts given" value={f.discount_total} muted />
       )}
 
-      {Object.keys(f.tenders).length > 0 && (
+      {(f.refunds_total ?? 0) > 0 && (
+        <Row label={`Refunds (${f.refunds_count ?? 0})`} value={-(f.refunds_total ?? 0)} muted />
+      )}
+
+      {(Object.keys(f.tenders).length > 0 || Object.keys(f.account_payments ?? {}).length > 0) && (
         <div className="mt-3 pt-3 border-t border-stone-100">
           {Object.entries(f.tenders).map(([method, value]) => (
             <Row key={method} label={labelFor(method)} value={value} muted />
+          ))}
+          {Object.entries(f.account_payments ?? {}).map(([method, value]) => (
+            <Row
+              key={"acct-" + method}
+              label={`Account paid by ${labelFor(method).toLowerCase()}`}
+              value={value}
+              muted
+            />
           ))}
         </div>
       )}

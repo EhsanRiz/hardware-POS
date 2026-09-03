@@ -217,15 +217,25 @@ do $$
 declare
   v_tok text; v_mgr uuid; v_prod uuid; v_price numeric;
   v_session public.cash_sessions; v_closed jsonb; v_fig jsonb;
-  v_cust uuid; v_expected numeric;
+  v_cust uuid; v_expected numeric; v_status jsonb;
 begin
   select token into v_tok from till;
   select manager_id into v_mgr from fixture;
   select id, price_retail into v_prod, v_price
     from public.products where active and price_retail > 0 limit 1;
 
+  -- 0047: the till may ask, without a PIN, whether a drawer is open here.
+  perform assert(public.pos_cash_session_status(v_tok) is null,
+    'no drawer open, no status');
+
   v_session := public.pos_cash_session_open(v_tok, '1234', 500);
   perform assert_eq(v_session.opening_float, 500::numeric, 'the float is recorded');
+
+  v_status := public.pos_cash_session_status(v_tok);
+  perform assert_eq(v_status->>'opened_by_name', 'Manager', 'the status names who opened it');
+  perform assert((v_status->>'hours_open')::numeric < 1, 'and says how long ago');
+  perform assert(v_status ? 'expected_cash' = false and v_status ? 'figures' = false,
+    'and carries no figures — it is answered without a PIN');
 
   -- One till, one drawer. Two open sessions would put two days' takings in the
   -- same window with no way to tell them apart.
@@ -275,6 +285,21 @@ begin
   v_expected := 500 + v_price + coalesce(case when v_cust is null then 0 else 200 end, 0) + 40 - 60;
   perform assert_eq((v_fig->>'expected_cash')::numeric, v_expected,
     'expected cash is float plus cash in, less cash out');
+
+  -- 0047: a settlement on the card machine is listed by its method — the
+  -- card batch does not know a sale from a debtor paying up.
+  if v_cust is not null then
+    perform public.pos_take_account_payment(v_tok, v_mgr, v_cust, 75, 'card', 'batch 12', null, null);
+    v_fig := public.pos_cash_session_current(v_tok, '1234') -> 'figures';
+    perform assert_eq((v_fig->'account_payments'->>'card')::numeric, 75::numeric,
+      'an account settlement by card is listed under its method');
+    perform assert_eq((v_fig->'account_payments'->>'cash')::numeric, 200::numeric,
+      'and the cash one is listed there too');
+    perform assert_eq((v_fig->>'account_cash')::numeric, 200::numeric,
+      'while the drawer still counts only the cash one');
+    perform assert_eq((v_fig->>'expected_cash')::numeric, v_expected,
+      'a card settlement is not drawer money');
+  end if;
 
   -- Count it R5 light.
   v_closed := public.pos_cash_session_close(v_tok, '1234', v_expected - 5, 'Short a fiver');
@@ -1679,6 +1704,7 @@ end $$;
 
 do $$
 declare
+  v_fig jsonb;
   v_tok text; v_mgr uuid; v_emp uuid; v_cust uuid;
   v_cem uuid; v_stock_before numeric;
   v_sale public.sales; v_li public.sale_items;
@@ -1806,6 +1832,13 @@ begin
     (select sum(item_qty)::numeric from public.pos_sale_returns(v_tok, '1234', v_sale.id)
       where sale_item_id = v_li.id),
     3::numeric, 'and they sum to what the stepper must subtract');
+
+  -- 0047: the cash-up counts them as refunds, not only as pay-outs, so
+  -- "Sales" less "Refunds" is what the shop actually took.
+  v_fig := public.pos_cash_session_current(v_tok, '1234') -> 'figures';
+  perform assert_eq((v_fig->>'refunds_count')::int, 3, 'the cash-up counts the refunds');
+  perform assert_eq((v_fig->>'refunds_total')::numeric, 344.99::numeric,
+    'and their total is what went back');
 
   -- A voided sale has nothing left to return.
   v_sale := public.pos_create_sale(
