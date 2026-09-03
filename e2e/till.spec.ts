@@ -1871,6 +1871,100 @@ test("closing checks the card machine and the bank against the till, banks the c
   await expect(page.getByText(/Kept from the last close/)).toBeVisible();
 });
 
+test("the day closes for the whole shop: every till, the card machine, the banking, and a slip", async ({ page }) => {
+  // A day on one till: R500 float, a cash bag and a card padlock, the card
+  // machine agreeing, R400 banked. Reports then adds the shop up.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Opening float").fill("500");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  for (const [code, tender] of [["6001234000015", /^Cash$/], ["6001234000060", /^Card$/]] as const) {
+    await page.getByPlaceholder(/Scan barcode/i).fill(code);
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: tender }).click();
+    await page.getByRole("button", { name: /Tender & print/i }).click();
+    await page.getByLabel("Close").click();
+  }
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Counted cash").fill("615");
+  await page.getByLabel("Card machine total").fill("89");
+  await page.getByLabel("Banked").fill("400");
+  await page.getByRole("button", { name: /Close & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("BALANCED");
+  const close = page.getByLabel("Close");
+  if (await close.count()) await close.first().click();
+
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await expect(page.getByRole("tab", { name: "Day close" })).toHaveAttribute("aria-selected", "true");
+
+  // The shop's day: two sales, R204, by tender; and the tills underneath.
+  const panel = page.getByRole("region", { name: "Day close" });
+  // The stat tiles come before the per-till table, whose headings repeat words.
+  const stat = (label: string) => panel.getByText(label, { exact: true }).first().locator("..");
+  await expect(stat("Sales")).toContainText("2");
+  await expect(stat("Taken")).toContainText("204.00");
+  await expect(stat("Cash counted")).toContainText("615.00");
+  await expect(stat("Banked")).toContainText("400.00");
+  await expect(stat("Float kept")).toContainText("215.00");
+  const row = panel.locator("tbody tr", { hasText: "Front Counter" });
+  await expect(row).toContainText("Balanced");
+  await expect(row).toContainText("400.00");
+
+  // And the piece of paper for the banking bag.
+  await page.getByRole("button", { name: /Print day close/i }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("DAY CLOSE");
+  await expect(slip).toContainText("THE TILLS");
+  await expect(slip).toContainText("Front Counter — closed");
+  await expect(slip).toContainText("CASH BALANCED");
+  await expect(slip).toContainText(/Banked\s+R400\.00/);
+});
+
+test("departments report what sold and at what margin, VAT by month nets the credit notes, and the export is a spreadsheet", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+
+  // Departments: R115 of cement is R100 ex VAT on a R50 cost — 50% margin.
+  await page.getByRole("tab", { name: "Departments" }).click();
+  const building = page.locator("tbody tr", { hasText: "Building" });
+  await expect(building).toContainText("115.00");
+  await expect(building).toContainText("50%");
+
+  // VAT: this month is listed with its output VAT.
+  await page.getByRole("tab", { name: "VAT" }).click();
+  const thisMonth = new Date().toLocaleDateString("en-ZA", { month: "long", year: "numeric" });
+  const monthRow = page.locator("tbody tr", { hasText: thisMonth });
+  await expect(monthRow).toContainText("115.00");
+  await expect(monthRow).toContainText("15.00");
+
+  // Export: a real file, one row per line, that a spreadsheet can open.
+  await page.getByRole("tab", { name: "Export" }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: /Download CSV/i }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^sales-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/);
+  const text = await (await import("node:fs/promises")).readFile((await download.path())!, "utf8");
+  const lines = text.replace(/^\ufeff/, "").trim().split(/\r?\n/);
+  expect(lines[0]).toBe(
+    "doc_number,created_at,status,cashier,customer,payment_method,sku,item,department,qty,unit,unit_price,line_total,vat,discount,cost_at_sale"
+  );
+  expect(lines).toHaveLength(2);
+  expect(lines[1]).toContain("INV-000001");
+  expect(lines[1]).toContain("Cement 42.5N 50kg");
+  expect(lines[1]).toContain("115");
+});
+
 test("a balanced drawer closes on one press", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);

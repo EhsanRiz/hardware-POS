@@ -1903,4 +1903,107 @@ begin
     'and the customer owes exactly that much less');
 end $$;
 
+
+-- 0049: reports ----------------------------------------------------------------
+--
+-- The whole shop for a window, sales by department with margin, VAT by
+-- month, and an export a spreadsheet can open. All behind view_reports.
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_cust uuid; v_cem uuid; v_price numeric;
+  v_sale public.sales; v_li public.sale_items; v_day jsonb; v_dep jsonb; v_vat jsonb; v_exp jsonb;
+  v_from timestamptz; v_to timestamptz; v_closed jsonb; v_expected numeric;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, price_retail into v_cem, v_price from public.products where sku = 'CEM-425-50';
+  update public.products set cost = 80 where id = v_cem;
+  -- Leftover drawers are shut a second before the window so they are not
+  -- counted as this day's tills.
+  update public.cash_sessions set closed_at = now() - interval '1 second' where closed_at is null;
+  -- now() is this block's transaction time: earlier blocks' sales sit before
+  -- it, this block's land exactly on it.
+  v_from := now();
+  v_to := now() + interval '1 hour';
+
+  -- A day: a drawer opened on R500, a cash bag and a card bag of cement, a
+  -- debtor paying R75 by card, one bag back for cash, then the close with the
+  -- card machine R10 over and R300 banked.
+  perform public.pos_cash_session_open(v_tok, '1234', 500);
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'card',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'card', 'amount', v_price)));
+  select id into v_cust from public.customers limit 1;
+  if v_cust is not null then
+    perform public.pos_take_account_payment(v_tok, v_mgr, v_cust, 75, 'card', 'batch 9', null, null);
+  end if;
+  select * into v_li from public.sale_items where sale_id = v_sale.id;
+  perform public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)), 'wrong size');
+  v_expected := 500 + v_price - v_price;  -- cash in, cash back out
+  v_closed := public.pos_cash_session_close(v_tok, '1234', v_expected, null,
+    p_card_counted => v_price + coalesce(case when v_cust is null then 0 else 75 end, 0) + 10,
+    p_banked => 200);
+
+  -- The whole shop, in one answer.
+  v_day := public.pos_day_close(v_tok, '1234', v_from, v_to);
+  perform assert_eq((v_day->'totals'->>'sales_count')::int, 2, 'the day counts both sales');
+  perform assert_eq((v_day->'totals'->>'sales_total')::numeric, 2 * v_price, 'and adds them up');
+  perform assert_eq((v_day->'totals'->>'refunds_total')::numeric, v_price, 'and nets the refund');
+  perform assert_eq((v_day->'totals'->'tenders'->>'card')::numeric, v_price, 'card takings by tender');
+  perform assert_eq((v_day->'totals'->>'cash_variance')::numeric, 0::numeric, 'the drawer balanced');
+  perform assert_eq((v_day->'totals'->>'card_variance')::numeric, 10::numeric, 'the card machine was R10 over');
+  perform assert_eq((v_day->'totals'->>'banked')::numeric, 200::numeric, 'and R200 went to the bank');
+  perform assert_eq((v_day->'totals'->>'sessions_open')::int, 0, 'no drawer left open');
+  perform assert_eq(jsonb_array_length(v_day->'sessions'), 1, 'one till had a drawer');
+  perform assert((v_day->'sessions'->0) ? 'register_name', 'named by its till');
+
+  -- Sales by department: two bags at v_price incl VAT, costing 80 each.
+  v_dep := public.pos_sales_by_department(v_tok, '1234', v_from, v_to);
+  perform assert_eq(jsonb_array_length(v_dep), 1, 'one department sold');
+  perform assert_eq((v_dep->0->>'lines')::int, 2, 'two lines');
+  perform assert_eq((v_dep->0->>'sales')::numeric, 2 * v_price, 'sales incl VAT');
+  perform assert_eq((v_dep->0->>'cost')::numeric, 160::numeric, 'cost from cost_at_sale');
+  perform assert_eq((v_dep->0->>'margin')::numeric,
+    round(2 * v_price - 2 * round(v_price - v_price / 1.15, 2) - 160, 2),
+    'margin is ex VAT less cost');
+  perform assert_eq((v_dep->0->>'uncosted_lines')::int, 0, 'every line had a cost');
+
+  -- VAT by month: this month carries the two sales and the credit note.
+  v_vat := public.pos_vat_by_month(v_tok, '1234', 3);
+  perform assert(jsonb_array_length(v_vat) >= 1, 'this month is listed');
+  perform assert_eq(v_vat->0->>'month', to_char(now() at time zone 'Africa/Johannesburg', 'YYYY-MM'),
+    'newest month first');
+  perform assert((v_vat->0->>'gross')::numeric >= 2 * v_price, 'gross includes the sales');
+  perform assert((v_vat->0->>'refunds')::numeric >= v_price, 'and the credit note');
+  perform assert_eq((v_vat->0->>'vat_due')::numeric,
+    (v_vat->0->>'vat')::numeric - (v_vat->0->>'refunds_vat')::numeric,
+    'VAT due nets the credit notes');
+
+  -- Export: one row per line, carrying the cost the line was sold at.
+  v_exp := public.pos_export_sales(v_tok, '1234', v_from, v_to);
+  perform assert_eq(jsonb_array_length(v_exp), 2, 'one row per line');
+  perform assert_eq((v_exp->0->>'cost_at_sale')::numeric, 80::numeric, 'with its cost at sale');
+  perform assert(v_exp->0->>'doc_number' like 'INV-%', 'and its invoice number');
+
+  -- Behind the permission, all four.
+  perform assert_refuses(
+    format('select public.pos_day_close(%L, %L, now() - interval ''1 day'', now())', v_tok, '5678'),
+    'a cashier cannot read the day close');
+  perform assert_refuses(
+    format('select public.pos_export_sales(%L, %L, now() - interval ''1 day'', now())', v_tok, '5678'),
+    'nor export the sales');
+  perform assert_refuses(
+    format('select public.pos_day_close(%L, %L, now(), now() - interval ''1 day'')', v_tok, '1234'),
+    'a range the wrong way round');
+end $$;
+
 select 'all database tests passed' as result;
