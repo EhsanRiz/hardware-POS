@@ -16,6 +16,24 @@ import { money } from "../lib/format";
 import { can } from "../lib/permissions";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
+
+type CatalogueView = "all" | "live" | "hidden" | "low" | "nobarcode";
+type SortKey = "name" | "dept" | "retail" | "stock";
+
+function compareBy(key: SortKey, a: AdminProduct, b: AdminProduct): number {
+  switch (key) {
+    case "name":
+      return a.name.localeCompare(b.name);
+    case "dept":
+      return (a.category_name ?? "—").localeCompare(b.category_name ?? "—") || a.name.localeCompare(b.name);
+    case "retail":
+      return a.price_retail - b.price_retail || a.name.localeCompare(b.name);
+    case "stock":
+      // Unknown stock sorts last either way, so "least first" starts at the
+      // lines that are actually running out.
+      return (a.stock_qty ?? Infinity) - (b.stock_qty ?? Infinity) || a.name.localeCompare(b.name);
+  }
+}
 import ProductEditor from "./ProductEditor";
 import CashUp from "./admin/CashUp";
 import SalesHistory from "./admin/SalesHistory";
@@ -110,8 +128,12 @@ export default function Admin({
   // job then is to work through them, so the list has to be narrowable by the
   // two things that actually divide it: whether the till sells it, and which
   // department it belongs to.
-  const [onSale, setOnSale] = useState<"all" | "live" | "hidden">("all");
+  const [view, setView] = useState<CatalogueView>("all");
   const [dept, setDept] = useState<string>("all");
+  // Alphabetical until somebody taps a heading; a second tap turns it round.
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
+  // The column legend is one line on a tablet and a tap away on a phone.
+  const [legendOpen, setLegendOpen] = useState(false);
   // A tablet renders ~1,400 rows slowly and nobody reads past the first
   // screenful anyway. The cap is lifted by narrowing, and the footer always
   // says what is being withheld — a silent truncation would be a lie.
@@ -152,18 +174,24 @@ export default function Admin({
     void load();
   }, [load]);
 
-  const matching = products.filter((p) => {
-    if (onSale === "live" && !p.active) return false;
-    if (onSale === "hidden" && p.active) return false;
-    if (dept !== "all" && (p.category_name ?? "—") !== dept) return false;
-    const q = term.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      (p.barcode ?? "").includes(q)
-    );
-  });
+  const isLow = (p: AdminProduct) =>
+    p.stock_qty != null && p.reorder_level != null && p.stock_qty <= p.reorder_level;
+  const matching = products
+    .filter((p) => {
+      if (view === "live" && !p.active) return false;
+      if (view === "hidden" && p.active) return false;
+      if (view === "low" && !isLow(p)) return false;
+      if (view === "nobarcode" && p.barcode) return false;
+      if (dept !== "all" && (p.category_name ?? "—") !== dept) return false;
+      const q = term.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        (p.barcode ?? "").includes(q)
+      );
+    })
+    .sort((a, b) => sort.dir * compareBy(sort.key, a, b));
   const shown = showAll ? matching : matching.slice(0, ROW_CAP);
   const withheld = matching.length - shown.length;
 
@@ -171,6 +199,28 @@ export default function Admin({
     new Set(products.map((p) => p.category_name ?? "—"))
   ).sort();
   const liveCount = products.filter((p) => p.active).length;
+  const lowCount = products.filter(isLow).length;
+  const noBarcodeCount = products.filter((p) => !p.barcode).length;
+
+  function sortBy(key: SortKey) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
+  }
+
+  /** A heading that sorts. The label stays plain text so it reads the same to
+      a screen reader whether or not it is the sorted column. */
+  const heading = (key: SortKey, label: string, cls = "") => (
+    <th
+      className={`p-2 font-medium ${cls}`}
+      aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+    >
+      <button type="button" onClick={() => sortBy(key)} className="inline-flex items-center gap-1">
+        {label}
+        {sort.key === key && (
+          <span aria-hidden="true" className="text-[10px]">{sort.dir === 1 ? "▲" : "▼"}</span>
+        )}
+      </button>
+    </th>
+  );
 
   async function save(input: ProductInput) {
     await adminSaveProduct(pin, input);
@@ -327,16 +377,19 @@ export default function Admin({
                 ["all", `All ${products.length}`],
                 ["live", `On the till ${liveCount}`],
                 ["hidden", `Not priced yet ${products.length - liveCount}`],
+                ["low", `Low stock ${lowCount}`],
+                ["nobarcode", `No barcode ${noBarcodeCount}`],
               ] as const
             ).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => {
-                  setOnSale(key);
+                  setView(key);
                   setShowAll(false);
                 }}
+                aria-pressed={view === key}
                 className={`px-3 py-1.5 rounded-full text-sm border ${
-                  onSale === key
+                  view === key
                     ? "bg-colophon text-paper border-colophon"
                     : "bg-white text-stone-600 border-stone-300"
                 }`}
@@ -365,6 +418,31 @@ export default function Admin({
             )}
           </div>
 
+          {/* What the money columns mean, said once where the columns are.
+              Tooltips would not do: nobody can hover on a tablet. One line on
+              a tablet; on a phone it sits behind a tap so the list starts
+              higher. */}
+          <div className="px-3 py-1.5 bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
+            <button
+              type="button"
+              className="sm:hidden underline"
+              onClick={() => setLegendOpen((o) => !o)}
+              aria-expanded={legendOpen}
+            >
+              What the columns mean
+            </button>
+            <p className={`${legendOpen ? "block mt-1" : "hidden"} sm:block sm:mt-0`}>
+              <b className="font-medium text-stone-600">Retail</b> is what the till charges, incl. VAT.{" "}
+              <b className="font-medium text-stone-600">Trade</b> is what account customers pay.{" "}
+              {canSeeCost && (
+                <>
+                  <b className="font-medium text-stone-600">Cost</b> is what you paid the supplier, ex VAT, with the margin under it.{" "}
+                </>
+              )}
+              <b className="font-medium text-stone-600">Stock</b> is on hand now; amber means at or below the reorder level.
+            </p>
+          </div>
+
           {/* overflow-x too: the catalogue is a wide table and on a phone it
               was pushing the whole page sideways, so the header and the tab
               strip slid off with it. A table that scrolls inside its own box
@@ -383,31 +461,35 @@ export default function Admin({
                   <tr>
                     <th className="p-2 font-medium sr-only">Photo</th>
                     <th className="p-2 font-medium">SKU</th>
-                    <th className="p-2 font-medium w-full">Name</th>
-                    <th className="p-2 font-medium hidden lg:table-cell">Dept</th>
+                    {heading("name", "Name", "w-full")}
+                    {heading("dept", "Dept", "hidden lg:table-cell")}
                     <th className="p-2 font-medium hidden lg:table-cell">Unit</th>
-                    <th className="p-2 font-medium text-right">Retail</th>
-                    <th className="p-2 font-medium text-right">Trade</th>
+                    {heading("retail", "Retail", "text-right whitespace-nowrap")}
+                    <th className="p-2 font-medium text-right whitespace-nowrap">Trade</th>
                     {canSeeCost && (
-                      <th className="p-2 font-medium text-right">Cost</th>
+                      <th className="p-2 font-medium text-right whitespace-nowrap">Cost</th>
                     )}
-                    <th className="p-2 pr-4 font-medium text-right">Stock</th>
+                    {heading("stock", "Stock", "pr-4 text-right whitespace-nowrap")}
                   </tr>
                 </thead>
                 <tbody>
                   {shown.map((p) => {
-                    const low =
-                      p.stock_qty != null &&
-                      p.reorder_level != null &&
-                      p.stock_qty <= p.reorder_level;
+                    const low = isLow(p);
+                    const exVat = p.price_retail > 0 ? p.price_retail / 1.15 : 0;
+                    const margin =
+                      canSeeCost && p.cost != null && p.cost > 0 && exVat > 0
+                        ? ((exVat - p.cost) / exVat) * 100
+                        : null;
                     return (
                       <tr
                         key={p.id}
                         onClick={() => setEditing(p)}
+                        // Zebra rows: nine columns is a long way for the eye
+                        // to travel, and a faint band keeps it on the line.
                         // A whole catalogue awaiting prices should not look
                         // broken: the row keeps full contrast and says
                         // "not priced" in words instead of fading out.
-                        className="border-b border-stone-100 cursor-pointer hover:bg-stone-50"
+                        className="border-b border-stone-100 cursor-pointer even:bg-stone-50/70 hover:bg-amber-50"
                       >
                         {/* The catalogue shows what the till will show. */}
                         <td className="p-2">
@@ -422,7 +504,14 @@ export default function Admin({
                             <span className="block w-10 h-10 rounded border border-dashed border-stone-200" />
                           )}
                         </td>
-                        <td className="p-2 font-mono text-xs">{p.sku}</td>
+                        <td className="p-2 font-mono text-xs whitespace-nowrap">
+                          {p.sku}
+                          {/* The barcode under the code, because this week's
+                              question is "will a gun find it?" */}
+                          <span className="block text-[11px] text-stone-400 font-normal">
+                            {p.barcode ?? "no barcode"}
+                          </span>
+                        </td>
                         <td className="p-2">
                           <span className="line-clamp-2" title={p.name}>{p.name}</span>
                           {!p.active && (
@@ -436,15 +525,24 @@ export default function Admin({
                           {p.category_name ?? "—"}
                         </td>
                         <td className="p-2 text-stone-500 hidden lg:table-cell">{p.unit_code}</td>
-                        <td className="p-2 text-right tabular-nums">
+                        <td className="p-2 text-right tabular-nums whitespace-nowrap">
                           {money(p.price_retail)}
                         </td>
-                        <td className="p-2 text-right tabular-nums text-stone-500">
+                        <td className="p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
                           {p.price_trade != null ? money(p.price_trade) : "—"}
                         </td>
                         {canSeeCost && (
-                          <td className="p-2 text-right tabular-nums text-stone-500">
+                          <td className="p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
                             {p.cost != null ? money(p.cost) : "—"}
+                            {margin != null && (
+                              <span
+                                className={`block text-[11px] ${
+                                  margin < 15 ? "text-amber-700" : "text-stone-400"
+                                }`}
+                              >
+                                {margin.toFixed(1)}% margin
+                              </span>
+                            )}
                           </td>
                         )}
                         <td
