@@ -1892,7 +1892,7 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   expect(box!.x + box!.width, "its right edge").toBeLessThanOrEqual(390);
 });
 
-test("a scan captures the picture with the barcode, and a price fix rides along", async ({ page }) => {
+test("a scan opens the item, a photo is a tap of its own, and a price fix rides along", async ({ page }) => {
   await installFakeDetector(page);
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
@@ -1906,8 +1906,11 @@ test("a scan captures the picture with the barcode, and a price fix rides along"
   await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
   await expect(page.getByText("no photo yet")).toBeVisible();
 
-  // The scan took the picture too: the frame that carried the barcode is
-  // already on the sheet, nothing more to tap. One scan, both facts.
+  // The scan recorded the barcode and nothing else: the strip is empty. The
+  // frame that carried the code used to be kept as the first photograph,
+  // and it was a picture of a label — the till showed it as the thumbnail.
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Take photo$/ }).click();
   await expect(page.getByAltText("Photo 1")).toBeVisible();
 
   // A manager holds manage_catalogue, so the price is editable right here.
@@ -1926,8 +1929,7 @@ test("a scan captures the picture with the barcode, and a price fix rides along"
   await expect(page.getByText(/photo added/)).toBeVisible();
   await expect(page.getByLabel("Barcode digits")).toBeVisible();
 
-  // A rescan of an item that now HAS a photo does not smuggle another one in:
-  // the strip starts empty and adding more is a deliberate tap.
+  // A rescan of an item that now HAS a photo starts empty too.
   await scanCode(page, "6001234000015");
   await expect(page.getByText("has a photo")).toBeVisible();
   await expect(page.getByAltText("Photo 1")).toHaveCount(0);
@@ -1954,7 +1956,9 @@ test("a shelf-only signer gets the camera, no catalogue, and no price field", as
   await expect(page.getByLabel("Retail price")).toHaveCount(0);
   await expect(page.getByText(/R 115\.00 per bag/)).toBeVisible();
 
-  // The scan already took the picture; saving it is one tap.
+  // No photo until one is taken; then saving it is one tap.
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Take photo$/ }).click();
   await expect(page.getByAltText("Photo 1")).toBeVisible();
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect.poll(() => be.uploadedPhotos.length).toBe(1);
@@ -1972,21 +1976,20 @@ test("an unknown barcode is recorded hidden, and a rescan finds it", async ({ pa
   // The sheet says out loud that nothing here goes on sale.
   await expect(page.getByText(/New items do not go on sale from here/)).toBeVisible();
 
-  // The scan pre-filled a picture, but every photo is optional: removed, the
-  // item still saves — a barcode and a name are the facts that matter.
-  await expect(page.getByAltText("Photo 1")).toBeVisible();
-  await page.getByRole("button", { name: "Remove photo 1" }).click();
+  // No picture was taken by the scan, and no price is asked for: a barcode
+  // and a name are the facts the aisle records. Pricing is the reviewer's.
   await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await expect(page.getByLabel("Shelf price")).toHaveCount(0);
 
   await page.getByLabel("Item name").fill("Padlock 60mm brass");
-  await page.getByLabel("Shelf price").fill("96");
   await page.getByRole("button", { name: /Save hidden for review/ }).click();
   await expect(page.getByText(/saved hidden for review/)).toBeVisible();
 
-  // Born hidden on the record, not only in the toast — and with no photo,
-  // because none was kept.
+  // Born hidden and unpriced on the record, not only in the toast — and
+  // with no photo, because none was taken.
   expect(be.shelfAdded).toHaveLength(1);
   expect(be.shelfAdded[0].active).toBe(false);
+  expect(be.shelfAdded[0].price_retail).toBe(0);
   expect(be.shelfAdded[0].sku).toBe("SHELF-6009876543210");
   expect(be.uploadedPhotos).toHaveLength(0);
 
@@ -1996,9 +1999,11 @@ test("an unknown barcode is recorded hidden, and a rescan finds it", async ({ pa
   await expect(page.getByText("In the catalogue · 6009876543210")).toBeVisible();
   await expect(page.getByText(/hidden from the till/)).toBeVisible();
 
-  // Up to four photographs, and no more: the pre-filled snap plus three
-  // added fills the strip and the add tile withdraws; removing one brings
-  // it back. Saved, all four go up in order.
+  // Up to four photographs, and no more: four taps fill the strip and the
+  // add tile withdraws; removing one brings it back. Saved, all go up in
+  // order.
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Take photo$/ }).click();
   await expect(page.getByAltText("Photo 1")).toBeVisible();
   await page.getByRole("button", { name: /^Add another$/ }).click();
   await page.getByRole("button", { name: /^Add another$/ }).click();
@@ -2012,7 +2017,7 @@ test("an unknown barcode is recorded hidden, and a rescan finds it", async ({ pa
   expect(be.uploadedPhotos.every((u) => u.product_id === "sh1")).toBe(true);
 });
 
-test("typing the code is the same road, and the snap still happens", async ({ page }) => {
+test("typing the code is the same road, and takes no picture either", async ({ page }) => {
   // No fake detector installed, and headless Chromium has no native one — so
   // the bundled ZXing decoder loads, exactly as it does on an iPhone. The
   // hint no longer says "cannot scan": there is now always something that
@@ -2025,9 +2030,9 @@ test("typing the code is the same road, and the snap still happens", async ({ pa
   await page.getByRole("button", { name: /^Find$/ }).click();
   await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
 
-  // The camera was live and pointed at the item, so a typed code captures
-  // the picture the same way a scan does.
-  await expect(page.getByAltText("Photo 1")).toBeVisible();
+  // The camera is live, but a photo is still a tap, never a side effect.
+  await expect(page.getByAltText("Photo 1")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Take photo$/ })).toBeVisible();
 });
 
 test("the bundled decoder really reads an EAN-13, so iPhones scan too", async ({ page }) => {

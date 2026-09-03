@@ -23,14 +23,15 @@ import type { User } from "../../lib/types";
  * barcode is what makes the work land in the right place: scan first, and
  * the flow branches on whether the code already names an item. Known item →
  * put photos on it (and fix the price, if this person may touch prices).
- * Unknown code → record it, and it lands HIDDEN for review — the server
- * enforces that, so nothing captured here changes what the till charges.
+ * Unknown code → record it by name, and it lands HIDDEN and unpriced for
+ * review — the server enforces both, so nothing captured here changes what
+ * the till charges. Pricing is the reviewer's job, not the aisle's.
  *
- * The scan captures the picture too: at the moment the code locks, the
- * camera is already pointed at the item, so that frame becomes the first
- * photograph — removable, and joined by up to three more. One scan, both
- * facts. An item that already has a photo is NOT silently given another on
- * every rescan; adding more stays a deliberate tap.
+ * A scan records the barcode and nothing else. It used to keep the frame
+ * that carried the code as the first photograph, and the first real use
+ * showed why not: that frame is a picture of a label, and it became the
+ * thumbnail the till showed. Photographs are a deliberate tap, up to four,
+ * taken once the item has been turned to its good side.
  *
  * Who may do what is the point of the design: `shelf_capture` alone takes
  * photos and proposes items; the price field exists only for people who also
@@ -72,7 +73,6 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
   const [photos, setPhotos] = useState<string[]>([]);
   const [typed, setTyped] = useState("");
   const [newName, setNewName] = useState("");
-  const [newPrice, setNewPrice] = useState("");
   const [priceEdit, setPriceEdit] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,27 +171,23 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
   // ---- finding the item -----------------------------------------------------
 
   /**
-   * A code has been read — optically or typed. `snap` is the viewfinder frame
-   * from that same moment: the scan captures the picture as well as the
-   * barcode, except for an item that already has one, where more photographs
-   * stay a deliberate choice rather than a side effect of every rescan.
+   * A code has been read — optically or typed. Only the code: the photo strip
+   * opens empty either way, and every photograph is a tap of its own.
    */
   const handleCode = useCallback(
-    async (raw: string, snap: string | null) => {
+    async (raw: string) => {
       const code = raw.replace(/\D/g, "");
       if (!code || busy) return;
       setBusy(true);
       setError(null);
       try {
         const item = await shelfLookup(pin, code);
+        setPhotos([]);
         if (item) {
-          setPhotos(item.has_photo || !snap ? [] : [snap]);
           setPriceEdit(String(item.price_retail));
           setSheet({ kind: "found", item });
         } else {
-          setPhotos(snap ? [snap] : []);
           setNewName("");
-          setNewPrice("");
           setSheet({ kind: "new", barcode: code });
         }
       } catch (e) {
@@ -215,11 +211,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
       detecting.current = true;
       try {
         const found = await reader.detect(video);
-        if (found[0]?.rawValue) {
-          // The frame that carried the barcode is the first photograph.
-          const snap = await captureFrameData();
-          void handleCode(found[0].rawValue, snap);
-        }
+        if (found[0]?.rawValue) void handleCode(found[0].rawValue);
       } catch {
         /* a frame that will not decode is just the next frame's problem */
       } finally {
@@ -227,7 +219,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
       }
     }, 400);
     return () => window.clearInterval(id);
-  }, [reader, sheet, stream, handleCode, captureFrameData]);
+  }, [reader, sheet, stream, handleCode]);
 
   // ---- saving ---------------------------------------------------------------
 
@@ -270,7 +262,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     setBusy(true);
     setError(null);
     try {
-      const item = await shelfAddItem(pin, barcode, newName, Number(newPrice));
+      const item = await shelfAddItem(pin, barcode, newName);
       await uploadAll(item.id);
       setToast(`✓ ${item.name} — saved hidden for review`);
       reset();
@@ -290,8 +282,8 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
   // ---- render ---------------------------------------------------------------
 
   // Up to four photographs, every one of them removable and none required.
-  // The first is usually the scan-moment frame; the add tile disappears when
-  // the strip is full.
+  // The strip starts empty after a scan; the add tile disappears when it is
+  // full.
   const photoStrip = (
     <div className="flex gap-2 items-start flex-wrap">
       {photos.map((p, i) => (
@@ -379,17 +371,13 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    void captureFrameData().then((snap) => handleCode(typed, snap));
-                  }
+                  if (e.key === "Enter") void handleCode(typed);
                 }}
               />
               <button
                 className="px-4 py-2 rounded-full text-sm bg-white text-stone-900 disabled:opacity-50"
                 disabled={busy || !typed.trim()}
-                onClick={() =>
-                  void captureFrameData().then((snap) => handleCode(typed, snap))
-                }
+                onClick={() => void handleCode(typed)}
               >
                 Find
               </button>
@@ -475,37 +463,25 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
             <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg">{error}</p>
           )}
           {photoStrip}
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-xs text-stone-500">Name</span>
-              <input
-                className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                aria-label="Item name"
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs text-stone-500">Shelf price</span>
-              <div className="mt-1 flex items-center gap-2">
-                <span className="text-stone-500">{CURRENCY}</span>
-                <input
-                  className="w-full border border-stone-300 rounded-lg px-3 py-2"
-                  value={newPrice}
-                  onChange={(e) => setNewPrice(e.target.value)}
-                  inputMode="decimal"
-                  aria-label="Shelf price"
-                />
-              </div>
-            </label>
-          </div>
+          {/* A name and nothing else. The price is not asked for here: the
+              reviewer sets it in Catalogue, and would check whatever the
+              aisle typed anyway. */}
+          <label className="block">
+            <span className="text-xs text-stone-500">Name</span>
+            <input
+              className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              aria-label="Item name"
+            />
+          </label>
           <div className="flex gap-2">
             <button className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700" onClick={reset} disabled={busy}>
               Cancel
             </button>
             <button
               className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
-              disabled={busy || !newName.trim() || newPrice.trim() === ""}
+              disabled={busy || !newName.trim()}
               onClick={() => void saveNew(sheet.barcode)}
             >
               {busy ? "Saving…" : "Save hidden for review"}
@@ -515,7 +491,8 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
               owed the reason their item does not appear at the till. */}
           <p className="text-xs text-stone-500">
             New items do not go on sale from here. Somebody with catalogue
-            rights reviews them under Catalogue → hidden, then flips them live.
+            rights prices them under Catalogue → Not priced yet, then flips
+            them live.
           </p>
         </div>
       )}

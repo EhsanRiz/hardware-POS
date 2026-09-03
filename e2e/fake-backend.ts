@@ -1005,10 +1005,9 @@ export async function installBackend(page: Page): Promise<Backend> {
         const code = String(body.p_barcode ?? "").trim();
         if (!/^\d{6,14}$/.test(code)) return fail("A barcode is 6 to 14 digits");
         if (String(body.p_name ?? "").trim() === "") return fail("A name is required");
-        const price = body.p_price_retail;
-        if (price == null || Number(price) < 0) {
-          return fail("A price is required — put the shelf price, it is checked before going live");
-        }
+        // 0046: a price is optional at the shelf; none means "not priced yet".
+        const price = body.p_price_retail == null ? 0 : Number(body.p_price_retail);
+        if (price < 0) return fail("A price cannot be negative");
         if (PRODUCTS.some((p) => p.barcode === code) || be.shelfAdded.some((p) => p.barcode === code)) {
           return fail("That barcode is already in the catalogue — scan it again to add a photo");
         }
@@ -1018,7 +1017,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           name: String(body.p_name).trim(),
           category_id: null, category_name: null,
           unit_code: "ea", unit_name: "Each", allows_fraction: false,
-          price_retail: Number(price), price_trade: null, tax_code: "standard",
+          price_retail: price, price_trade: null, tax_code: "standard",
           stock_qty: null, reorder_level: null, image_url: null,
           sort_order: 0, bin: null,
           max_discount_percent: null, max_discount_amount: null,

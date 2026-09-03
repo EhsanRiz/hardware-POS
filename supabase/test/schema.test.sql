@@ -1560,7 +1560,7 @@ end $$;
 -- broader power — arrive at the same place.
 
 do $$
-declare v_tok text; v_shelf uuid; v_super uuid; v_row record; v_new record; v_img uuid;
+declare v_tok text; v_shelf uuid; v_super uuid; v_row record; v_new record; v_np record; v_img uuid;
 begin
   select token into v_tok from till;
 
@@ -1605,10 +1605,21 @@ begin
     format('select public.pos_shelf_add_item(%L, %L, %L, %L, 50)',
            v_tok, '7777', 'not-a-code', 'Mystery item'),
     'a barcode is digits, not prose');
+  -- 0046: a price is the reviewer's job. Recorded without one, the item
+  -- sits at 0.00 and hidden — "not priced yet" in Catalogue — and the
+  -- four-argument call is not ambiguous with the old five-argument one.
+  select * into v_np from public.pos_shelf_add_item(
+    v_tok, '7777', '6001111111119', 'Priceless');
+  perform assert_eq(v_np.price_retail, 0::numeric,
+    'an item recorded without a price is stored unpriced');
+  perform assert_eq(v_np.active, false, 'and is still born hidden');
+  perform assert_eq(
+    (select count(*)::int from pg_proc where proname = 'pos_shelf_add_item'),
+    1, 'the shelf add has exactly one signature');
   perform assert_refuses(
-    format('select public.pos_shelf_add_item(%L, %L, %L, %L, null)',
-           v_tok, '7777', '6001111111119', 'Priceless'),
-    'a proposed price is required even though the item is hidden');
+    format('select public.pos_shelf_add_item(%L, %L, %L, %L, -1)',
+           v_tok, '7777', '6001111111126', 'Below zero'),
+    'a negative price is still refused');
 
   -- The fence: the shelf permission opens the shelf and nothing else.
   perform assert_refuses(
