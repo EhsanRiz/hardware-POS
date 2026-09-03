@@ -544,6 +544,27 @@ export function buildCashUpText(s: CashSession): string {
     out.push(boxTop());
   }
 
+  // The card machine and the bank against the till, and the banking: each a
+  // comparison that used to live on a scrap of paper, if it happened at all.
+  const settlement = (title: string, expected: number | null | undefined,
+                      counted: number | null | undefined, variance: number | null | undefined) => {
+    if (counted == null) return;
+    out.push("");
+    out.push(bold(title));
+    out.push(lineItem("Till says", amount(expected ?? 0)));
+    out.push(lineItem("Machine says", amount(counted)));
+    const v = variance ?? 0;
+    out.push(lineItem(Math.abs(v) < 0.005 ? "Agrees" : v > 0 ? "Over" : "Short", amount(Math.abs(v))));
+  };
+  settlement("CARD MACHINE", s.card_expected ?? s.figures.card_expected, s.card_counted, s.card_variance);
+  settlement("EFT", s.eft_expected ?? s.figures.eft_expected, s.eft_counted, s.eft_variance);
+  if (s.banked != null) {
+    out.push("");
+    out.push(bold("BANKING"));
+    out.push(lineItem("Banked", amount(s.banked)));
+    out.push(lineItem("Float kept for tomorrow", amount(s.float_kept ?? 0)));
+  }
+
   if (s.movements?.length) {
     out.push("");
     out.push(bold("IN AND OUT"));

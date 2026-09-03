@@ -5,6 +5,7 @@ import {
   currentSession,
   openSession,
   pastSessions,
+  suggestedFloat,
   type CashSession,
 } from "../../lib/cashup";
 import { errorMessage } from "../../lib/errors";
@@ -33,7 +34,14 @@ export default function CashUp({ pin }: { pin: string }) {
   const [busy, setBusy] = useState(false);
 
   const [float, setFloat] = useState("");
+  const [floatFromLastClose, setFloatFromLastClose] = useState(false);
   const [counted, setCounted] = useState("");
+  // The card machine's batch and the bank's EFTs, when the shop has them;
+  // and how much of the cash goes to the bank. All optional: a shop with no
+  // card machine closes exactly as before.
+  const [cardCounted, setCardCounted] = useState("");
+  const [eftCounted, setEftCounted] = useState("");
+  const [banked, setBanked] = useState("");
   const [note, setNote] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
 
@@ -44,6 +52,18 @@ export default function CashUp({ pin }: { pin: string }) {
       setSession(s);
       setPast(p);
       setError(null);
+      if (!s) {
+        // Tomorrow's float is what was kept last night: offered, not retyped.
+        try {
+          const kept = await suggestedFloat(pin);
+          if (kept != null) {
+            setFloat(kept.toFixed(2));
+            setFloatFromLastClose(true);
+          }
+        } catch {
+          /* no suggestion is no harm */
+        }
+      }
     } catch (e) {
       setError(errorMessage(e, "Could not load the cash-up"));
     } finally {
@@ -73,9 +93,16 @@ export default function CashUp({ pin }: { pin: string }) {
   // cashier who is not short, so this is the one moment worth interrupting.
   const queued = queueCount();
 
-  const countedNum = Number(counted.replace(",", ".")) || 0;
+  const num = (t: string) => Number(t.replace(",", ".")) || 0;
+  const countedNum = num(counted);
   const expected = session?.figures.expected_cash ?? 0;
   const variance = Math.round((countedNum - expected) * 100) / 100;
+  const cardExpected = session?.figures.card_expected ?? 0;
+  const eftExpected = session?.figures.eft_expected ?? 0;
+  const cardVariance = Math.round((num(cardCounted) - cardExpected) * 100) / 100;
+  const eftVariance = Math.round((num(eftCounted) - eftExpected) * 100) / 100;
+  const bankedNum = num(banked);
+  const floatKept = Math.round((countedNum - bankedNum) * 100) / 100;
 
   return (
     <div className="flex-1 overflow-auto p-4">
@@ -106,6 +133,11 @@ export default function CashUp({ pin }: { pin: string }) {
               placeholder="0.00"
               aria-label="Opening float"
             />
+            {floatFromLastClose && (
+              <span className="block text-xs text-stone-500 mt-1">
+                Kept from the last close. Change it if the drawer says otherwise.
+              </span>
+            )}
           </label>
           <button
             className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
@@ -169,6 +201,72 @@ export default function CashUp({ pin }: { pin: string }) {
               </div>
             )}
 
+            {/* The card machine and the bank, against the till. Each is a
+                comparison the manager used to do on a scrap of paper. */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-sm text-stone-600">Card machine total</span>
+                <input
+                  className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 text-right tabular-nums"
+                  inputMode="decimal"
+                  value={cardCounted}
+                  onChange={(e) => setCardCounted(e.target.value.replace(/[^\d.,]/g, ""))}
+                  placeholder={money(cardExpected)}
+                  aria-label="Card machine total"
+                />
+                <span className="block text-xs text-stone-500 mt-1">
+                  The till says {money(cardExpected)} went through it.
+                  {cardCounted.trim() !== "" && (
+                    <b className={`ml-1 ${Math.abs(cardVariance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
+                      {Math.abs(cardVariance) < 0.005
+                        ? "Agrees."
+                        : `${cardVariance > 0 ? "Over" : "Short"} by ${money(Math.abs(cardVariance))}.`}
+                    </b>
+                  )}
+                </span>
+              </label>
+              <label className="block">
+                <span className="text-sm text-stone-600">EFTs received</span>
+                <input
+                  className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 text-right tabular-nums"
+                  inputMode="decimal"
+                  value={eftCounted}
+                  onChange={(e) => setEftCounted(e.target.value.replace(/[^\d.,]/g, ""))}
+                  placeholder={money(eftExpected)}
+                  aria-label="EFTs received"
+                />
+                <span className="block text-xs text-stone-500 mt-1">
+                  The till says {money(eftExpected)} was paid this way.
+                  {eftCounted.trim() !== "" && (
+                    <b className={`ml-1 ${Math.abs(eftVariance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
+                      {Math.abs(eftVariance) < 0.005
+                        ? "Agrees."
+                        : `${eftVariance > 0 ? "Over" : "Short"} by ${money(Math.abs(eftVariance))}.`}
+                    </b>
+                  )}
+                </span>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-sm text-stone-600">Banked</span>
+              <input
+                className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 text-right tabular-nums"
+                inputMode="decimal"
+                value={banked}
+                onChange={(e) => setBanked(e.target.value.replace(/[^\d.,]/g, ""))}
+                placeholder="0.00"
+                aria-label="Banked"
+              />
+              <span className="block text-xs text-stone-500 mt-1">
+                {banked.trim() === ""
+                  ? "Cash going to the bank. What is left stays as tomorrow's float."
+                  : bankedNum > countedNum
+                    ? "More than was counted."
+                    : `Float kept for tomorrow: ${money(floatKept)}.`}
+              </span>
+            </label>
+
             <label className="block">
               <span className="text-sm text-stone-600">Note</span>
               <input
@@ -183,7 +281,7 @@ export default function CashUp({ pin }: { pin: string }) {
             <div className="flex gap-2 items-center">
               <button
                 className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
-                disabled={busy || counted.trim() === ""}
+                disabled={busy || counted.trim() === "" || bankedNum > countedNum}
                 onClick={() => {
                   // Closing is the end of the day and cannot be undone from
                   // here, so a shortfall gets a second press rather than a
@@ -193,9 +291,18 @@ export default function CashUp({ pin }: { pin: string }) {
                     return;
                   }
                   void run(async () => {
-                    const closed = await closeSession(pin, countedNum, note.trim() || null);
+                    const closed = await closeSession(pin, {
+                      countedCash: countedNum,
+                      note: note.trim() || null,
+                      cardCounted: cardCounted.trim() === "" ? null : num(cardCounted),
+                      eftCounted: eftCounted.trim() === "" ? null : num(eftCounted),
+                      banked: banked.trim() === "" ? null : bankedNum,
+                    });
                     printReceipt(buildCashUpText(closed), "Cash-up");
                     setCounted("");
+                    setCardCounted("");
+                    setEftCounted("");
+                    setBanked("");
                     setNote("");
                     setConfirmClose(false);
                   });
