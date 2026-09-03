@@ -1532,7 +1532,11 @@ async function installFakeDetector(page: import("@playwright/test").Page) {
     };
     w.__scanQueue = [];
     w.BarcodeDetector = class {
-      async detect(): Promise<{ rawValue: string }[]> {
+      async detect(source: unknown): Promise<{ rawValue: string }[]> {
+        // The app proves a detector before trusting it by showing it a drawn
+        // EAN-13 on a canvas (lib/barcode.ts). A working native detector reads
+        // it; so does this one. Frames from the viewfinder are video.
+        if (source instanceof HTMLCanvasElement) return [{ rawValue: "6001234000013" }];
         const code = w.__scanQueue.shift();
         return code ? [{ rawValue: code }] : [];
       }
@@ -2073,6 +2077,95 @@ test("the bundled decoder really reads an EAN-13, so iPhones scan too", async ({
   });
 
   expect(decoded).toBe("6001234000013");
+});
+
+test("the bundled decoder reads a barcode off a live video, not only a still", async ({ page }) => {
+  // The still-canvas proof above passed for months while an iPhone pointed
+  // at a real label got nothing: the viewfinder is a <video>, and ZXing's
+  // own video route never read a frame the canvas route reads in a few
+  // milliseconds. So the reader is handed a playing video here — an EAN-8,
+  // the format on the paracetamol box that first showed the failure — and
+  // has to read it the way the Shelf loop asks: detect(video).
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+  await expect(page.getByText("Point at the barcode")).toBeVisible();
+
+  const decoded = await page.evaluate(async () => {
+    const L: Record<string, string> = { "0": "0001101", "1": "0011001", "2": "0010011", "3": "0111101", "4": "0100011", "5": "0110001", "6": "0101111", "7": "0111011", "8": "0110111", "9": "0001011" };
+    const R: Record<string, string> = { "0": "1110010", "1": "1100110", "2": "1101100", "3": "1000010", "4": "1011100", "5": "1001110", "6": "1010000", "7": "1000100", "8": "1001000", "9": "1110100" };
+    const code = "60011053"; // EAN-8, valid check digit
+    let modules = "101";
+    for (let i = 0; i < 4; i++) modules += L[code[i]];
+    modules += "01010";
+    for (let i = 4; i < 8; i++) modules += R[code[i]];
+    modules += "101";
+
+    // A phone-sized frame with the label taking up the middle, as it does
+    // inside the gold box, on a dark shelf.
+    const W = 1280, H = 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#333";
+    ctx.fillRect(0, 0, W, H);
+    const mod = Math.floor((W * 0.45) / modules.length);
+    const x0 = Math.floor((W - mod * modules.length) / 2);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(x0 - 12 * mod, 240, mod * modules.length + 24 * mod, 240);
+    ctx.fillStyle = "#000";
+    for (let i = 0; i < modules.length; i++) {
+      if (modules[i] === "1") ctx.fillRect(x0 + i * mod, 250, mod, 220);
+    }
+
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = canvas.captureStream(15);
+    document.body.appendChild(video);
+    await video.play();
+    await new Promise((r) => setTimeout(r, 400));
+
+    const reader = (window as unknown as {
+      __zxingReader?: { detect(s: unknown): Promise<{ rawValue: string }[]> };
+    }).__zxingReader;
+    if (!reader) return "NO READER EXPOSED";
+    // The Shelf loop tries a frame every 400 ms; a few tries is fair.
+    for (let i = 0; i < 5; i++) {
+      const found = await reader.detect(video);
+      if (found[0]?.rawValue) return found[0].rawValue;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return "NOT DECODED";
+  });
+
+  expect(decoded).toBe("60011053");
+});
+
+test("a native detector that reads nothing is not trusted: the bundled decoder takes over", async ({ page }) => {
+  // iOS 18 ships a BarcodeDetector that constructs and then finds nothing
+  // in any frame. Trusting the constructor meant an iPhone showed "Point at
+  // the barcode" and never read one. So a detector is shown a label before
+  // it is believed — this one fails the audition.
+  await page.addInitScript(() => {
+    (window as unknown as { BarcodeDetector: unknown }).BarcodeDetector = class {
+      async detect(): Promise<{ rawValue: string }[]> {
+        return [];
+      }
+    };
+  });
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+  await expect(page.getByText("Point at the barcode")).toBeVisible();
+
+  // The bundled decoder is the one on duty — it is only ever exposed here
+  // when it was chosen — and the typed road still finds the item.
+  await expect
+    .poll(() => page.evaluate(() => Boolean((window as { __zxingReader?: unknown }).__zxingReader)))
+    .toBe(true);
+  await page.getByLabel("Barcode digits").fill("6001234000015");
+  await page.getByRole("button", { name: /^Find$/ }).click();
+  await expect(page.getByText("Cement 42.5N 50kg")).toBeVisible();
 });
 
 test("the phone menu says who is waiting, and steps aside without stealing the page", async ({ page }) => {
