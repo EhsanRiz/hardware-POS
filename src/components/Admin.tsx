@@ -36,6 +36,7 @@ function compareBy(key: SortKey, a: AdminProduct, b: AdminProduct): number {
 }
 import ProductEditor from "./ProductEditor";
 import CashUp from "./admin/CashUp";
+import Reports from "./admin/Reports";
 import SalesHistory from "./admin/SalesHistory";
 import ShopSettings from "./admin/ShopSettings";
 import Approvals from "./admin/Approvals";
@@ -49,6 +50,7 @@ type TabKey =
   | "sales"
   | "approvals"
   | "cashup"
+  | "reports"
   | "staff"
   | "shop";
 
@@ -94,6 +96,7 @@ export default function Admin({
     // something they configure.
     if (can(user, "approve_discount")) t.push({ key: "approvals", label: "Approvals" });
     if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
+    if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
     if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
     return t;
@@ -594,6 +597,7 @@ export default function Admin({
       {tab === "approvals" && <Approvals pin={pin} />}
 
       {tab === "cashup" && <CashUp pin={pin} />}
+      {tab === "reports" && <Reports pin={pin} />}
 
       {tab === "staff" && <StaffAdmin user={user} pin={pin} products={products} />}
 

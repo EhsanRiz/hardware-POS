@@ -1191,6 +1191,115 @@ export async function installBackend(page: Page): Promise<Backend> {
         return json(closed);
       }
 
+      // ---- 0049: reports. Read-only views over what the fake has recorded. ----
+      case "rpc/pos_day_close":
+      case "rpc/pos_sales_by_department":
+      case "rpc/pos_vat_by_month":
+      case "rpc/pos_export_sales": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: view_reports");
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const from = body.p_from ? new Date(String(body.p_from)).getTime() : -Infinity;
+        const to = body.p_to ? new Date(String(body.p_to)).getTime() : Infinity;
+        if (to < from) return fail("Those dates are the wrong way round");
+        const at = (iso: string | null) => (iso ? new Date(iso).getTime() : Date.now());
+        const inWin = (iso: string | null) => at(iso) >= from && at(iso) < to;
+        const done = be.sales.map((sale, i) => ({ sale, i })).filter(({ sale }) => inWin(sale.created_at));
+
+        if (path === "rpc/pos_day_close") {
+          const tenders: Record<string, number> = {};
+          for (const { sale } of done) for (const p of sale.payments) tenders[p.method] = r2((tenders[p.method] ?? 0) + p.amount);
+          const acct: Record<string, number> = {};
+          for (const p of be.accountPayments) if (!p.voided) acct[p.method] = r2((acct[p.method] ?? 0) + p.amount);
+          const refunds = be.returns.filter((r) => inWin(r.created_at));
+          const sessions = [
+            ...be.closedSessions.map((c) => ({ ...c, register_name: "Front Counter" })),
+            ...(be.cashSession
+              ? [{ ...be.cashSession, closed_at: null, closed_by_name: null, counted_cash: null,
+                   expected_cash: null, variance: null, banked: null, float_kept: null,
+                   card_counted: null, card_variance: null, note: null,
+                   figures: be.cashFigures(), movements: be.cashMovements,
+                   register_name: "Front Counter" }]
+              : []),
+          ] as Record<string, unknown>[];
+          const num = (v: unknown) => (typeof v === "number" ? v : 0);
+          const sum = (k: string) => r2(sessions.reduce((t, x) => t + num(x[k]), 0));
+          const total = r2(done.reduce((t, { sale }) => t + sale.total, 0));
+          return json({
+            sessions,
+            totals: {
+              sales_count: done.length, sales_total: total,
+              vat_total: r2(total - total / 1.15),
+              discount_total: r2(done.reduce((t, { sale }) => t + sale.discount_amount, 0)),
+              refunds_count: refunds.length, refunds_total: r2(refunds.reduce((t, r) => t + r.total, 0)),
+              tenders, account_payments: acct,
+              card_expected: r2((tenders.card ?? 0) + (acct.card ?? 0)),
+              eft_expected: r2((tenders.eft ?? 0) + (acct.eft ?? 0)),
+              sessions_open: be.cashSession ? 1 : 0,
+              floats: sum("opening_float"), cash_expected: sum("expected_cash"),
+              cash_counted: sum("counted_cash"), cash_variance: sum("variance"),
+              card_counted: sum("card_counted"), card_variance: sum("card_variance"),
+              eft_counted: sum("eft_counted"), eft_variance: sum("eft_variance"),
+              banked: sum("banked"), float_kept: sum("float_kept"),
+            },
+          });
+        }
+
+        // Every line of every completed sale in the window, priced as the
+        // server prices them. Cost is the 50 the catalogue fake reports.
+        const lines = done.flatMap(({ sale, i }) =>
+          fakeSaleLines(be, "s" + i).map((l) => ({ sale, line: l })));
+
+        if (path === "rpc/pos_sales_by_department") {
+          const by: Record<string, { lines: number; qty: number; sales: number; vat: number; cost: number }> = {};
+          for (const { line } of lines) {
+            const dept = PRODUCTS.find((p) => p.id === line.product_id)?.category_name ?? "—";
+            const d = (by[dept] ??= { lines: 0, qty: 0, sales: 0, vat: 0, cost: 0 });
+            d.lines++; d.qty += line.qty; d.sales = r2(d.sales + line.line_total);
+            d.vat = r2(d.vat + line.tax_amount); d.cost = r2(d.cost + 50 * line.qty);
+          }
+          return json(Object.entries(by).map(([department, d]) => {
+            const net = r2(d.sales - d.vat);
+            const margin = r2(net - d.cost);
+            return { department, lines: d.lines, qty: d.qty, sales: d.sales, vat: d.vat, net,
+                     cost: d.cost, uncosted_lines: 0, margin,
+                     margin_percent: net > 0 ? Math.round((margin / net) * 1000) / 10 : null };
+          }).sort((a, b) => b.sales - a.sales));
+        }
+
+        if (path === "rpc/pos_vat_by_month") {
+          const by: Record<string, { n: number; gross: number; vat: number; refunds: number; rvat: number }> = {};
+          const key = (iso: string | null) => (iso ? new Date(iso) : new Date()).toISOString().slice(0, 7);
+          for (const sale of be.sales) {
+            const m = (by[key(sale.created_at)] ??= { n: 0, gross: 0, vat: 0, refunds: 0, rvat: 0 });
+            m.n++; m.gross = r2(m.gross + sale.total); m.vat = r2(m.vat + (sale.total - sale.total / 1.15));
+          }
+          for (const r of be.returns) {
+            const m = (by[key(r.created_at)] ??= { n: 0, gross: 0, vat: 0, refunds: 0, rvat: 0 });
+            m.refunds = r2(m.refunds + r.total); m.rvat = r2(m.rvat + r.tax_total);
+          }
+          return json(Object.entries(by).sort(([a], [b]) => (a < b ? 1 : -1)).map(([month, m]) => ({
+            month, sales_count: m.n, gross: m.gross, vat: r2(m.vat), net: r2(m.gross - m.vat),
+            refunds: m.refunds, refunds_vat: m.rvat, vat_due: r2(m.vat - m.rvat),
+          })));
+        }
+
+        // Export
+        return json(lines.map(({ sale, line }, n) => ({
+          doc_number: "INV-" + String(be.sales.indexOf(sale) + 1).padStart(6, "0"),
+          created_at: sale.created_at ?? new Date().toISOString(),
+          status: "completed",
+          cashier: Object.values(USERS).find((u) => u.row.id === sale.cashier_id)?.row.name ?? "",
+          customer: be.customers.find((c) => c.id === sale.customer_id)?.name ?? null,
+          payment_method: sale.payment_method,
+          sku: line.sku, item: line.name,
+          department: PRODUCTS.find((p) => p.id === line.product_id)?.category_name ?? null,
+          qty: line.qty, unit: line.unit_code, unit_price: line.unit_price,
+          line_total: line.line_total, vat: line.tax_amount, discount: line.discount_amount,
+          cost_at_sale: 50, _n: n,
+        })));
+      }
+
       case "rpc/pos_cash_session_suggested_float": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");

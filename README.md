@@ -121,15 +121,20 @@ That needs embeddings and is genuinely the part where a model earns its place.
 Removed from the cafe build because they targeted the old data model, and to be
 rebuilt against this schema:
 
-- **Staff admin** — users, roles, permissions, PINs
 - **Goods receiving** — suppliers exist in the schema; purchase orders and GRVs do not
-- **Reports** — sales, margin (the data is there: `cost_at_sale`), reorder
-- **Cash-up** — `session_id` is reserved on `sales`; the logic is not ported
-- **Quotes as documents** — the till prints a quote, but it is not stored or
-  convertible to an invoice
+- **Reorder report** — the reorder level is on every product and the till warns
+  at it; a list of what to order is not yet a screen
 - **Semantic search** — embeddings over the catalogue, for intent rather than
   words. The deterministic layer above is the fallback it degrades to.
 - **Login rate limiting** — see *Known security tradeoffs*
+
+Since built, and no longer on that list: staff admin (Manage → Staff),
+quotes as stored documents (Manage → Quotes), the cash-up (Manage → Cash-up:
+float, pay-ins and pay-outs, the count against expected, the card machine and
+EFTs against the till, banking and tomorrow's float), and reports (Manage →
+Reports: the whole shop's day close across every till, sales by department
+with margin from `cost_at_sale`, output VAT by month, and a CSV export of
+every line sold).
 
 Catalogue admin is now in place: **Manage** on the till (PIN-gated) edits
 products, prices, units, barcodes and departments, adjusts stock through a

@@ -1,4 +1,5 @@
 import type { CashSession } from "./cashup";
+import type { DayClose } from "./reports";
 import { CURRENCY, RECEIPT_WIDTH } from "./config";
 import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
@@ -586,6 +587,86 @@ export function buildCashUpText(s: CashSession): string {
 
   out.push("");
   out.push(center("signed ............................"));
+  out.push("");
+  out.push(center("not a tax invoice"));
+  out.push("");
+  out.push("");
+  return out.join("\n");
+}
+
+/**
+ * The whole shop's day on one slip: every till's drawer and card check side
+ * by side, then the totals across them. The cash-up is per till; this is
+ * what the owner pins to the banking bag.
+ */
+export function buildDayCloseText(d: DayClose, from: Date, to: Date): string {
+  const out: string[] = [];
+  const t = d.totals;
+  shopHeader(out, "DAY CLOSE");
+  out.push("");
+  const oneDay = to.getTime() - from.getTime() <= 36e5 * 25;
+  out.push(lineItem(oneDay ? "Day" : "From", fmtDateTime(from).slice(0, 10)));
+  if (!oneDay) out.push(lineItem("To", fmtDateTime(new Date(to.getTime() - 1)).slice(0, 10)));
+  out.push(lineItem("Printed", fmtDateTime(new Date())));
+  out.push(solid());
+
+  out.push(bold("TAKINGS"));
+  out.push(lineItem(`Sales (${t.sales_count})`, amount(t.sales_total)));
+  if (t.refunds_total > 0) {
+    out.push(lineItem(`Refunds (${t.refunds_count})`, `-${amount(t.refunds_total)}`));
+    out.push(lineItem("Net", amount(t.sales_total - t.refunds_total)));
+  }
+  if (t.discount_total > 0) out.push(lineItem("Discounts given", amount(t.discount_total)));
+  out.push(lineItem("VAT within", amount(t.vat_total)));
+  out.push(divider());
+  for (const [method, value] of Object.entries(t.tenders ?? {})) {
+    out.push(lineItem(PAYMENT_LABEL[method as PaymentMethod] ?? method, amount(value)));
+  }
+  for (const [method, value] of Object.entries(t.account_payments ?? {})) {
+    const label = PAYMENT_LABEL[method as PaymentMethod] ?? method;
+    out.push(lineItem(`Account paid by ${label.toLowerCase()}`, amount(value)));
+  }
+
+  out.push("");
+  out.push(bold("THE TILLS"));
+  if (!d.sessions.length) out.push("No drawer was opened.");
+  for (const s of d.sessions) {
+    out.push(`${s.register_name ?? "Till"} — ${s.closed_at ? "closed" : "STILL OPEN"}`);
+    out.push(lineItem("  Expected", amount(s.expected_cash ?? s.figures.expected_cash)));
+    if (s.counted_cash != null) {
+      out.push(lineItem("  Counted", amount(s.counted_cash)));
+      const v = s.variance ?? 0;
+      out.push(lineItem(Math.abs(v) < 0.005 ? "  Balanced" : v > 0 ? "  Over" : "  Short", amount(Math.abs(v))));
+    }
+    if (s.card_counted != null) {
+      const v = s.card_variance ?? 0;
+      out.push(lineItem("  Card machine", `${amount(s.card_counted)} ${Math.abs(v) < 0.005 ? "ok" : (v > 0 ? "+" : "-") + amount(Math.abs(v))}`));
+    }
+    if (s.banked != null) out.push(lineItem("  Banked", amount(s.banked)));
+  }
+
+  out.push("");
+  out.push(bold("ACROSS THE SHOP"));
+  out.push(lineItem("Cash expected", amount(t.cash_expected)));
+  out.push(lineItem("Cash counted", amount(t.cash_counted)));
+  out.push(boxTop());
+  out.push(boxRow(
+    Math.abs(t.cash_variance) < 0.005 ? "CASH BALANCED" : t.cash_variance > 0 ? "CASH OVER" : "CASH SHORT",
+    amount(Math.abs(t.cash_variance))
+  ));
+  out.push(boxTop());
+  out.push(lineItem("Card: till", amount(t.card_expected)));
+  out.push(lineItem("Card: machine", amount(t.card_counted)));
+  if (t.eft_expected > 0 || t.eft_counted > 0) {
+    out.push(lineItem("EFT: till", amount(t.eft_expected)));
+    out.push(lineItem("EFT: bank", amount(t.eft_counted)));
+  }
+  out.push(lineItem("Banked", amount(t.banked)));
+  out.push(lineItem("Float kept", amount(t.float_kept)));
+  if (t.sessions_open > 0) {
+    out.push("");
+    out.push(center(`${t.sessions_open} drawer${t.sessions_open === 1 ? "" : "s"} still open`));
+  }
   out.push("");
   out.push(center("not a tax invoice"));
   out.push("");
