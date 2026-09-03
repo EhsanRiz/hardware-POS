@@ -2006,4 +2006,39 @@ begin
     'a range the wrong way round');
 end $$;
 
+-- 0050: money knows which till it crossed ---------------------------------------
+
+do $$
+declare
+  v_tok text; v_tok2 text; v_mgr uuid; v_cust uuid; v_fig1 jsonb; v_fig2 jsonb;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  update public.cash_sessions set closed_at = now() - interval '1 second' where closed_at is null;
+  select token into v_tok2 from public.pos_pair_register('+27820000001', '1234', 'Second till');
+
+  perform public.pos_cash_session_open(v_tok, '1234', 100);
+  perform public.pos_cash_session_open(v_tok2, '1234', 100);
+
+  select id into v_cust from public.customers limit 1;
+  update public.customers set credit_limit = 100000 where id = v_cust;
+  -- R500 paid in at the first till.
+  perform public.pos_take_account_payment(v_tok, v_mgr, v_cust, 500, 'cash', null, null, null);
+  perform assert_eq(
+    (select count(*)::int from public.customer_payments cp where cp.register_id is not null and cp.amount = 500),
+    1, 'the settlement records its till');
+
+  v_fig1 := public.pos_cash_session_current(v_tok, '1234') -> 'figures';
+  v_fig2 := public.pos_cash_session_current(v_tok2, '1234') -> 'figures';
+  perform assert_eq((v_fig1->>'account_cash')::numeric, 500::numeric,
+    'the till that took the money expects it');
+  perform assert_eq((v_fig2->>'account_cash')::numeric, 0::numeric,
+    'the other till does not — its drawer never saw it');
+  perform assert_eq((v_fig2->>'expected_cash')::numeric, 100::numeric,
+    'so its expected cash is its float alone');
+
+  perform public.pos_cash_session_close(v_tok, '1234', 600);
+  perform public.pos_cash_session_close(v_tok2, '1234', 100);
+end $$;
+
 select 'all database tests passed' as result;
