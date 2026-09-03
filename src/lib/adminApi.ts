@@ -441,15 +441,15 @@ export async function shelfLookup(pin: string, barcode: string): Promise<ShelfIt
 }
 
 /**
- * Record an item the catalogue has never heard of. It lands HIDDEN — the
- * server enforces that, not this comment — and the price travels along as a
- * proposal for whoever reviews it in Catalogue.
+ * Record an item the catalogue has never heard of. It lands HIDDEN and, with
+ * no price offered, unpriced — the server enforces both, not this comment —
+ * for whoever reviews it in Catalogue to price and flip live.
  */
 export async function shelfAddItem(
   pin: string,
   barcode: string,
   name: string,
-  priceRetail: number
+  priceRetail: number | null = null
 ): Promise<ShelfItem> {
   const { data, error } = await supabase.rpc("pos_shelf_add_item", {
     p_register_token: requireToken(),
