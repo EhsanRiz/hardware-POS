@@ -49,7 +49,7 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
   await page.locator("input[type=tel]").fill(USERS.manager.phone);
-  await page.locator("input[type=password]").fill("9999");
+  await page.locator("input[type=password]").fill("999999");
   await page.getByRole("button", { name: /Pair this till/i }).click();
   await expect(page.getByText(/Invalid phone or PIN|Pairing failed/i)).toBeVisible();
   await expect(page.getByText("Set up this till")).toBeVisible();
@@ -71,15 +71,12 @@ test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) 
   for (const d of USERS.manager.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await expect(page.getByText(/PIN was not recognised/i)).toBeVisible();
 
   // Sam's own PIN works, and the shift starts under Sam's name.
   for (const d of USERS.employee.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  if (await ok.count()) await ok.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(page.getByText("Sam")).toBeVisible();
 });
@@ -105,8 +102,6 @@ test("the till says who is serving, and in what capacity", async ({ page }) => {
   for (const d of USERS.manager.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(who.locator(".sell-cashier-role")).toHaveText("Owner");
 });
@@ -127,8 +122,6 @@ test("a handover puts the next operator on their own name", async ({ page }) => 
   for (const d of USERS.employee.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
 
   // The sale that follows is rung up by Sam, which is the point of the whole
@@ -789,8 +782,6 @@ async function handOverToSam(page: import("@playwright/test").Page) {
   for (const d of USERS.employee.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
 }
 
@@ -819,8 +810,6 @@ test("a manager's PIN releases a LINE discount, not only a blanket one", async (
   for (const d of USERS.manager.pin.split("")) {
     await approval.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = approval.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
 
   await page.getByRole("button", { name: /^Cash$/ }).click();
@@ -1223,8 +1212,6 @@ test("a parked sale can be released from the Sales screen", async ({ page }) => 
   for (const d of USERS.manager.pin.split("")) {
     await release.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = release.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
 
   await expect(page.getByText(/awaiting approval/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Release$/ })).toHaveCount(0);
@@ -1256,8 +1243,6 @@ test("a manager issues a code, and it releases a discount over the phone", async
   for (const d of USERS.employee.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  const signIn = page.locator('button:text-is("OK")');
-  if (await signIn.count()) await signIn.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
@@ -1272,8 +1257,6 @@ test("a manager issues a code, and it releases a discount over the phone", async
   for (const d of code.split("")) {
     await approval.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = approval.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await expect(page.getByText(/Manager approval/i)).toHaveCount(0);
 
   await page.getByRole("button", { name: /^Cash$/ }).click();
@@ -1314,8 +1297,6 @@ test("a code works once, and a wrong one is refused at the counter", async ({ pa
   for (const d of "424242".split("")) {
     await approval.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = approval.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await expect(approval).toContainText(/expired or already been used/i);
   await expect(approval).toBeVisible();
 });
@@ -1345,8 +1326,6 @@ test("a code ceiling is checked before the customer is told yes", async ({ page 
   for (const d of "313131".split("")) {
     await approval.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = approval.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await expect(approval).toContainText(/releases up to/i);
   // Refused and NOT spent: the manager should not have to issue a second one.
   expect(be.approvalCodes.find((c) => c.code === "313131")?.used_at).toBeNull();
@@ -1465,8 +1444,6 @@ test("an approval code releases a sale taken offline, and survives the queue", a
   for (const d of "515151".split("")) {
     await approval.locator(`button:text-is("${d}")`).first().click();
   }
-  const ok = approval.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
 
   // Offline the code is taken on trust, and the till says so rather than
   // implying it has been checked.
@@ -1499,10 +1476,65 @@ test("a manager can open the catalogue", async ({ page }) => {
   for (const d of USERS.manager.pin.split("")) {
     await dialog.locator(`button:text-is("${d}")`).first().click();
   }
-  await dialog.locator('button:text-is("OK")').click();
 
   await expect(page.getByRole("button", { name: /New product/i })).toBeVisible();
   await expect(page.getByRole("cell", { name: "CEM-425-50" })).toBeVisible();
+});
+
+test("the sixth digit signs you in, and there is no OK to find", async ({ page }) => {
+  // Every PIN and every approval code is six digits, so the keypad submits
+  // on the sixth. The OK button it used to wait for was a seventh tap that
+  // read as a broken keypad to anyone who has used a bank card.
+  await page.goto("/");
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await page.getByRole("button", { name: /^Manager\b/ }).click();
+
+  await expect(page.locator('button:text-is("OK")')).toHaveCount(0);
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+
+  // The same keypad guards Manage, and behaves the same way.
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage" });
+  await expect(dialog.locator('button:text-is("OK")')).toHaveCount(0);
+  for (const d of USERS.manager.pin.split("")) {
+    await dialog.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByRole("button", { name: /New product/i })).toBeVisible();
+});
+
+test("the editor shows margin and markup, both ex VAT", async ({ page }) => {
+  // R25 cost, R50 on the shelf: 100% to the shopkeeper, and the editor said
+  // 42.5%. Both are right about different things — margin is over the
+  // ex-VAT price, markup is over cost — so both are shown, and say ex VAT.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Cement 42.5N 50kg" }).first().click();
+  await page.getByLabel(/^Retail/).fill("50");
+  await page.getByLabel(/^Cost/).fill("25");
+  await expect(page.getByText("Margin 42.5% · markup 73.9%, ex VAT")).toBeVisible();
+});
+
+test("a phone scans the barcode into a new product", async ({ page }) => {
+  // On the tablet a scanner gun types into the Barcode field. A phone has a
+  // camera and no gun, so the field gets a Scan button that opens the same
+  // viewfinder the Shelf uses and drops the first code read into the field.
+  await installFakeDetector(page);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /New product/i }).click();
+
+  await page.getByRole("button", { name: /^Scan$/ }).click();
+  const scanner = page.getByRole("dialog", { name: "Scan a barcode" });
+  await expect(scanner).toBeVisible();
+  await scanCode(page, "6009876543210");
+
+  await expect(scanner).toHaveCount(0);
+  await expect(page.getByLabel(/^Barcode/)).toHaveValue("6009876543210");
 });
 
 /** Open Manage and get past the PIN, which every back-office test needs first. */
@@ -1515,7 +1547,6 @@ async function openManage(
   for (const d of pin.split("")) {
     await dialog.locator(`button:text-is("${d}")`).first().click();
   }
-  await dialog.locator('button:text-is("OK")').click();
 }
 
 /**
@@ -2477,7 +2508,6 @@ test("a delivery is booked in against a reference and the shelves update", async
   for (const d of USERS.manager.pin.split("")) {
     await gate.locator(`button:text-is("${d}")`).first().click();
   }
-  await gate.locator('button:text-is("OK")').click();
 
   await expect(page.getByRole("button", { name: /Running low/ })).toBeVisible();
 

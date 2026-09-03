@@ -69,12 +69,12 @@ function mk(
 }
 
 export const USERS = {
-  manager: { pin: "1234", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports","shelf_capture"] } },
-  employee: { pin: "5678", phone: "+27820000002", row: { id: "u2", name: "Sam", role: "employee", phone: "+27820000002", email: null, permissions: ["take_payments","apply_discount"] } },
+  manager: { pin: "123456", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports","shelf_capture"] } },
+  employee: { pin: "567890", phone: "+27820000002", row: { id: "u2", name: "Sam", role: "employee", phone: "+27820000002", email: null, permissions: ["take_payments","apply_discount"] } },
   // The aisle: somebody whose only management right is the shelf. As on the
   // server, permissions here are the EFFECTIVE set — role defaults plus the
   // one grant — because that is what pos_login returns.
-  shelf: { pin: "7777", phone: "+27820000031", row: { id: "u3", name: "Nomsa", role: "employee", phone: "+27820000031", email: null, permissions: ["take_payments","apply_discount","shelf_capture"] } },
+  shelf: { pin: "777777", phone: "+27820000031", row: { id: "u3", name: "Nomsa", role: "employee", phone: "+27820000031", email: null, permissions: ["take_payments","apply_discount","shelf_capture"] } },
 };
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
@@ -1572,7 +1572,5 @@ export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
-  const ok = page.locator('button:text-is("OK")');
-  if (await ok.count()) await ok.first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
 }
