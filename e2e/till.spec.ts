@@ -1689,6 +1689,126 @@ test("a day is opened on a float, cashed up, and the variance is what prints", a
   expect(be.closedSessions[0].variance).toBe(-5);
 });
 
+test("a drawer left open since yesterday is flagged at sign-in, and closing it clears the flag", async ({ page }) => {
+  // Nothing used to say so, and a session left open swallows several days'
+  // sales into one window. The live shop had two of these.
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager",
+    opened_at: new Date(Date.now() - 30 * 36e5).toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  const notice = page.getByRole("alert");
+  await expect(notice).toContainText(/has been open since/);
+  await expect(notice).toContainText("Manager");
+
+  // The way in lands on the drawer, not on the catalogue.
+  await page.getByRole("button", { name: /^Cash up$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) {
+    await dialog.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByText("Expected in drawer")).toBeVisible();
+
+  await page.getByLabel("Counted cash").fill("500");
+  await page.getByRole("button", { name: /Close & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("BALANCED");
+  const close = page.getByLabel("Close");
+  if (await close.count()) await close.first().click();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a cashier is told to fetch a manager for a stale drawer, not offered the door", async ({ page }) => {
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager",
+    opened_at: new Date(Date.now() - 30 * 36e5).toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  await pairAndSignIn(page, USERS.employee.pin);
+  const notice = page.getByRole("alert");
+  await expect(notice).toContainText(/Ask a manager to cash up/);
+  await expect(page.getByRole("button", { name: /^Cash up$/ })).toHaveCount(0);
+});
+
+test("the cash-up slip nets refunds and lists account money by tender", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Opening float").fill("500");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  // Opened today: nothing to flag.
+  await expect(page.getByRole("alert")).toHaveCount(0);
+
+  // R115 of cement on account, then R40 of it settled on the card machine.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Accounts" }).click();
+  await page.locator(".acc-row", { hasText: "Mokoena" }).click();
+  await page.locator(".acc-methods button", { hasText: "Card" }).click();
+  await page.getByLabel(/^Reference/).fill("batch 12");
+  await page.getByLabel("Amount").fill("40");
+  await page.getByRole("button", { name: /Receive R/ }).click();
+  await expect(page.locator("p", { hasText: "received" })).toContainText("40.00 received");
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Sell" }).click();
+
+  // A R115 cash sale, refunded in full.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  // The cash sale's row (the second invoice), not the account sale's: a
+  // refund follows the tender, and only a cash refund touches the drawer.
+  await page
+    .locator("li", { hasText: "INV-000002" })
+    .getByRole("button", { name: /^Return$/ })
+    .click();
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("wrong size");
+  await page.getByRole("button", { name: /Refund R\s115\.00 & print credit note/ }).click();
+  await expect(page.locator("#print-area")).toContainText("CREDIT NOTE");
+  const close = page.getByLabel("Close");
+  if (await close.count()) await close.first().click();
+
+  // The slip: sales gross, refunds against them, net; and the card machine's
+  // R40 listed where the card total is checked.
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await expect(page.getByText("Refunds (1)")).toBeVisible();
+  await expect(page.getByText("Account paid by card")).toBeVisible();
+  await page.getByRole("button", { name: /Print without closing/i }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Refunds (1)");
+  await expect(slip).toContainText("-R115.00");
+  await expect(slip).toContainText("Net");
+  await expect(slip).toContainText("Account paid by card");
+  await expect(slip).toContainText("R40.00");
+  // The drawer: R115 in and R115 back out leaves the float, and the way out
+  // is on the slip as a pay-out.
+  await expect(slip).toContainText("Paid out");
+  await expect(slip).toContainText(/Expected in drawer\s+R500\.00/);
+});
+
 test("a balanced drawer closes on one press", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);

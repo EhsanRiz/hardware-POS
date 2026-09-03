@@ -63,10 +63,14 @@ export default function Admin({
   user,
   pin,
   onClose,
+  initialTab,
 }: {
   user: User | null;
   pin: string;
   onClose: () => void;
+  /** Land on a section rather than the first one — the till's "Cash up"
+      notice opens straight onto the drawer. */
+  initialTab?: TabKey;
 }) {
   // Only the tabs this person is actually allowed to open. The RPCs behind each
   // re-check the permission anyway; this is so a counter supervisor is not
@@ -97,7 +101,9 @@ export default function Admin({
 
   // The first tab this person may actually open — a shelf-only user's Manage
   // is the camera, not a catalogue that would refuse to load.
-  const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "catalogue");
+  const [tab, setTab] = useState<TabKey>(
+    initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : tabs[0]?.key ?? "catalogue"
+  );
   // On a phone the tabs live behind a burger (see the header); this is it.
   const [menuOpen, setMenuOpen] = useState(false);
   // How many colleagues are on the list but cannot sign in yet. Carried on the

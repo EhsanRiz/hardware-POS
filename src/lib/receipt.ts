@@ -499,6 +499,12 @@ export function buildCashUpText(s: CashSession): string {
 
   out.push(bold("TAKINGS"));
   out.push(lineItem(`Sales (${f.sales_count})`, amount(f.sales_total)));
+  // Money that went back. Without this line "Sales" reads gross and the
+  // only trace of a refund is a pay-out further down.
+  if ((f.refunds_total ?? 0) > 0) {
+    out.push(lineItem(`Refunds (${f.refunds_count ?? 0})`, `-${amount(f.refunds_total!)}`));
+    out.push(lineItem("Net", amount(f.sales_total - f.refunds_total!)));
+  }
   if (f.discount_total > 0) out.push(lineItem("Discounts given", amount(f.discount_total)));
   out.push(lineItem("VAT within", amount(f.vat_total)));
   out.push(divider());
@@ -508,6 +514,12 @@ export function buildCashUpText(s: CashSession): string {
   for (const [method, value] of Object.entries(f.tenders)) {
     const label = PAYMENT_LABEL[method as PaymentMethod] ?? method;
     out.push(lineItem(label, amount(value)));
+  }
+  // Account settlements, by method, for the same reason: a card machine's
+  // batch does not know whether a swipe was a sale or a debtor paying up.
+  for (const [method, value] of Object.entries(f.account_payments ?? {})) {
+    const label = PAYMENT_LABEL[method as PaymentMethod] ?? method;
+    out.push(lineItem(`Account paid by ${label.toLowerCase()}`, amount(value)));
   }
   out.push(divider());
 

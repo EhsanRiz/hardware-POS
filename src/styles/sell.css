@@ -802,6 +802,22 @@
   color: var(--color-neutral-400);
   font-size: 12px;
 }
+/* The stale-drawer notice: amber, and not a thing you tap away. */
+.sell-banner.is-warning {
+  background: #fde68a;
+  color: #1c1917;
+  cursor: default;
+}
+.sell-banner.is-warning .cash-up-now {
+  margin-left: auto;
+  flex: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--color-colophon);
+  color: var(--color-bg);
+  font-size: 13px;
+  font-weight: 600;
+}
 
 .sell-foot {
   display: flex;
