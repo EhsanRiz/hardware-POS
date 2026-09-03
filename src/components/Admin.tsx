@@ -368,7 +368,12 @@ export default function Admin({
           {/* overflow-x too: the catalogue is a wide table and on a phone it
               was pushing the whole page sideways, so the header and the tab
               strip slid off with it. A table that scrolls inside its own box
-              keeps that to the table. */}
+              keeps that to the table.
+
+              Nine columns edge to edge read as clipped on a laptop, so the
+              last column keeps a gutter, the name takes what is left and
+              stops at two lines, and department and unit step aside below a
+              laptop's width — both are on the editor a tap away. */}
           <div className="flex-1 overflow-y-auto overflow-x-auto">
             {loading ? (
               <p className="p-6 text-center text-stone-500">Loading…</p>
@@ -378,15 +383,15 @@ export default function Admin({
                   <tr>
                     <th className="p-2 font-medium sr-only">Photo</th>
                     <th className="p-2 font-medium">SKU</th>
-                    <th className="p-2 font-medium">Name</th>
-                    <th className="p-2 font-medium">Dept</th>
-                    <th className="p-2 font-medium">Unit</th>
+                    <th className="p-2 font-medium w-full">Name</th>
+                    <th className="p-2 font-medium hidden lg:table-cell">Dept</th>
+                    <th className="p-2 font-medium hidden lg:table-cell">Unit</th>
                     <th className="p-2 font-medium text-right">Retail</th>
                     <th className="p-2 font-medium text-right">Trade</th>
                     {canSeeCost && (
                       <th className="p-2 font-medium text-right">Cost</th>
                     )}
-                    <th className="p-2 font-medium text-right">Stock</th>
+                    <th className="p-2 pr-4 font-medium text-right">Stock</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -419,7 +424,7 @@ export default function Admin({
                         </td>
                         <td className="p-2 font-mono text-xs">{p.sku}</td>
                         <td className="p-2">
-                          {p.name}
+                          <span className="line-clamp-2" title={p.name}>{p.name}</span>
                           {!p.active && (
                             <span className="ml-2 align-middle text-[11px] font-medium
                                              px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
@@ -427,10 +432,10 @@ export default function Admin({
                             </span>
                           )}
                         </td>
-                        <td className="p-2 text-stone-500">
+                        <td className="p-2 text-stone-500 hidden lg:table-cell">
                           {p.category_name ?? "—"}
                         </td>
-                        <td className="p-2 text-stone-500">{p.unit_code}</td>
+                        <td className="p-2 text-stone-500 hidden lg:table-cell">{p.unit_code}</td>
                         <td className="p-2 text-right tabular-nums">
                           {money(p.price_retail)}
                         </td>
@@ -443,7 +448,7 @@ export default function Admin({
                           </td>
                         )}
                         <td
-                          className={`p-2 text-right tabular-nums ${
+                          className={`p-2 pr-4 text-right tabular-nums whitespace-nowrap ${
                             low ? "text-amber-600 font-medium" : ""
                           }`}
                         >

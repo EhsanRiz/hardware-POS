@@ -4,6 +4,7 @@ import { CURRENCY } from "../lib/config";
 import { money } from "../lib/format";
 import { imageSrc } from "../lib/images";
 import { fmtQty } from "../lib/receipt";
+import BarcodeScanner from "./BarcodeScanner";
 import ProductPhotos from "./ProductPhotos";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "../lib/types";
 
@@ -79,10 +80,24 @@ export default function ProductEditor({
     return Number.isFinite(n) ? n : null;
   };
 
-  const margin =
-    canSeeCost && f.cost != null && f.cost > 0 && f.price_retail > 0
-      ? ((f.price_retail / (1 + 0.15) - f.cost) / (f.price_retail / (1 + 0.15))) * 100
-      : null;
+  // Both figures, both ex VAT. Margin is profit over the ex-VAT selling
+  // price, which is what margin reports use; markup is profit over cost,
+  // which is how a shop that buys at 25 and sells at 50 thinks of it. Shown
+  // together because R50 on R25 read as "100%" to the first person who
+  // tried it, and the VAT the shop hands on is nobody's profit.
+  const exVat = f.price_retail > 0 ? f.price_retail / (1 + 0.15) : 0;
+  const marginHint =
+    canSeeCost && f.cost != null && f.cost > 0 && exVat > 0
+      ? `Margin ${(((exVat - f.cost) / exVat) * 100).toFixed(1)}% · markup ${(
+          ((exVat - f.cost) / f.cost) *
+          100
+        ).toFixed(1)}%, ex VAT`
+      : undefined;
+
+  // A phone has a camera and no scanner gun; the tablet has the reverse, and
+  // there a gun types straight into the field.
+  const [scanning, setScanning] = useState(false);
+  const canScan = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   async function save() {
     setBusy(true);
@@ -114,6 +129,15 @@ export default function ProductEditor({
 
   return (
     <div className="vv-fixed bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto">
+      {scanning && (
+        <BarcodeScanner
+          onCode={(code) => {
+            set("barcode", code);
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
       <div className="bg-white rounded-2xl w-full max-w-2xl my-6">
         <div className="flex items-center justify-between p-4 border-b border-stone-200">
           <h2 className="text-lg font-semibold">
@@ -135,12 +159,23 @@ export default function ProductEditor({
               />
             </Field>
             <Field label="Barcode" hint="Scanned at the till. Leave blank if none.">
-              <input
-                value={f.barcode ?? ""}
-                onChange={(e) => set("barcode", e.target.value || null)}
-                className={inputCls}
-                placeholder="6001234000015"
-              />
+              <div className="flex gap-2">
+                <input
+                  value={f.barcode ?? ""}
+                  onChange={(e) => set("barcode", e.target.value || null)}
+                  className={inputCls}
+                  placeholder="6001234000015"
+                />
+                {canScan && (
+                  <button
+                    type="button"
+                    onClick={() => setScanning(true)}
+                    className="shrink-0 px-3 rounded-lg border border-stone-300 text-sm text-stone-700"
+                  >
+                    Scan
+                  </button>
+                )}
+              </div>
             </Field>
           </div>
 
@@ -211,7 +246,7 @@ export default function ProductEditor({
             {canSeeCost ? (
               <Field
                 label="Cost"
-                hint={margin != null ? `Margin ${margin.toFixed(1)}%` : undefined}
+                hint={marginHint}
               >
                 <input
                   inputMode="decimal"

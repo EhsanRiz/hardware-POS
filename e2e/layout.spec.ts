@@ -84,14 +84,13 @@ test.describe("manager's phone, 390", () => {
   test("every Manage section is reachable from the burger, and nothing wraps", async ({ page }) => {
     const be = await installBackend(page);
     void be;
-    await pairAndSignIn(page, "1234");
+    await pairAndSignIn(page, "123456");
 
     await page.getByRole("button", { name: /^Manage$/ }).click();
     const dialog = page.getByRole("dialog", { name: "Manage" });
-    for (const d of "1234".split("")) {
+    for (const d of "123456".split("")) {
       await dialog.locator(`button:text-is("${d}")`).first().click();
     }
-    await dialog.locator('button:text-is("OK")').click();
 
     // The header must fit the phone. Not the whole document: the Sell screen is
     // still mounted underneath and is built for a tablet, which is a separate
@@ -150,6 +149,36 @@ test.describe("manager's phone, 390", () => {
  * off the edge. The row is clipped, so the page does not scroll and nothing
  * says they are there. You could not remove a line or take money off one.
  */
+test.describe("tablet portrait, 768 — catalogue", () => {
+  test.use({ viewport: { width: 768, height: 1024 } });
+
+  test("the catalogue fits its box: no sideways scroll, and the aside columns step aside", async ({ page }) => {
+    await installBackend(page);
+    await pairAndSignIn(page, "123456");
+    await page.getByRole("button", { name: /^Manage$/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Manage" });
+    for (const d of "123456".split("")) {
+      await dialog.locator(`button:text-is("${d}")`).first().click();
+    }
+    await expect(page.getByRole("cell", { name: "CEM-425-50" })).toBeVisible();
+
+    // Department and unit are on the editor a tap away; below a laptop's
+    // width they give their room to the name.
+    await expect(page.getByRole("columnheader", { name: "Dept" })).toBeHidden();
+    await expect(page.getByRole("columnheader", { name: "Unit" })).toBeHidden();
+    await expect(page.getByRole("columnheader", { name: "Stock" })).toBeVisible();
+
+    // The table lives inside its own scrolling box; at this width it must
+    // not need to scroll sideways at all.
+    const spill = await page.evaluate(() => {
+      const table = document.querySelector("table")!;
+      const box = table.parentElement!;
+      return table.scrollWidth - box.clientWidth;
+    });
+    expect(spill, "table wider than its box, in CSS pixels").toBeLessThanOrEqual(0);
+  });
+});
+
 test.describe("phone, 390", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -157,7 +186,7 @@ test.describe("phone, 390", () => {
     page,
   }) => {
     await installBackend(page);
-    await pairAndSignIn(page, "1234");
+    await pairAndSignIn(page, "123456");
 
     await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
     await page.keyboard.press("Enter");
