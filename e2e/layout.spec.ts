@@ -176,6 +176,22 @@ test.describe("tablet portrait, 768 — catalogue", () => {
       return table.scrollWidth - box.clientWidth;
     });
     expect(spill, "table wider than its box, in CSS pixels").toBeLessThanOrEqual(0);
+
+    // A price is one line. The name column used to take every spare pixel
+    // and "R 229.00" broke into "R" over "229.00".
+    const priceLines = await page.getByRole("cell", { name: "R 115.00" }).first().evaluate((cell) => {
+      const range = document.createRange();
+      range.selectNodeContents(cell.firstChild!);
+      return range.getClientRects().length;
+    });
+    expect(priceLines, "lines the price wraps onto").toBe(1);
+
+    // Zebra rows: neighbours differ, so the eye can follow a line across.
+    const [first, second] = await page.evaluate(() => {
+      const rows = document.querySelectorAll("tbody tr");
+      return [getComputedStyle(rows[0]).backgroundColor, getComputedStyle(rows[1]).backgroundColor];
+    });
+    expect(first).not.toBe(second);
   });
 });
 

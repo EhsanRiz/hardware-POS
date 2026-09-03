@@ -1507,6 +1507,66 @@ test("the sixth digit signs you in, and there is no OK to find", async ({ page }
   await expect(page.getByRole("button", { name: /New product/i })).toBeVisible();
 });
 
+test("the catalogue sorts by a tapped heading, and a second tap turns it round", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  const firstName = () => page.locator("tbody tr").first().locator("td").nth(2);
+
+  // Alphabetical to begin with.
+  await expect(firstName()).toContainText("Cement 42.5N 50kg");
+
+  const heading = (name: string) => page.getByRole("table").getByRole("button", { name, exact: true });
+  await heading("Retail").click();
+  await expect(page.getByRole("columnheader", { name: "Retail" })).toHaveAttribute("aria-sort", "ascending");
+  await expect(firstName()).toContainText("Chain 6mm Galvanised");
+
+  await heading("Retail").click();
+  await expect(page.getByRole("columnheader", { name: "Retail" })).toHaveAttribute("aria-sort", "descending");
+  await expect(firstName()).toContainText("Twin & Earth 2.5mm 100m");
+
+  // Stock, least first: the lines actually running out come to the top.
+  await heading("Stock").click();
+  await expect(firstName()).toContainText("Twin & Earth 2.5mm 100m");
+});
+
+test("the catalogue chips find what is running low and what a gun cannot find", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  const rows = page.locator("tbody tr");
+  await expect(rows).toHaveCount(6);
+
+  // Two below its reorder level of three.
+  await page.getByRole("button", { name: /^Low stock \d+$/ }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Twin & Earth 2.5mm 100m");
+
+  // Four of the six carry no barcode; the cement does, and is not listed.
+  await page.getByRole("button", { name: /^No barcode \d+$/ }).click();
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByRole("cell", { name: /Cement 42.5N 50kg/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^All \d+$/ }).click();
+  await expect(rows).toHaveCount(6);
+});
+
+test("the catalogue says what its columns mean, and shows the barcode and margin on the row", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  // Said where the columns are, since nobody can hover on a tablet.
+  await expect(page.getByText(/Retail is what the till charges, incl\. VAT/)).toBeVisible();
+  await expect(page.getByText(/Cost is what you paid the supplier, ex VAT/)).toBeVisible();
+
+  // The barcode sits under the stock code, or says there is none.
+  const cement = page.locator("tbody tr", { hasText: "Cement 42.5N 50kg" });
+  await expect(cement).toContainText("6001234000015");
+  const chain = page.locator("tbody tr", { hasText: "Chain 6mm Galvanised" });
+  await expect(chain).toContainText("no barcode");
+
+  // R115 incl. VAT is R100 ex; on a R50 cost that is a 50% margin, under the cost.
+  await expect(cement).toContainText("50.0% margin");
+});
+
 test("the editor shows margin and markup, both ex VAT", async ({ page }) => {
   // R25 cost, R50 on the shelf: 100% to the shopkeeper, and the editor said
   // 42.5%. Both are right about different things — margin is over the
