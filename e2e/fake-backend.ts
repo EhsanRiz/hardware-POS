@@ -338,6 +338,8 @@ export class Backend {
       account_payments: accountPayments,
       refunds_count: refunds.length,
       refunds_total: round2(refunds.reduce((t, r) => t + r.total, 0)),
+      card_expected: round2((tenders.card ?? 0) + (accountPayments.card ?? 0)),
+      eft_expected: round2((tenders.eft ?? 0) + (accountPayments.eft ?? 0)),
       pay_in: payIn,
       pay_out: payOut,
       expected_cash: round2(s.opening_float + cashSales + accountCash + payIn - payOut),
@@ -1159,13 +1161,27 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!be.cashSession) return fail("No session is open on this till");
         const figures = be.cashFigures();
         const counted = Number(body.p_counted_cash);
+        // 0048: the machine and the bank against the till, and the banking.
+        const opt = (v: unknown) => (v == null ? null : Number(v));
+        const cardC = opt(body.p_card_counted), eftC = opt(body.p_eft_counted), bankedC = opt(body.p_banked);
+        if ((cardC ?? 0) < 0 || (eftC ?? 0) < 0 || (bankedC ?? 0) < 0) return fail("A total cannot be negative");
+        if (bankedC != null && bankedC > counted) return fail("More cannot be banked than was counted");
+        const r2 = (n: number) => Math.round(n * 100) / 100;
         const closed = {
           ...be.cashSession,
           closed_at: new Date().toISOString(),
           closed_by_name: "Manager",
           counted_cash: counted,
           expected_cash: figures.expected_cash,
-          variance: Math.round((counted - figures.expected_cash) * 100) / 100,
+          variance: r2(counted - figures.expected_cash),
+          card_counted: cardC,
+          card_expected: cardC == null ? null : figures.card_expected,
+          card_variance: cardC == null ? null : r2(cardC - figures.card_expected),
+          eft_counted: eftC,
+          eft_expected: eftC == null ? null : figures.eft_expected,
+          eft_variance: eftC == null ? null : r2(eftC - figures.eft_expected),
+          banked: bankedC,
+          float_kept: bankedC == null ? null : r2(counted - bankedC),
           note: (body.p_note as string) ?? null,
           figures,
           movements: be.cashMovements,
@@ -1173,6 +1189,13 @@ export async function installBackend(page: Page): Promise<Backend> {
         be.closedSessions.unshift(closed);
         be.cashSession = null;
         return json(closed);
+      }
+
+      case "rpc/pos_cash_session_suggested_float": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const last = be.closedSessions[0] as { float_kept?: number | null } | undefined;
+        return json(last?.float_kept ?? null);
       }
 
       case "rpc/pos_cash_sessions":

@@ -1809,6 +1809,68 @@ test("the cash-up slip nets refunds and lists account money by tender", async ({
   await expect(slip).toContainText(/Expected in drawer\s+R500\.00/);
 });
 
+test("closing checks the card machine and the bank against the till, banks the cash, and tomorrow opens on the float kept", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+  await page.getByLabel("Opening float").fill("500");
+  await page.getByRole("button", { name: /Open the day/i }).click();
+
+  // R115 cash and R89 on the card.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000060");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Card$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+
+  // The till says R89 went through the machine; the machine's batch says R99.
+  const cardHint = page.getByText(/went through it/);
+  await expect(cardHint).toContainText("89.00");
+  await page.getByLabel("Card machine total").fill("99");
+  await expect(cardHint).toContainText(/Over by R\s?10\.00/);
+  await page.getByLabel("EFTs received").fill("0");
+  await expect(page.getByText(/was paid this way/)).toContainText("Agrees.");
+
+  // Count the drawer right (500 + 115), bank R400, keep the rest.
+  await page.getByLabel("Counted cash").fill("615");
+  await page.getByLabel("Banked").fill("400");
+  await expect(page.getByText(/Float kept for tomorrow/)).toContainText("215.00");
+
+  // Banking more than was counted is stopped before the server sees it.
+  await page.getByLabel("Banked").fill("700");
+  await expect(page.getByText(/More than was counted/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Close & print/i })).toBeDisabled();
+  await page.getByLabel("Banked").fill("400");
+
+  await page.getByRole("button", { name: /Close & print/i }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("BALANCED");
+  await expect(slip).toContainText("CARD MACHINE");
+  await expect(slip).toContainText(/Till says\s+R89\.00/);
+  await expect(slip).toContainText(/Machine says\s+R99\.00/);
+  await expect(slip).toContainText(/Over\s+R10\.00/);
+  await expect(slip).toContainText("BANKING");
+  await expect(slip).toContainText(/Banked\s+R400\.00/);
+  await expect(slip).toContainText(/Float kept for tomorrow\s+R215\.00/);
+  expect(be.closedSessions[0].card_variance).toBe(10);
+  expect(be.closedSessions[0].float_kept).toBe(215);
+
+  // Tomorrow: the open form already knows the float.
+  const close = page.getByLabel("Close");
+  if (await close.count()) await close.first().click();
+  await expect(page.getByLabel("Opening float")).toHaveValue("215.00");
+  await expect(page.getByText(/Kept from the last close/)).toBeVisible();
+});
+
 test("a balanced drawer closes on one press", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);

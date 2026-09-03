@@ -301,12 +301,38 @@ begin
       'a card settlement is not drawer money');
   end if;
 
-  -- Count it R5 light.
-  v_closed := public.pos_cash_session_close(v_tok, '1234', v_expected - 5, 'Short a fiver');
+  -- 0048: the card machine and the bank against the till, and the banking.
+  -- The till's card figure is the card sale plus the card settlement.
+  perform assert_eq((v_fig->>'card_expected')::numeric,
+    v_price + coalesce(case when v_cust is null then 0 else 75 end, 0),
+    'the card figure is card sales plus card settlements');
+  perform assert_refuses(
+    format('select public.pos_cash_session_close(%L, %L, 100, null, null, null, 500)', v_tok, '1234'),
+    'more cannot be banked than was counted');
+  perform assert_refuses(
+    format('select public.pos_cash_session_close(%L, %L, 100, null, -1, null, null)', v_tok, '1234'),
+    'a negative card total');
+  perform assert_eq(
+    (select count(*)::int from pg_proc where proname = 'pos_cash_session_close'),
+    1, 'the close has exactly one signature');
+
+  -- Count it R5 light; the card machine R10 over; bank all but R300.
+  v_closed := public.pos_cash_session_close(v_tok, '1234', v_expected - 5, 'Short a fiver',
+    p_card_counted => (v_fig->>'card_expected')::numeric + 10,
+    p_eft_counted => 0,
+    p_banked => v_expected - 5 - 300);
   perform assert_eq((v_closed->>'variance')::numeric, -5::numeric,
     'the variance is counted less expected');
   perform assert_eq((v_closed->>'expected_cash')::numeric, v_expected,
     'and the expected figure is snapshotted, not recomputed later');
+  perform assert_eq((v_closed->>'card_variance')::numeric, 10::numeric,
+    'the card machine is over by what it is over by');
+  perform assert_eq((v_closed->>'eft_variance')::numeric, 0::numeric,
+    'no EFTs expected, none received, agrees');
+  perform assert_eq((v_closed->>'float_kept')::numeric, 300::numeric,
+    'what was not banked is tomorrow''s float');
+  perform assert_eq(public.pos_cash_session_suggested_float(v_tok, '1234'), 300::numeric,
+    'and the open form is offered it');
 
   -- The session's sales are stamped on the way out, so the window it was
   -- measured over stays reconstructable.
@@ -319,8 +345,9 @@ begin
            v_tok, '1234', 'pay_out', 'after close'),
     'a movement against a closed session');
 
-  -- And the till is free to open tomorrow.
-  perform public.pos_cash_session_open(v_tok, '1234', 300);
+  -- And the till is free to open tomorrow, on the float that was kept.
+  v_session := public.pos_cash_session_open(v_tok, '1234', public.pos_cash_session_suggested_float(v_tok, '1234'));
+  perform assert_eq(v_session.opening_float, 300::numeric, 'tomorrow opens on last night''s float');
 end $$;
 
 -- Reprinting a past day carries what explains it.

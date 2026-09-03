@@ -23,6 +23,10 @@ export interface CashFigures {
   account_payments?: Record<string, number>;
   refunds_count?: number;
   refunds_total?: number;
+  /** What the card machine and the bank should show: sales by that tender
+      plus account settlements by it. */
+  card_expected?: number;
+  eft_expected?: number;
   pay_in: number;
   pay_out: number;
   expected_cash: number;
@@ -67,6 +71,15 @@ export interface CashSession {
   counted_cash: number | null;
   expected_cash: number | null;
   variance: number | null;
+  /** 0048: the card machine and the bank against the till, and the banking. */
+  card_counted?: number | null;
+  card_expected?: number | null;
+  card_variance?: number | null;
+  eft_counted?: number | null;
+  eft_expected?: number | null;
+  eft_variance?: number | null;
+  banked?: number | null;
+  float_kept?: number | null;
   note: string | null;
   figures: CashFigures;
   movements?: CashMovement[];
@@ -107,19 +120,39 @@ export async function addMovement(
   if (error) throw error;
 }
 
-export async function closeSession(
-  pin: string,
-  countedCash: number,
-  note: string | null
-): Promise<CashSession> {
+export interface CloseInput {
+  countedCash: number;
+  note: string | null;
+  /** The card machine's batch total, if the shop has one. */
+  cardCounted?: number | null;
+  /** EFTs received, from the bank. */
+  eftCounted?: number | null;
+  /** Cash going to the bank; the rest stays as tomorrow's float. */
+  banked?: number | null;
+}
+
+export async function closeSession(pin: string, input: CloseInput): Promise<CashSession> {
   const { data, error } = await supabase.rpc("pos_cash_session_close", {
     p_register_token: requireToken(),
     p_pin: pin,
-    p_counted_cash: countedCash,
-    p_note: note,
+    p_counted_cash: input.countedCash,
+    p_note: input.note,
+    p_card_counted: input.cardCounted ?? null,
+    p_eft_counted: input.eftCounted ?? null,
+    p_banked: input.banked ?? null,
   });
   if (error) throw error;
   return data as CashSession;
+}
+
+/** The float kept at the last close on this till, or null if it never said. */
+export async function suggestedFloat(pin: string): Promise<number | null> {
+  const { data, error } = await supabase.rpc("pos_cash_session_suggested_float", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
+  if (error) throw error;
+  return data == null ? null : Number(data);
 }
 
 /** Closed sessions, newest first, so yesterday's can be reprinted. */
