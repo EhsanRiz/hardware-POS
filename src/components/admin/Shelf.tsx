@@ -86,7 +86,11 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
     (async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
+          // Ask for 720p rather than whatever the browser defaults to: an
+          // EAN's bars are a couple of pixels wide at arm's length, and a
+          // 640-wide default leaves a small label unreadable. "ideal" is a
+          // preference, so a camera that cannot still opens.
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
         if (cancelled) {

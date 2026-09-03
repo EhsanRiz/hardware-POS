@@ -45,24 +45,52 @@ function bitmapFromCanvas(canvas: HTMLCanvasElement): BinaryBitmap | null {
   return new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(lum, width, height)));
 }
 
+/**
+ * The longest side a frame is decoded at. Above this the extra pixels cost
+ * more than they find: a phone's 1080p frame took three times longer to
+ * scan than the same frame at 1280, and read the same label either way.
+ */
+const MAX_DECODE_SIDE = 1280;
+
 export function createZXingReader(): BarcodeReader {
   const reader = new BrowserMultiFormatReader(HINTS);
+  // One scratch canvas, reused for every frame rather than allocated per tick.
+  const frame = document.createElement("canvas");
+
+  /**
+   * A video frame goes through the same canvas route as a still. ZXing's own
+   * decode(video) is NOT used: it never read a frame this decoder reads
+   * comfortably from a canvas (see "reads a barcode off a live video" in
+   * till.spec.ts), and it was the whole reason a phone without a native
+   * detector could point at a label all day and get nothing.
+   */
+  function frameToCanvas(video: HTMLVideoElement): HTMLCanvasElement | null {
+    const scale = Math.min(1, MAX_DECODE_SIDE / Math.max(video.videoWidth, video.videoHeight));
+    frame.width = Math.round(video.videoWidth * scale);
+    frame.height = Math.round(video.videoHeight * scale);
+    const ctx = frame.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, frame.width, frame.height);
+    return frame;
+  }
+
+  function decodeCanvas(canvas: HTMLCanvasElement): DetectedBarcode[] {
+    const bitmap = bitmapFromCanvas(canvas);
+    if (!bitmap) return [];
+    const result = reader.decodeBitmap(bitmap);
+    return [{ rawValue: result.getText() }];
+  }
 
   return {
     detect(source: CanvasImageSource): Promise<DetectedBarcode[]> {
       try {
         if (source instanceof HTMLVideoElement) {
           if (!source.videoWidth) return Promise.resolve([]);
-          // The reader captures the frame onto its own canvas internally.
-          const result = reader.decode(source);
-          return Promise.resolve([{ rawValue: result.getText() }]);
+          const canvas = frameToCanvas(source);
+          return Promise.resolve(canvas ? decodeCanvas(canvas) : []);
         }
         if (source instanceof HTMLCanvasElement) {
-          // The decode-proof test hands a canvas in directly.
-          const bitmap = bitmapFromCanvas(source);
-          if (!bitmap) return Promise.resolve([]);
-          const result = reader.decodeBitmap(bitmap);
-          return Promise.resolve([{ rawValue: result.getText() }]);
+          return Promise.resolve(decodeCanvas(source));
         }
         return Promise.resolve([]);
       } catch {
