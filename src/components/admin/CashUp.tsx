@@ -13,6 +13,7 @@ import { money } from "../../lib/format";
 import { printReceipt } from "../../lib/print";
 import { queueCount } from "../../lib/queue";
 import { buildCashUpText } from "../../lib/receipt";
+import { fmtDate, fmtTime } from "../../lib/dates";
 
 /**
  * Cashing up.
@@ -333,11 +334,7 @@ export default function CashUp({ pin }: { pin: string }) {
               <li key={s.id} className="px-4 py-3 flex items-center gap-3 even:bg-stone-50/70">
                 <span className="flex-1">
                   <span className="block text-sm">
-                    {new Date(s.opened_at).toLocaleDateString("en-ZA", {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    })}
+                    {fmtDate(s.opened_at)}
                   </span>
                   <span className="block text-xs text-stone-500">
                     {s.figures.sales_count} sales · closed by {s.closed_by_name}
@@ -378,10 +375,7 @@ export function Figures({ session }: { session: CashSession }) {
         <h2 className="font-medium">Today</h2>
         <span className="text-sm text-stone-500">
           open since{" "}
-          {new Date(session.opened_at).toLocaleTimeString("en-ZA", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}{" "}
+          {fmtTime(session.opened_at)}{" "}
           · {session.opened_by_name}
         </span>
       </div>

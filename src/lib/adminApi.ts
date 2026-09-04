@@ -379,6 +379,9 @@ export interface ShopDetails {
   bank_account_name: string;
   bank_account_number: string;
   bank_branch_code: string;
+  /** The small print at the foot of a till slip, and of a quote. */
+  receipt_terms: string;
+  quote_terms: string;
   /**
    * Whether a printed quote prices each line, or gives the scope and one total.
    * The only non-text setting here, which is why the form and the RPC both

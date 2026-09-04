@@ -16,6 +16,7 @@ import { can } from "../../lib/permissions";
 import ManagerPinModal from "../ManagerPinModal";
 import ReturnSheet from "./ReturnSheet";
 import SaleDetail from "../SaleDetail";
+import { fmtDayMonthTime } from "../../lib/dates";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "today", label: "Today" },
@@ -314,12 +315,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                     )}
                   </span>
                   <span className="block text-sm text-stone-500">
-                    {new Date(s.created_at).toLocaleString("en-ZA", {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {fmtDayMonthTime(s.created_at)}
                     {" · "}
                     {s.cashier_name}
                     {s.customer_name ? ` · ${s.customer_name}` : ""}

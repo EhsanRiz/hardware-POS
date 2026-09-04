@@ -11,6 +11,7 @@ import { cacheGet, cacheSet } from "../../lib/localCache";
 import { useOnline } from "../../lib/offline";
 import { fmtQty } from "../../lib/receipt";
 import type { Product } from "../../lib/types";
+import { fmtDayMonthTime } from "../../lib/dates";
 
 const CATALOGUE_KEY = "catalogue.products";
 
@@ -395,10 +396,5 @@ const REASON: Record<string, string> = {
 function when(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("en-ZA", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return fmtDayMonthTime(d);
 }

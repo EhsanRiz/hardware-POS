@@ -79,14 +79,17 @@ export default function SellHeader({
         >
           Accounts
         </button>
-        <button
-          aria-current={section === "stock" ? "page" : undefined}
-          disabled={!canStock}
-          title={canStock ? undefined : "Needs the inventory permission"}
-          onClick={() => onSection?.("stock")}
-        >
-          Stock
-        </button>
+        {/* Not shown at all without the permission. A greyed tab a cashier
+            can never open is a question asked on every shift; the tab is
+            there for the people who can go through it. */}
+        {canStock && (
+          <button
+            aria-current={section === "stock" ? "page" : undefined}
+            onClick={() => onSection?.("stock")}
+          >
+            Stock
+          </button>
+        )}
       </nav>
 
       <div className="sell-head-right">

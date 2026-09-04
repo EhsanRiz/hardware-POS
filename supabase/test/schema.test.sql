@@ -2078,4 +2078,77 @@ begin
     'a stranger cannot look invoices up');
 end $$;
 
+-- 0052: the small print, and whose quote it is ---------------------------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_cem uuid; v_row record; v_q record; v_l record;
+        v_cust uuid; v_sigs int;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id into v_cem from public.products where sku = 'CEM-425-50';
+
+  -- Seeded, so an existing shop prints a policy the day it deploys rather than
+  -- an empty box it has not noticed yet.
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert(v_row.receipt_terms like 'Returns within 10 days%',
+    'a till slip has a returns policy before anybody has typed one');
+  perform assert(v_row.quote_terms like 'Prices are subject to stock%',
+    'and a quote has its own small print, about stock rather than returns');
+
+  perform public.pos_admin_save_settings(v_tok, '1234', jsonb_build_object(
+    'receipt_terms', 'No returns on cut lengths.',
+    'quote_terms', 'Valid for 7 days.'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.receipt_terms, 'No returns on cut lengths.',
+    'the shop writes its own small print');
+  perform assert_eq(v_row.quote_terms, 'Valid for 7 days.', 'for quotes too');
+
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('phone', '065 735 2766'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.receipt_terms, 'No returns on cut lengths.',
+    'and editing the phone number does not lose it');
+
+  -- Clearing the box is a decision, kept as an empty string, not "unset".
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('receipt_terms', ''));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.receipt_terms, '', 'a shop that wants no small print gets none');
+
+  -- Whose quote. A name given at the counter is kept and listed.
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_customer_name => '  Mokoena Builders ');
+  select * into v_l from public.pos_list_quotes(v_tok, 50) where id = v_q.quote_id;
+  perform assert_eq(v_l.customer_name, 'Mokoena Builders',
+    'a quote says who it is for, trimmed');
+
+  -- No name at all is nobody, not an empty string.
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_customer_name => '   ');
+  select * into v_l from public.pos_list_quotes(v_tok, 50) where id = v_q.quote_id;
+  perform assert(v_l.customer_name is null, 'a blank name is no name');
+
+  -- An account's quote is the account's, whatever the counter typed.
+  insert into public.customers(org_id, code, name, phone, is_trade)
+  select org_id, 'TRD-0052', 'Account Holder CC', '051 000 0052', true from fixture
+  returning id into v_cust;
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_customer_id => v_cust, p_customer_name => 'Somebody Else');
+  select * into v_l from public.pos_list_quotes(v_tok, 50) where id = v_q.quote_id;
+  perform assert_eq(v_l.customer_name, 'Account Holder CC',
+    'an account customer''s quote keeps the account''s name');
+
+  -- The old callers still resolve: one signature, not two (CLAUDE.md).
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_save_quote';
+  perform assert_eq(v_sigs, 1, 'pos_save_quote has exactly one signature');
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)));
+  perform assert(v_q.doc_number is not null, 'and a call naming no optional argument still works');
+end $$;
+
 select 'all database tests passed' as result;

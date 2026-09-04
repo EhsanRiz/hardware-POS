@@ -9,7 +9,11 @@ import {
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
+import { printReceipt } from "../../lib/print";
+import { buildQuoteText, stripMarkup } from "../../lib/receipt";
+import { shopSettings } from "../../lib/settings";
 import type { User } from "../../lib/types";
+import { fmtDate } from "../../lib/dates";
 
 /**
  * Quotes — the sales that have not happened yet.
@@ -75,6 +79,43 @@ export default function Quotes({
       cancelled = true;
     };
   }, [viewing]);
+
+  /** The saved quote, laid out exactly as it was when first printed. */
+  function quoteText(q: QuoteSummary, lines: QuoteLine[]): string {
+    return buildQuoteText(
+      lines.map((l) => ({
+        name: l.name,
+        unit_code: l.unit_code,
+        qty: l.qty,
+        unit: l.unit_price,
+      })),
+      {
+        subtotal: q.total,
+        discount: 0,
+        total: q.total,
+        trade: false,
+        docNumber: q.doc_number,
+        validUntil: q.valid_until,
+        customerName: q.customer_name,
+        createdAt: q.created_at,
+      }
+    );
+  }
+
+  /**
+   * One tap to email it. The device's own mail app opens with the quote in
+   * the body and the shop's address to reply to — no mail server to run, no
+   * address book to keep, and it works from the phone in the yard as well as
+   * the desk.
+   */
+  function mailtoHref(q: QuoteSummary, lines: QuoteLine[]): string {
+    const s = shopSettings();
+    const subject = `Quote ${q.doc_number ?? ""} from ${s.shop_name}`.trim();
+    const body =
+      stripMarkup(quoteText(q, lines)) +
+      (s.email ? `\n\nReplies: ${s.email}` : "");
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
 
   async function recall(q: QuoteSummary) {
     setBusy(true);
@@ -246,7 +287,21 @@ export default function Quotes({
                 <span className="text-lg tabular-nums">{money(viewing.total)}</span>
               </div>
             </div>
-            <div className="p-4 border-t border-stone-200 flex gap-2">
+            <div className="p-4 border-t border-stone-200 flex gap-2 flex-wrap">
+              <button
+                className="px-4 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
+                disabled={!viewLines}
+                onClick={() => viewLines && printReceipt(quoteText(viewing, viewLines), "Quote")}
+              >
+                Print
+              </button>
+              <a
+                className={`px-4 py-2.5 rounded-xl border border-stone-300 ${viewLines ? "" : "opacity-40 pointer-events-none"}`}
+                href={viewLines ? mailtoHref(viewing, viewLines) : undefined}
+                aria-disabled={!viewLines}
+              >
+                Email
+              </a>
               <button
                 className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
                 disabled={busy || !online}
@@ -328,9 +383,5 @@ export function sellableLines(lines: QuoteLine[]): QuoteLine[] {
 function quoteDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-ZA", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return fmtDate(d);
 }
