@@ -3896,3 +3896,52 @@ test("a scanned slip can be cancelled from the sale popup, and a cancelled sale 
   await expect(dialog.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: /^Return$/ })).toHaveCount(0);
 });
+
+test("a delivery is counted in by scanning, gun or camera, one more per read", async ({ page }) => {
+  await installFakeDetector(page);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: /Receive a delivery/ }).click();
+
+  // The gun types the code into the search box and presses Enter: one more
+  // bag of cement each time. The box clears for the next read.
+  const scan = page.getByLabel("Scan or find an item");
+  const cement = page.getByLabel("Quantity received of Cement 42.5N 50kg");
+  await scan.fill("6001234000015");
+  await scan.press("Enter");
+  await expect(cement).toHaveValue("1");
+  await expect(scan).toHaveValue("");
+  await scan.fill("6001234000015");
+  await scan.press("Enter");
+  await expect(cement).toHaveValue("2");
+  // Lit, so a long list shows where the scan went.
+  await expect(page.locator("tr.stock-row-hit")).toContainText("Cement 42.5N 50kg");
+
+  // A barcode the catalogue does not know is said so, and nothing moves.
+  await scan.fill("6009999999999");
+  await scan.press("Enter");
+  await expect(page.locator(".acc-note.is-bad")).toContainText(/No item .* 6009999999999/);
+  await expect(cement).toHaveValue("2");
+
+  // The phone's camera, through the same viewfinder the Shelf uses.
+  await page.getByRole("button", { name: /^Scan$/ }).click();
+  await expect(page.getByRole("dialog", { name: "Scan a barcode" })).toBeVisible();
+  await scanCode(page, "6001234000060");
+  await expect(page.getByRole("dialog", { name: "Scan a barcode" })).toHaveCount(0);
+  await expect(page.getByLabel("Quantity received of Padlock 50mm Brass")).toHaveValue("1");
+
+  // A carton is not a unit: the count stays editable after a scan.
+  await cement.fill("24");
+  await page.getByPlaceholder(/Supplier invoice/).fill("JAS-27181");
+  await page.getByRole("button", { name: /Book in 2 lines/ }).click();
+  await expect(page.getByText(/2 lines booked in against JAS-27181/)).toBeVisible();
+  expect(be.stockMoves).toEqual([
+    { product_id: "p1", qty_delta: 24, reason: "receipt", note: "JAS-27181" },
+    { product_id: "p5", qty_delta: 1, reason: "receipt", note: "JAS-27181" },
+  ]);
+});

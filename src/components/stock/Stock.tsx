@@ -12,6 +12,7 @@ import { useOnline } from "../../lib/offline";
 import { fmtQty } from "../../lib/receipt";
 import type { Product } from "../../lib/types";
 import { fmtDayMonthTime } from "../../lib/dates";
+import BarcodeScanner from "../BarcodeScanner";
 
 const CATALOGUE_KEY = "catalogue.products";
 
@@ -45,6 +46,10 @@ export default function Stock({ pin }: { pin: string }) {
   const [delivery, setDelivery] = useState<Map<string, string>>(new Map());
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
+  // The phone's camera as a scanner, on the delivery tab.
+  const [scanning, setScanning] = useState(false);
+  // The row the last scan landed on, lit for a moment so the eye finds it.
+  const [hit, setHit] = useState<string | null>(null);
 
   // A pending count correction, one product at a time.
   const [counting, setCounting] = useState<Product | null>(null);
@@ -108,6 +113,40 @@ export default function Stock({ pin }: { pin: string }) {
         .filter((l) => l.qty > 0),
     [delivery]
   );
+
+  /**
+   * A barcode read on the delivery tab — from the gun into the search box, or
+   * from the camera. One more of that item received. The quantity box stays
+   * editable because a carton's barcode is not the unit's: scanning a box of
+   * twelve taps should not have to mean twelve scans.
+   */
+  function receiveCode(raw: string): boolean {
+    const code = raw.trim();
+    if (!code) return false;
+    const p = tracked.find((x) => x.barcode === code);
+    if (!p) {
+      // Only a barcode is reported as unknown; Enter on a typed search is
+      // just Enter. Either way the gun's digits are cleared out of the box,
+      // or the list stays filtered to nothing and the next read piles on.
+      if (/^\d{6,14}$/.test(code)) {
+        setError(`No item in the catalogue has barcode ${code}. Add it in Catalogue first.`);
+        setTerm("");
+      }
+      return false;
+    }
+    setError(null);
+    setDelivery((prev) => {
+      const next = new Map(prev);
+      const was = Number(next.get(p.id) ?? 0);
+      next.set(p.id, String((Number.isFinite(was) ? was : 0) + 1));
+      return next;
+    });
+    setTerm("");
+    setHit(p.id);
+    window.setTimeout(() => setHit((h) => (h === p.id ? null : h)), 1500);
+    document.getElementById(`stock-row-${p.id}`)?.scrollIntoView({ block: "nearest" });
+    return true;
+  }
 
   async function bookIn() {
     setBusy(true);
@@ -220,13 +259,36 @@ export default function Stock({ pin }: { pin: string }) {
       )}
 
       {tab !== "moves" && (
-        <input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder="Find an item by name, SKU or bin…"
-          className="modal-input"
-          style={{ marginBottom: 0, maxWidth: 420 }}
-        />
+        <div className="stock-receive-bar">
+          <input
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            onKeyDown={(e) => {
+              // A gun types the code and presses Enter; on the delivery tab
+              // that is one more of the item received.
+              if (e.key === "Enter" && tab === "receive") receiveCode(term);
+            }}
+            placeholder={
+              tab === "receive"
+                ? "Scan a barcode, or find an item by name, SKU or bin…"
+                : "Find an item by name, SKU or bin…"
+            }
+            className="modal-input"
+            style={{ marginBottom: 0, maxWidth: 420 }}
+            aria-label={tab === "receive" ? "Scan or find an item" : "Find an item"}
+          />
+          {tab === "receive" && (
+            <button
+              type="button"
+              className="btn-line"
+              onClick={() => setScanning(true)}
+              disabled={busy}
+              title="Scan a barcode with the camera"
+            >
+              Scan
+            </button>
+          )}
+        </div>
       )}
 
       <div className="acc-scroll">
@@ -260,7 +322,7 @@ export default function Stock({ pin }: { pin: string }) {
                 const isLow =
                   p.reorder_level != null && p.stock_qty! <= p.reorder_level;
                 return (
-                  <tr key={p.id}>
+                  <tr key={p.id} id={`stock-row-${p.id}`} className={hit === p.id ? "stock-row-hit" : undefined}>
                     <td>
                       <span className="acc-name">{p.name}</span>
                       <span className="acc-sub">
@@ -338,6 +400,18 @@ export default function Stock({ pin }: { pin: string }) {
           </table>
         )}
       </div>
+      {scanning && (
+        <BarcodeScanner
+          onCode={(code) => {
+            // One code, one more received, and the viewfinder closes — the
+            // next box is a tap away, and a barcode left in view must not
+            // keep counting on its own.
+            setScanning(false);
+            receiveCode(code);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
     </div>
   );
 }
