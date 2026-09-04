@@ -22,7 +22,7 @@ const supabase = createClient(
 
 const API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 // Overridable without a redeploy, because model names outlive nothing.
-const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.5-flash";
+const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 const ENDPOINT = (m: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
 
@@ -154,16 +154,45 @@ Deno.serve(async (req: Request) => {
     },
   };
 
-  let res: Response;
-  try {
-    res = await fetch(ENDPOINT(MODEL), {
+  const call = (model: string) =>
+    fetch(ENDPOINT(model), {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
       body: JSON.stringify(body),
     });
+
+  let model = MODEL;
+  let res: Response;
+  try {
+    res = await call(model);
   } catch (e) {
     console.error(e);
     return json({ ok: false, message: "Could not reach the reading service" }, 502);
+  }
+
+  // A model name outlives nothing. When one is retired the API answers 404 and
+  // names its replacement in the same breath — so follow it once rather than
+  // telling a shop in Ladybrand to type in a thirteen-line quotation because
+  // Google renamed something. GEMINI_MODEL still overrides, and the swap is
+  // logged so it is a fact somebody can see rather than a mystery.
+  if (res.status === 404) {
+    const detail = await res.text().catch(() => "");
+    const named = /models\/([A-Za-z0-9._-]+)/g;
+    const suggested = [...detail.matchAll(named)]
+      .map((m) => m[1])
+      .find((m) => m !== model);
+    if (suggested) {
+      console.log(`gemini: ${model} is gone, trying ${suggested}`);
+      model = suggested;
+      try {
+        res = await call(model);
+      } catch (e) {
+        console.error(e);
+        return json({ ok: false, message: "Could not reach the reading service" }, 502);
+      }
+    } else {
+      console.error("gemini 404", detail.slice(0, 500));
+    }
   }
 
   if (!res.ok) {
@@ -188,5 +217,5 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, message: "The reading came back unreadable" }, 502);
   }
 
-  return json({ ok: true, read: out, model: MODEL });
+  return json({ ok: true, read: out, model });
 });

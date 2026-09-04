@@ -927,9 +927,25 @@
 .modal-row-go:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .modal-field { padding: 12px 4px 4px; }
-.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+/* Wraps. Three buttons at a phone's width ran off the LEFT edge, because
+   justify-content: flex-end sends the overflow that way — so the one that
+   disappeared was Cancel, the one somebody presses when they are stuck. */
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  flex: none;
+}
 .modal-actions .btn-line,
 .modal-actions .btn-fill { flex: 0 0 auto; }
+@media (max-width: 599px) {
+  /* Full-width rows on a phone: a wrapped row of three leaves one button
+     stranded on a line of its own looking like an afterthought. */
+  .modal-actions { gap: 8px; }
+  .modal-actions .btn-line,
+  .modal-actions .btn-fill { flex: 1 1 auto; justify-content: center; }
+}
 .modal-row-name { display: block; font-size: 15px; color: var(--color-text); }
 .modal-row-meta {
   display: block;
