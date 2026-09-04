@@ -11,7 +11,9 @@ import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
 import { printReceipt } from "../../lib/print";
 import { buildQuoteText, stripMarkup } from "../../lib/receipt";
-import { shopSettings } from "../../lib/settings";
+import { shopSettings, vatRate } from "../../lib/settings";
+import DocumentSheet from "../DocumentSheet";
+import type { Sheet } from "../../lib/sheet";
 import type { User } from "../../lib/types";
 import { fmtDate } from "../../lib/dates";
 
@@ -68,6 +70,8 @@ export default function Quotes({
   // A row is a door: the quote's lines, without loading it onto the till.
   const [viewing, setViewing] = useState<QuoteSummary | null>(null);
   const [viewLines, setViewLines] = useState<QuoteLine[] | null>(null);
+  // The A4 quotation: what a builder signs and sends back.
+  const [sheet, setSheet] = useState<Sheet | null>(null);
   useEffect(() => {
     if (!viewing) return;
     let cancelled = false;
@@ -100,6 +104,39 @@ export default function Quotes({
         createdAt: q.created_at,
       }
     );
+  }
+
+  /**
+   * The same quote as an A4 document.
+   *
+   * A quote is read by somebody deciding whether to spend money, often
+   * alongside a competitor's. VAT is worked back out of the total because the
+   * till prices include it, which is what the customer is comparing.
+   */
+  function asSheet(q: QuoteSummary, lines: QuoteLine[]): Sheet {
+    const rate = vatRate();
+    const vat = Math.round((q.total - q.total / (1 + rate)) * 100) / 100;
+    return {
+      kind: "quote",
+      number: q.doc_number ?? "",
+      date: fmtDate(q.created_at),
+      validUntil: fmtDate(q.valid_until),
+      customer: { name: q.customer_name },
+      lines: lines.map((l) => ({
+        code: l.sku,
+        description: l.name,
+        qty: l.qty,
+        unit: l.unit_code,
+        unitPrice: l.unit_price,
+        lineTotal: l.line_total,
+      })),
+      subtotal: Math.round((q.total - vat) * 100) / 100,
+      discount: 0,
+      vat,
+      total: q.total,
+      note: q.note,
+      servedBy: q.cashier_name,
+    };
   }
 
   /**
@@ -293,7 +330,16 @@ export default function Quotes({
                 disabled={!viewLines}
                 onClick={() => viewLines && printReceipt(quoteText(viewing, viewLines), "Quote")}
               >
-                Print
+                Till slip
+              </button>
+              {/* The A4 version: a letterhead, the lines, and a line for the
+                  builder to sign. That signed page is the order. */}
+              <button
+                className="px-4 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
+                disabled={!viewLines}
+                onClick={() => viewLines && setSheet(asSheet(viewing, viewLines))}
+              >
+                A4 quote
               </button>
               <a
                 className={`px-4 py-2.5 rounded-xl border border-stone-300 ${viewLines ? "" : "opacity-40 pointer-events-none"}`}
@@ -317,6 +363,8 @@ export default function Quotes({
           </div>
         </div>
       )}
+
+      {sheet && <DocumentSheet sheet={sheet} onClose={() => setSheet(null)} />}
 
       {cancelling && (
         <div className="modal-backdrop" onClick={() => setCancelling(null)}>

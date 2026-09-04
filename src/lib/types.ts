@@ -307,6 +307,12 @@ export interface ShopSettings {
   receipt_terms?: string | null;
   quote_terms?: string | null;
   /**
+   * The shop's mark, as a storage path. Printed at the head of an A4 quote or
+   * tax invoice; run it through imageSrc() to display it. Empty until a shop
+   * uploads one, and the documents simply set the name in type instead.
+   */
+  logo_url?: string | null;
+  /**
    * The standard VAT rate as a fraction, served from the same table the sale
    * reads. What is CHARGED has always come from there and is stored per line at
    * the moment of sale; this is so the rate shown on screen cannot outlive it.

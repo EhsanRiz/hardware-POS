@@ -7,9 +7,11 @@ import { buildReceiptText } from "../lib/receipt";
 import type { SaleRow } from "../lib/sales";
 import type { Payment, Sale, SaleItem } from "../lib/types";
 import CancelSale from "./CancelSale";
+import DocumentSheet from "./DocumentSheet";
 import ManagerPinModal from "./ManagerPinModal";
+import type { Sheet } from "../lib/sheet";
 import ReturnSheet from "./admin/ReturnSheet";
-import { fmtDateTime } from "../lib/dates";
+import { fmtDate, fmtDateTime } from "../lib/dates";
 
 /**
  * One sale, opened. The same window whether the counter scanned the slip a
@@ -54,6 +56,8 @@ export default function SaleDetail({
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [askPin, setAskPin] = useState(false);
+  // The A4 tax invoice: what a customer's bookkeeper files.
+  const [sheet, setSheet] = useState<Sheet | null>(null);
   const [returnPin, setReturnPin] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
@@ -89,6 +93,52 @@ export default function SaleDetail({
   }
 
   const when = fmtDateTime(sale.created_at);
+
+  /**
+   * The same sale as an A4 tax invoice.
+   *
+   * A till slip is an abridged tax invoice and serves a walk-in. Above a few
+   * thousand rand SARS wants the customer's own name, address and VAT number
+   * on it too, which is exactly the account and trade sales whose paperwork
+   * somebody actually files. This is that document.
+   */
+  function asSheet(): Sheet | null {
+    if (!items) return null;
+    const full = sale as unknown as SaleRow;
+    return {
+      kind: "invoice",
+      number: sale.doc_number ?? "",
+      date: fmtDate(sale.created_at),
+      customer: {
+        name: sale.customer_name,
+        address: full.customer_address ?? null,
+        phone: full.customer_phone ?? null,
+        vatNumber: full.customer_vat_number ?? null,
+      },
+      poNumber: full.po_number ?? null,
+      lines: items.map((it) => ({
+        code: it.sku,
+        description: it.name,
+        qty: it.qty,
+        unit: it.unit_code,
+        unitPrice: it.unit_price,
+        discount: it.discount_amount ?? 0,
+        lineTotal: it.line_total,
+      })),
+      subtotal: full.subtotal ?? sale.total,
+      discount: full.discount_amount ?? 0,
+      vat: sale.tax_amount,
+      total: sale.total,
+      servedBy: sale.cashier_name,
+      trade: full.trade_pricing ?? false,
+      // An account or EFT sale leaves owing, and the document then has to say
+      // where the money goes. Anything settled at the counter does not.
+      paidWith:
+        sale.payment_method === "account" || sale.payment_method === "eft"
+          ? null
+          : TENDER_LABEL[sale.payment_method ?? ""] ?? sale.payment_method ?? null,
+    };
+  }
   const returnable = sale.status === "completed";
 
   return (
@@ -163,6 +213,14 @@ export default function SaleDetail({
           >
             Reprint
           </button>
+          {/* The A4 version, for somebody who has to file it. */}
+          <button
+            className="flex-1 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
+            disabled={!items}
+            onClick={() => setSheet(asSheet())}
+          >
+            A4 invoice
+          </button>
           {returnable && (
             <button
               className="flex-1 py-2.5 rounded-xl bg-colophon text-paper"
@@ -195,6 +253,12 @@ export default function SaleDetail({
               onClose();
             }}
           />
+        </div>
+      )}
+
+      {sheet && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <DocumentSheet sheet={sheet} onClose={() => setSheet(null)} />
         </div>
       )}
 

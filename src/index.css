@@ -144,3 +144,102 @@ button {
   }
 }
 
+
+/* ---- A4 documents: a quotation and a tax invoice ------------------------ */
+/*
+ * On screen these sit in a modal; on paper they are the only thing printed,
+ * through the same #print-area rule the till-slip preview uses. The page
+ * margin stays at 4mm for the thermal slip, so the A4 sheet carries its own
+ * generous padding instead of fighting over @page.
+ */
+.doc-a4 {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 14mm 16mm;
+  background: #fff;
+  color: #12100e;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+.doc-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 20mm;
+  padding-bottom: 6mm;
+  border-bottom: 1.5pt solid #12100e;
+}
+.doc-mark { display: flex; flex-direction: column; gap: 2mm; }
+.doc-logo { max-height: 22mm; max-width: 70mm; object-fit: contain; }
+.doc-shop { font-size: 20pt; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.doc-shop-sm { font-size: 11pt; font-weight: 700; }
+.doc-shop-details { margin-left: auto; text-align: right; font-size: 9pt; color: #4a453f; }
+
+.doc-title-row { display: flex; align-items: flex-start; gap: 12mm; margin-top: 7mm; }
+.doc-title { font-size: 17pt; font-weight: 700; letter-spacing: 0.02em; }
+.doc-meta { margin-left: auto; border-collapse: collapse; font-size: 9.5pt; }
+.doc-meta th {
+  text-align: left; font-weight: 500; color: #4a453f;
+  padding: 0.6mm 5mm 0.6mm 0;
+}
+.doc-meta td { text-align: right; font-variant-numeric: tabular-nums; }
+
+.doc-to { margin-top: 6mm; }
+.doc-label {
+  display: block; font-size: 8pt; letter-spacing: 0.09em;
+  text-transform: uppercase; color: #6b645c; margin-bottom: 1mm;
+}
+.doc-to-name { font-weight: 700; font-size: 11.5pt; }
+.doc-trade { font-size: 9pt; color: #4a453f; }
+
+.doc-lines { width: 100%; border-collapse: collapse; margin-top: 7mm; }
+.doc-lines th {
+  font-size: 8pt; letter-spacing: 0.07em; text-transform: uppercase;
+  color: #6b645c; text-align: left; font-weight: 600;
+  border-bottom: 0.8pt solid #12100e; padding: 0 3mm 1.5mm 0;
+}
+.doc-lines td {
+  padding: 1.8mm 3mm 1.8mm 0; vertical-align: top;
+  border-bottom: 0.4pt solid #ddd8d1;
+}
+.doc-lines .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.doc-lines th.num { text-align: right; }
+.doc-col-code { width: 26mm; color: #4a453f; font-size: 9pt; }
+.doc-off { display: block; font-size: 8.5pt; color: #6b645c; }
+
+.doc-foot { display: flex; gap: 12mm; margin-top: 6mm; align-items: flex-start; }
+.doc-foot-left { flex: 1; min-width: 0; font-size: 9pt; color: #4a453f; }
+.doc-note { margin-bottom: 3mm; }
+.doc-terms { margin-bottom: 4mm; max-width: 105mm; }
+.doc-bank { border-collapse: collapse; font-size: 9pt; margin-bottom: 4mm; }
+.doc-bank th { text-align: left; font-weight: 500; color: #6b645c; padding: 0.4mm 5mm 0.4mm 0; }
+
+.doc-accept { margin-top: 6mm; }
+.doc-sign-row {
+  display: grid; grid-template-columns: 1fr 1fr 26mm; gap: 6mm;
+  margin-top: 9mm; font-size: 8.5pt; color: #6b645c;
+}
+.doc-sign-row span { border-top: 0.6pt solid #8a837a; padding-top: 1mm; }
+
+.doc-totals { border-collapse: collapse; min-width: 62mm; font-variant-numeric: tabular-nums; }
+.doc-totals th { text-align: left; font-weight: 500; color: #4a453f; padding: 1mm 8mm 1mm 0; }
+.doc-totals td { text-align: right; white-space: nowrap; }
+.doc-total th, .doc-total td {
+  font-weight: 700; font-size: 12pt; color: #12100e;
+  border-top: 1pt solid #12100e; padding-top: 2mm;
+}
+
+@media print {
+  /* The sheet is the page: no shadow, no rounding, and it may break across
+     pages if a delivery ran long. */
+  .doc-a4 { width: auto; min-height: 0; padding: 0; }
+}
+
+@media (max-width: 899px) {
+  /* A4 does not fit a phone, and reflowing it would mean the thing on screen
+     is not the thing that prints. It scrolls sideways instead, and the print
+     itself is unaffected. */
+  .doc-a4 { transform-origin: top left; }
+}

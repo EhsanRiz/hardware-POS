@@ -2633,4 +2633,46 @@ begin
   delete from public.suppliers where id = v_sup;
 end $$;
 
+-- 0059: the shop's mark on the documents that leave the building --------------
+
+do $$
+declare v_tok text; v_row record; v_n int;
+begin
+  select token into v_tok from till;
+
+  -- A shop that has never uploaded one prints its name in type instead.
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert(v_row.logo_url is null or v_row.logo_url = '',
+    'a shop starts with no logo');
+
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('logo_url', 'org/logo/abc.png'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.logo_url, 'org/logo/abc.png',
+    'the logo is a path the documents can load');
+
+  -- Saving something else leaves it alone: the settings screen sends one
+  -- field at a time, and the logo goes through a different door entirely.
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('phone', '065 735 2766'));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.logo_url, 'org/logo/abc.png',
+    'editing the phone number does not lose the logo');
+
+  -- Taking it off is a decision, and an empty string is how it is said.
+  perform public.pos_admin_save_settings(v_tok, '1234',
+    jsonb_build_object('logo_url', ''));
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.logo_url, '', 'a shop can take its logo off again');
+
+  -- And the settings still carry everything the documents print.
+  perform assert(v_row.vat_number is not null, 'the VAT number is still there');
+  perform assert(v_row.receipt_terms is not null, 'and the small print');
+
+  select count(*) into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_org_settings';
+  perform assert_eq(v_n, 1, 'pos_org_settings has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;

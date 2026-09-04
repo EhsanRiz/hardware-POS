@@ -26,6 +26,7 @@ const FALLBACK: ShopSettings = {
   bank_branch_code: "",
   receipt_terms: "",
   quote_terms: "",
+  logo_url: "",
   vat_rate: null,
   // A till that has never reached the server prints a full quote. Withholding
   // prices is a deliberate choice a shop makes, not something a device should
