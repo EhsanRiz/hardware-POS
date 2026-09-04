@@ -2274,4 +2274,68 @@ begin
   perform public.pos_cash_session_close(v_tok, '1234', 100);
 end $$;
 
+-- 0055: suppliers, and the paper they send --------------------------------------
+
+do $$
+declare v_tok text; v_sup public.suppliers; v_doc uuid; v_row record; v_n int;
+        v_other uuid;
+begin
+  select token into v_tok from till;
+
+  -- A supplier, by somebody who does the buying.
+  v_sup := public.pos_purchasing_save_supplier(v_tok, '1234', null, '  Jasbro Plumbing ',
+    p_phone => '010 442 0625');
+  perform assert_eq(v_sup.name, 'Jasbro Plumbing', 'a supplier is saved, trimmed');
+  select * into v_row from public.pos_purchasing_suppliers(v_tok, '1234') where id = v_sup.id;
+  perform assert_eq(v_row.phone, '010 442 0625', 'and listed with its phone');
+  perform assert_eq(v_row.document_count, 0, 'with nothing filed yet');
+  v_sup := public.pos_purchasing_save_supplier(v_tok, '1234', v_sup.id, 'Jasbro Plumbing (Pty) Ltd');
+  perform assert_eq(v_sup.name, 'Jasbro Plumbing (Pty) Ltd', 'and renamed in place');
+  perform assert_refuses(
+    format('select public.pos_purchasing_save_supplier(%L, %L, null, %L)', v_tok, '1234', '  '),
+    'a supplier needs a name');
+
+  -- The counter hand does not do the buying.
+  perform assert_refuses(
+    format('select * from public.pos_purchasing_suppliers(%L, %L)', v_tok, '2222'),
+    'the supplier list needs the purchasing right');
+
+  -- A quote, three pages, numbered in the order they arrive.
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup.id, 'quote',
+    '27181', date '2026-08-13', 5300.35, 'plumbing');
+  v_n := public.pos_purchasing_add_page(v_tok, '1234', v_doc, 'org/doc/a.jpg', 'image/jpeg');
+  perform assert_eq(v_n, 1, 'the first page is page 1');
+  v_n := public.pos_purchasing_add_page(v_tok, '1234', v_doc, 'org/doc/b.jpg', 'image/jpeg');
+  v_n := public.pos_purchasing_add_page(v_tok, '1234', v_doc, 'org/doc/c.pdf', 'application/pdf');
+  perform assert_eq(v_n, 3, 'and the third is page 3');
+  select * into v_row from public.pos_purchasing_documents(v_tok, '1234') where id = v_doc;
+  perform assert_eq(v_row.pages, 3, 'the list counts the pages');
+  perform assert_eq(v_row.supplier_name, 'Jasbro Plumbing (Pty) Ltd', 'and names the supplier');
+  perform assert_eq(v_row.total, 5300.35::numeric, 'and carries the total');
+  perform assert_eq(v_row.status, 'stored', 'filed, not yet read');
+  select * into v_row from public.pos_purchasing_suppliers(v_tok, '1234') where id = v_sup.id;
+  perform assert_eq(v_row.document_count, 1, 'the supplier now has one document');
+  select count(*) into v_n from public.pos_purchasing_document_pages(v_tok, '1234', v_doc);
+  perform assert_eq(v_n, 3, 'the pages come back to be signed');
+  perform assert_refuses(
+    format('select public.pos_purchasing_add_document(%L, %L, %L, %L)', v_tok, '1234', v_sup.id, 'receipt'),
+    'a document has to be a known kind');
+  perform assert_refuses(
+    format('select public.pos_purchasing_add_page(%L, %L, %L, %L, %L)',
+      v_tok, '1234', gen_random_uuid(), 'x.jpg', 'image/jpeg'),
+    'a page needs a document that exists');
+
+  -- Removing a wrong filing takes its pages with it; a stranger's does not go.
+  perform assert_refuses(
+    format('select public.pos_purchasing_delete_document(%L, %L, %L)', 'not-a-token', '1234', v_doc),
+    'a stranger cannot remove a document');
+  perform public.pos_purchasing_delete_document(v_tok, '1234', v_doc);
+  select count(*) into v_n from public.supplier_document_pages where document_id = v_doc;
+  perform assert_eq(v_n, 0, 'the pages go with the document');
+
+  -- The bucket is private: a supplier's prices are the shop's cost base.
+  perform assert((select not public from storage.buckets where id = 'supplier-documents'),
+    'the supplier-documents bucket is not public');
+end $$;
+
 select 'all database tests passed' as result;

@@ -631,3 +631,172 @@ export async function removeProductImage(pin: string, imageId: string): Promise<
   });
   if (error) throw error;
 }
+
+// --- Purchasing: suppliers and the paper they send (0055) --------------------
+
+export interface Supplier {
+  id: string;
+  code: string | null;
+  name: string;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  vat_number: string | null;
+  notes: string | null;
+  active: boolean;
+  document_count: number;
+}
+
+export type SupplierDocumentKind = "quote" | "invoice" | "delivery_note" | "statement" | "other";
+
+export const DOCUMENT_KIND_LABEL: Record<SupplierDocumentKind, string> = {
+  quote: "Quote",
+  invoice: "Invoice",
+  delivery_note: "Delivery note",
+  statement: "Statement",
+  other: "Other",
+};
+
+export interface SupplierDocument {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  kind: SupplierDocumentKind;
+  doc_number: string | null;
+  doc_date: string | null;
+  total: number | null;
+  note: string | null;
+  status: "stored" | "read" | "received";
+  pages: number;
+  created_at: string;
+  created_by_name: string | null;
+}
+
+export interface SupplierPage {
+  page_no: number;
+  mime: string;
+  /** A signed URL, good for a few minutes. */
+  url: string | null;
+}
+
+export async function purchasingSuppliers(pin: string): Promise<Supplier[]> {
+  const { data, error } = await supabase.rpc("pos_purchasing_suppliers", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
+  if (error) throw error;
+  return (data as Supplier[]) ?? [];
+}
+
+export async function purchasingSaveSupplier(
+  pin: string,
+  s: {
+    id: string | null;
+    name: string;
+    contact_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    vat_number?: string | null;
+    notes?: string | null;
+  }
+): Promise<{ id: string; name: string }> {
+  const { data, error } = await supabase.rpc("pos_purchasing_save_supplier", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_id: s.id,
+    p_name: s.name,
+    p_contact_name: s.contact_name ?? null,
+    p_phone: s.phone ?? null,
+    p_email: s.email ?? null,
+    p_vat_number: s.vat_number ?? null,
+    p_notes: s.notes ?? null,
+  });
+  if (error) throw error;
+  return data as { id: string; name: string };
+}
+
+export async function purchasingDocuments(
+  pin: string,
+  supplierId: string | null = null
+): Promise<SupplierDocument[]> {
+  const { data, error } = await supabase.rpc("pos_purchasing_documents", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_supplier_id: supplierId,
+    p_limit: 200,
+  });
+  if (error) throw error;
+  return (data as SupplierDocument[]) ?? [];
+}
+
+export async function purchasingAddDocument(
+  pin: string,
+  d: {
+    supplier_id: string;
+    kind: SupplierDocumentKind;
+    doc_number: string | null;
+    doc_date: string | null;
+    total: number | null;
+    note: string | null;
+  }
+): Promise<string> {
+  const { data, error } = await supabase.rpc("pos_purchasing_add_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_supplier_id: d.supplier_id,
+    p_kind: d.kind,
+    p_doc_number: d.doc_number,
+    p_doc_date: d.doc_date,
+    p_total: d.total,
+    p_note: d.note,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function purchasingDeleteDocument(pin: string, documentId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_purchasing_delete_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+  });
+  if (error) throw error;
+}
+
+async function supplierDocumentCall(body: Record<string, string>): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/functions/v1/supplier-document`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ register_token: requireToken(), pin: body.pin, ...body }),
+  });
+  let out: Record<string, unknown> = {};
+  try {
+    out = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !out.ok) {
+    throw new Error((out.message as string) ?? "The page could not be sent.");
+  }
+  return out;
+}
+
+/** One page of a document — a downscaled photo or the PDF itself, as a data URL. */
+export async function uploadSupplierPage(
+  pin: string,
+  documentId: string,
+  dataUrl: string
+): Promise<number> {
+  const out = await supplierDocumentCall({ action: "page", pin, document_id: documentId, file: dataUrl });
+  return Number(out.page_no);
+}
+
+/** The pages of a document, as URLs the browser may open for a few minutes. */
+export async function signSupplierPages(pin: string, documentId: string): Promise<SupplierPage[]> {
+  const out = await supplierDocumentCall({ action: "sign", pin, document_id: documentId });
+  return (out.pages as SupplierPage[]) ?? [];
+}

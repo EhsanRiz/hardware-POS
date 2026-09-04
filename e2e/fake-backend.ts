@@ -69,7 +69,7 @@ function mk(
 }
 
 export const USERS = {
-  manager: { pin: "123456", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","view_cost_prices","manage_settings","void_refund","view_reports","shelf_capture"] } },
+  manager: { pin: "123456", phone: "+27820000001", row: { id: "u1", name: "Manager", role: "admin", phone: "+27820000001", email: null, permissions: ["take_payments","apply_discount","approve_discount","manage_catalogue","manage_inventory","manage_purchasing","view_cost_prices","manage_settings","void_refund","view_reports","shelf_capture"] } },
   employee: { pin: "567890", phone: "+27820000002", row: { id: "u2", name: "Sam", role: "employee", phone: "+27820000002", email: null, permissions: ["take_payments","apply_discount"] } },
   // The aisle: somebody whose only management right is the shelf. As on the
   // server, permissions here are the EFFECTIVE set — role defaults plus the
@@ -247,6 +247,13 @@ export class Backend {
     expires_at: string; used_at: string | null; used_by_name: string | null;
     doc_number: string | null;
   }[] = [];
+  /** 0055: suppliers and the paper they send. Pages keep the data URL sent. */
+  suppliers: { id: string; name: string; contact_name: string | null; phone: string | null;
+    email: string | null; vat_number: string | null; notes: string | null }[] = [];
+  supplierDocs: { id: string; supplier_id: string; kind: string; doc_number: string | null;
+    doc_date: string | null; total: number | null; note: string | null; status: string;
+    created_at: string }[] = [];
+  supplierPages: { document_id: string; page_no: number; mime: string; data: string; by_pin: string }[] = [];
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string | boolean> = {
     // A shop that has never been asked prices every line, as 0042 defaults it.
@@ -713,6 +720,40 @@ export async function installBackend(page: Page): Promise<Backend> {
     return respond(200, { ok: true, id: "img" + be.uploadedPhotos.length, path });
   });
 
+  // 0055: the supplier-document function. Pages in, signed URLs out; the fake
+  // hands back the very data URL it was given, which is what a browser test
+  // can look at.
+  await page.route("**/functions/v1/supplier-document", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, string> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    const u = Object.values(USERS).find((x) => x.pin === b.pin);
+    if (!u || !u.row.permissions.includes("manage_purchasing")) {
+      return respond(403, { ok: false, message: "Not permitted" });
+    }
+    const doc = be.supplierDocs.find((d) => d.id === b.document_id);
+    if (!doc) return respond(404, { ok: false, message: "Document not found" });
+    if (b.action === "sign") {
+      return respond(200, {
+        ok: true,
+        pages: be.supplierPages.filter((pg) => pg.document_id === doc.id)
+          .map((pg) => ({ page_no: pg.page_no, mime: pg.mime, url: pg.data })),
+      });
+    }
+    const m = /^data:(image\/(?:jpeg|png|webp)|application\/pdf);base64,./.exec(String(b.file ?? ""));
+    if (!m) return respond(400, { ok: false, message: "Use a photo (JPEG, PNG, WebP) or a PDF" });
+    const page_no = be.supplierPages.filter((pg) => pg.document_id === doc.id).length + 1;
+    be.supplierPages.push({ document_id: doc.id, page_no, mime: m[1], data: String(b.file), by_pin: String(b.pin) });
+    return respond(200, { ok: true, page_no, path: `org1/${doc.id}/${page_no}` });
+  });
+
   await page.route("**/rest/v1/**", async (route: Route) => {
     const url = new URL(route.request().url());
     // The till now calls its own origin and a Worker forwards /api to Supabase,
@@ -744,6 +785,8 @@ export async function installBackend(page: Page): Promise<Backend> {
     // anything else; the fake enforces the same so a client that forgets the
     // token fails the suite instead of only failing in production.
     const tokenOk = body.p_register_token === REGISTER_TOKEN;
+    const purchasing = (pin: unknown) =>
+      Object.values(USERS).some((u) => u.pin === pin && u.row.permissions.includes("manage_purchasing"));
 
     switch (path) {
       case "rpc/pos_pair_register": {
@@ -1207,6 +1250,77 @@ export async function installBackend(page: Page): Promise<Backend> {
         p.price_retail = Number(body.p_price_retail ?? p.price_retail);
         return json([{ ...p }]);
       }
+      // ---- 0055: suppliers and their paperwork. manage_purchasing. ----
+      case "rpc/pos_purchasing_suppliers": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        return json(be.suppliers.map((s) => ({
+          ...s, code: null, active: true,
+          document_count: be.supplierDocs.filter((d) => d.supplier_id === s.id).length,
+        })));
+      }
+      case "rpc/pos_purchasing_save_supplier": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const name = String(body.p_name ?? "").trim();
+        if (!name) return fail("A supplier needs a name");
+        const clean = (v: unknown) => (String(v ?? "").trim() || null);
+        const fields = {
+          name, contact_name: clean(body.p_contact_name), phone: clean(body.p_phone),
+          email: clean(body.p_email), vat_number: clean(body.p_vat_number), notes: clean(body.p_notes),
+        };
+        if (body.p_id) {
+          const s = be.suppliers.find((x) => x.id === body.p_id);
+          if (!s) return fail("Supplier not found");
+          Object.assign(s, fields);
+          return json({ ...s });
+        }
+        const made = { id: "sup" + (be.suppliers.length + 1), ...fields };
+        be.suppliers.push(made);
+        return json({ ...made });
+      }
+      case "rpc/pos_purchasing_add_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        if (!be.suppliers.some((s) => s.id === body.p_supplier_id)) return fail("Supplier not found");
+        const kind = String(body.p_kind ?? "");
+        if (!["quote", "invoice", "delivery_note", "statement", "other"].includes(kind)) {
+          return fail("Say what kind of document it is");
+        }
+        const d = {
+          id: "doc" + (be.supplierDocs.length + 1), supplier_id: String(body.p_supplier_id), kind,
+          doc_number: (String(body.p_doc_number ?? "").trim() || null),
+          doc_date: (body.p_doc_date as string) ?? null,
+          total: body.p_total == null ? null : Number(body.p_total),
+          note: (String(body.p_note ?? "").trim() || null),
+          status: "stored", created_at: new Date().toISOString(),
+        };
+        be.supplierDocs.push(d);
+        return json(d.id);
+      }
+      case "rpc/pos_purchasing_documents": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        return json(be.supplierDocs
+          .filter((d) => !body.p_supplier_id || d.supplier_id === body.p_supplier_id)
+          .slice().reverse()
+          .map((d) => ({
+            ...d,
+            supplier_name: be.suppliers.find((s) => s.id === d.supplier_id)?.name ?? "?",
+            pages: be.supplierPages.filter((pg) => pg.document_id === d.id).length,
+            created_by_name: "Manager",
+          })));
+      }
+      case "rpc/pos_purchasing_delete_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const i = be.supplierDocs.findIndex((d) => d.id === body.p_document_id && d.status === "stored");
+        if (i < 0) return fail("Document not found, or it has already been booked in");
+        be.supplierDocs.splice(i, 1);
+        be.supplierPages = be.supplierPages.filter((pg) => pg.document_id !== body.p_document_id);
+        return json(null);
+      }
+
       case "rpc/pos_org_settings":
         if (!tokenOk) return fail("Register not paired or revoked");
         // The rate the till displays comes from the server, as it does in
