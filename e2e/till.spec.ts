@@ -3945,3 +3945,115 @@ test("a delivery is counted in by scanning, gun or camera, one more per read", a
     { product_id: "p5", qty_delta: 1, reason: "receipt", note: "JAS-27181" },
   ]);
 });
+
+/*
+ * A phone-sized till still has every section.
+ */
+test("on a phone the sections are a row under the header, not gone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairAndSignIn(page, USERS.employee.pin);
+  const nav = page.getByRole("navigation", { name: "Sections" });
+  await expect(nav.getByRole("button", { name: "Quotes" })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Accounts" })).toBeVisible();
+  // And the row does not push the page sideways.
+  const wider = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(wider).toBe(false);
+  await nav.getByRole("button", { name: "Quotes" }).click();
+  await expect(page.getByPlaceholder(/Find a quote by number/)).toBeVisible();
+  await nav.getByRole("button", { name: "Sell" }).click();
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toBeVisible();
+});
+
+/*
+ * 0055: suppliers, and the paper they send.
+ */
+const PNG_1x1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64"
+);
+
+test("a supplier's quote is filed from its pages and opens again", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await expect(page.getByText(/No suppliers yet/)).toBeVisible();
+
+  // The supplier first.
+  await page.getByRole("button", { name: "Add supplier" }).click();
+  const form = page.getByRole("dialog", { name: "Add supplier" });
+  await form.getByLabel("Supplier name").fill("Jasbro Plumbing");
+  await form.getByLabel("Phone").fill("010 442 0625");
+  await form.getByRole("button", { name: "Save supplier" }).click();
+  await expect(page.getByText("Jasbro Plumbing saved.")).toBeVisible();
+  expect(be.suppliers[0].name).toBe("Jasbro Plumbing");
+  expect(be.suppliers[0].phone).toBe("010 442 0625");
+
+  // Then the quote: two photographed pages, the number, date and total off it.
+  await page.getByRole("button", { name: "New document" }).click();
+  const doc = page.getByRole("dialog", { name: "New supplier document" });
+  await doc.getByLabel("Document kind").selectOption("quote");
+  await doc.getByLabel("Document number").fill("27181");
+  await doc.getByLabel("Document date").fill("2026-08-13");
+  await doc.getByLabel("Document total").fill("5300.35");
+  // Nothing to file until there is a page.
+  await expect(doc.getByRole("button", { name: /^File/ })).toBeDisabled();
+  await doc.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "page1.png", mimeType: "image/png", buffer: PNG_1x1 },
+    { name: "page2.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await expect(doc.getByText("page 2")).toBeVisible();
+  await doc.getByRole("button", { name: "File 2 pages" }).click();
+  await expect(page.getByText("Filed with 2 pages.")).toBeVisible();
+
+  // Sent as photographs, in order, by this manager's PIN.
+  expect(be.supplierPages.map((p) => p.page_no)).toEqual([1, 2]);
+  expect(be.supplierPages.every((p) => p.mime === "image/jpeg" && p.by_pin === USERS.manager.pin)).toBe(true);
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "quote", doc_number: "27181", doc_date: "2026-08-13", total: 5300.35 });
+
+  // Listed, and open again with both pages showing.
+  const row = page.locator("tr.acc-row", { hasText: "Quote 27181" });
+  await expect(row).toContainText("Jasbro Plumbing");
+  await expect(row).toContainText("2 pages");
+  await expect(row).toContainText("5 300.35");
+  await row.click();
+  const view = page.getByRole("dialog", { name: "Quote 27181" });
+  await expect(view.locator("img")).toHaveCount(2);
+  await expect(view).toContainText("13 Aug 2026");
+  await view.getByLabel("Close document").click();
+
+  // The supplier's own count, for the filter.
+  await expect(page.getByLabel("Supplier")).toContainText("Jasbro Plumbing · 1");
+});
+
+test("a PDF the supplier emailed is filed whole, and a wrong filing can be removed", async ({ page }) => {
+  be.suppliers.push({ id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null, email: null, vat_number: null, notes: null });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "New document" }).click();
+  const doc = page.getByRole("dialog", { name: "New supplier document" });
+  await doc.getByLabel("Document kind").selectOption("invoice");
+  await doc.getByLabel("Document number").fill("INV 8812");
+  await doc.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 fake") },
+  ]);
+  await doc.getByRole("button", { name: "File 1 page" }).click();
+  await expect(page.getByText("Filed with 1 page.")).toBeVisible();
+  expect(be.supplierPages[0].mime).toBe("application/pdf");
+
+  await page.locator("tr.acc-row", { hasText: "Invoice INV 8812" }).click();
+  const view = page.getByRole("dialog", { name: "Invoice INV 8812" });
+  await expect(view.getByRole("link", { name: /open the PDF/ })).toBeVisible();
+  await view.getByRole("button", { name: "Remove" }).click();
+  await view.getByRole("button", { name: "Remove it" }).click();
+  await expect(page.getByText("Document removed.")).toBeVisible();
+  expect(be.supplierDocs).toHaveLength(0);
+  expect(be.supplierPages).toHaveLength(0);
+});
+
+test("without the purchasing right there is no Suppliers tab", async ({ page }) => {
+  await pairAndSignIn(page, USERS.shelf.pin);
+  await openManage(page, USERS.shelf.pin);
+  await expect(page.getByRole("button", { name: /^Shelf$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Suppliers$/ })).toHaveCount(0);
+});

@@ -1180,8 +1180,18 @@
   .line-unit { display: none; }
   .line-rate { display: inline; }
 
-  .sell-nav { display: none; }
-  .sell-head { gap: 12px; padding-top: 10px; padding-bottom: 10px; }
+  /* The sections were hidden here, which on a phone meant Quotes, Accounts
+     and Stock did not exist. They become a second row of the header instead:
+     full width, one tab each, the same underline. The header wraps to make
+     the room. */
+  .sell-head { gap: 12px; padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
+  .sell-nav {
+    order: 10;
+    flex: 1 1 100%;
+    margin: 4px calc(-1 * var(--sell-pad)) -10px;
+    border-top: 1px solid var(--divider);
+  }
+  .sell-nav button { flex: 1 1 0; padding: 10px 6px; font-size: 14px; }
   .sell-cashier { display: none; }
   .sell-divider-v { display: none; }
   .sell-edition { display: none; }
