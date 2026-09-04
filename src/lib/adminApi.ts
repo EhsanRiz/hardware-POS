@@ -668,6 +668,8 @@ export interface SupplierDocument {
   note: string | null;
   status: "stored" | "read" | "received";
   pages: number;
+  /** How many item lines were read off it. Zero for a filed photograph. */
+  lines: number;
   created_at: string;
   created_by_name: string | null;
 }
@@ -799,4 +801,151 @@ export async function uploadSupplierPage(
 export async function signSupplierPages(pin: string, documentId: string): Promise<SupplierPage[]> {
   const out = await supplierDocumentCall({ action: "sign", pin, document_id: documentId });
   return (out.pages as SupplierPage[]) ?? [];
+}
+
+// --- Reading a supplier's document (0056) ------------------------------------
+
+/** One line as the reader found it on the page, before anybody confirms it. */
+export interface ReadLine {
+  supplier_code?: string | null;
+  description: string;
+  qty?: number | null;
+  unit_price?: number | null;
+  line_total?: number | null;
+}
+
+/** What the pages said. Every field is a suggestion until a person agrees. */
+export interface ReadDocument {
+  supplier_name?: string | null;
+  supplier_vat?: string | null;
+  supplier_phone?: string | null;
+  supplier_email?: string | null;
+  kind?: SupplierDocumentKind | null;
+  doc_number?: string | null;
+  doc_date?: string | null;
+  subtotal?: number | null;
+  tax_total?: number | null;
+  total?: number | null;
+  currency?: string | null;
+  lines: ReadLine[];
+}
+
+/**
+ * Hand the pages to the reader.
+ *
+ * Nothing is stored by this call: it answers, the manager confirms, and the
+ * filing is a separate step. The key it uses lives on the server.
+ */
+export async function readSupplierDocument(
+  pin: string,
+  pages: { mime: string; data: string }[]
+): Promise<ReadDocument> {
+  const res = await fetch(`${API_BASE}/functions/v1/read-document`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ register_token: requireToken(), pin, pages }),
+  });
+  let out: { ok?: boolean; read?: ReadDocument; message?: string } = {};
+  try {
+    out = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !out.ok || !out.read) {
+    throw new Error(out.message ?? "The pages could not be read.");
+  }
+  return { ...out.read, lines: out.read.lines ?? [] };
+}
+
+/** The supplier this letterhead belongs to, if the shop already buys from it. */
+export async function matchSupplier(
+  pin: string,
+  vatNumber: string | null,
+  name: string | null
+): Promise<{ id: string; name: string; vat_number: string | null } | null> {
+  const { data, error } = await supabase.rpc("pos_purchasing_match_supplier", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_vat_number: vatNumber,
+    p_name: name,
+  });
+  if (error) throw error;
+  return (data as { id: string; name: string; vat_number: string | null }[])?.[0] ?? null;
+}
+
+export interface FiledDocument {
+  document_id: string;
+  supplier_id: string;
+  supplier_name: string;
+  supplier_created: boolean;
+}
+
+/** File a confirmed reading: the supplier, the header and every line, at once. */
+export async function fileSupplierDocument(
+  pin: string,
+  d: {
+    supplier_id: string | null;
+    supplier_name: string | null;
+    supplier_vat: string | null;
+    supplier_phone: string | null;
+    supplier_email: string | null;
+    kind: SupplierDocumentKind;
+    doc_number: string | null;
+    doc_date: string | null;
+    subtotal: number | null;
+    tax_total: number | null;
+    total: number | null;
+    note: string | null;
+    lines: ReadLine[];
+    read: boolean;
+  }
+): Promise<FiledDocument> {
+  const { data, error } = await supabase.rpc("pos_purchasing_file_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_supplier_id: d.supplier_id,
+    p_supplier_name: d.supplier_name,
+    p_supplier_vat: d.supplier_vat,
+    p_supplier_phone: d.supplier_phone,
+    p_supplier_email: d.supplier_email,
+    p_kind: d.kind,
+    p_doc_number: d.doc_number,
+    p_doc_date: d.doc_date,
+    p_subtotal: d.subtotal,
+    p_tax_total: d.tax_total,
+    p_total: d.total,
+    p_note: d.note,
+    p_lines: d.lines,
+    p_read: d.read,
+  });
+  if (error) throw error;
+  return (data as FiledDocument[])[0];
+}
+
+export interface DocumentLine {
+  line_no: number;
+  supplier_code: string | null;
+  description: string;
+  qty: number | null;
+  unit_price: number | null;
+  line_total: number | null;
+  product_id: string | null;
+  product_name: string | null;
+}
+
+export async function purchasingDocumentLines(
+  pin: string,
+  documentId: string
+): Promise<DocumentLine[]> {
+  const { data, error } = await supabase.rpc("pos_purchasing_document_lines", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+  });
+  if (error) throw error;
+  return (data as DocumentLine[]) ?? [];
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DOCUMENT_KIND_LABEL,
   purchasingAddDocument,
+  purchasingDocumentLines,
   purchasingDeleteDocument,
   purchasingDocuments,
   purchasingSaveSupplier,
@@ -11,6 +12,7 @@ import {
   type Supplier,
   type SupplierDocument,
   type SupplierDocumentKind,
+  type DocumentLine,
   type SupplierPage,
 } from "../../lib/adminApi";
 import { fmtDate } from "../../lib/dates";
@@ -18,6 +20,7 @@ import { errorMessage } from "../../lib/errors";
 import { downscaleImage } from "../../lib/images";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
+import ScanDocument from "./ScanDocument";
 
 /**
  * Suppliers, and the paper they send.
@@ -41,6 +44,8 @@ export default function Suppliers({ pin }: { pin: string }) {
   const [viewing, setViewing] = useState<SupplierDocument | null>(null);
   // A row opens the supplier in a popup; Manage on it opens the page.
   const [peek, setPeek] = useState<Supplier | null>(null);
+  // The scanner: pages in, a checked reading out, filed in one step.
+  const [scanning, setScanning] = useState(false);
 
   const loadSuppliers = useCallback(async () => {
     setError(null);
@@ -73,6 +78,26 @@ export default function Suppliers({ pin }: { pin: string }) {
     void loadDocs();
   }, [loadDocs]);
 
+  /** After a scan: say what happened, and land where the document is. */
+  const afterFiling = useCallback(
+    async (r: { documentId: string; supplierName: string; created: boolean; lines: number }) => {
+      setScanning(false);
+      setBanner(
+        `Filed under ${r.supplierName}${r.created ? " (added as a new supplier)" : ""}` +
+        (r.lines ? ` with ${r.lines} ${r.lines === 1 ? "line" : "lines"}.` : ".")
+      );
+      const all = await purchasingSuppliers(pin).catch(() => null);
+      if (all) {
+        setSuppliers(all);
+        const sup = all.find((x) => x.name === r.supplierName);
+        if (sup) setSelected(sup);
+      }
+      const list = await purchasingDocuments(pin, null).catch(() => null);
+      if (list) setViewing(list.find((d) => d.id === r.documentId) ?? null);
+    },
+    [pin]
+  );
+
   const shown = useMemo(() => {
     const q = term.trim().toLowerCase();
     if (!q || !suppliers) return suppliers ?? [];
@@ -103,8 +128,11 @@ export default function Suppliers({ pin }: { pin: string }) {
             <button className="btn-line" onClick={() => setEditing(selected)} disabled={!online}>
               Edit supplier
             </button>
-            <button className="btn-fill" onClick={() => setAdding(true)} disabled={!online}>
-              New document
+            <button className="btn-line" onClick={() => setAdding(true)} disabled={!online}>
+              File by hand
+            </button>
+            <button className="btn-fill" onClick={() => setScanning(true)} disabled={!online}>
+              Scan a document
             </button>
           </span>
         </div>
@@ -213,8 +241,13 @@ export default function Suppliers({ pin }: { pin: string }) {
           className="modal-input"
           style={{ marginBottom: 0, maxWidth: 420 }}
         />
-        <button className="btn-fill" onClick={() => setEditing("new")} disabled={!online}>
+        <button className="btn-line" onClick={() => setEditing("new")} disabled={!online}>
           Add supplier
+        </button>
+        {/* The way in. Everything else on this screen exists for the paper
+            that arrives through here. */}
+        <button className="btn-fill" onClick={() => setScanning(true)} disabled={!online}>
+          Scan a document
         </button>
       </div>
 
@@ -263,9 +296,37 @@ export default function Suppliers({ pin }: { pin: string }) {
         </table>
       </div>
 
+      {scanning && (
+        <ScanDocument
+          pin={pin}
+          suppliers={suppliers ?? []}
+          forSupplier={selected}
+          onClose={() => setScanning(false)}
+          onFiled={afterFiling}
+        />
+      )}
+
+      {/* A document opened from a supplier's popup, without going through the
+          supplier's page first. It used to be rendered only on that page, so
+          the tap set the state and nothing appeared. */}
+      {viewing && (
+        <DocumentView
+          pin={pin}
+          doc={viewing}
+          onClose={() => setViewing(null)}
+          onDeleted={async () => {
+            setViewing(null);
+            setBanner("Document removed.");
+            await loadSuppliers();
+          }}
+        />
+      )}
+
       {peek && (
         <SupplierPeek
+          pin={pin}
           supplier={peek}
+          onOpenDocument={(d) => { setPeek(null); setViewing(d); }}
           onClose={() => setPeek(null)}
           onManage={() => {
             setSelected(peek);
@@ -297,14 +358,31 @@ export default function Suppliers({ pin }: { pin: string }) {
 
 /** The supplier at a glance, with the way into managing it. */
 function SupplierPeek({
+  pin,
   supplier,
   onClose,
   onManage,
+  onOpenDocument,
 }: {
+  pin: string;
   supplier: Supplier;
   onClose: () => void;
   onManage: () => void;
+  /** The paper itself, from here: this is what the popup is opened for. */
+  onOpenDocument: (d: SupplierDocument) => void;
 }) {
+  // Its paperwork, right here. Going to Manage first to see a quotation was
+  // a step that existed for the code's benefit and not the shop's.
+  const [docs, setDocs] = useState<SupplierDocument[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    purchasingDocuments(pin, supplier.id)
+      .then((d) => !cancelled && setDocs(d))
+      .catch(() => !cancelled && setDocs([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [pin, supplier.id]);
   const rows: [string, string | null][] = [
     ["Contact", supplier.contact_name],
     ["Phone", supplier.phone],
@@ -344,6 +422,36 @@ function SupplierPeek({
               </div>
             ))}
           </dl>
+
+          <h3 className="text-sm font-medium text-stone-700 mt-4 mb-1">Documents</h3>
+          {docs === null && <p className="text-sm text-stone-500">Looking…</p>}
+          {docs?.length === 0 && (
+            <p className="text-sm text-stone-500">Nothing filed for them yet.</p>
+          )}
+          <ul className="divide-y divide-stone-100">
+            {docs?.map((d) => (
+              <li key={d.id}>
+                <button
+                  className="w-full text-left py-2 px-1 hover:bg-stone-50 flex items-baseline gap-3"
+                  onClick={() => onOpenDocument(d)}
+                >
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm">
+                      {DOCUMENT_KIND_LABEL[d.kind]} {d.doc_number ?? ""}
+                    </span>
+                    <span className="block text-xs text-stone-500">
+                      {d.doc_date ? fmtDate(d.doc_date) : "no date"} · {d.pages}{" "}
+                      {d.pages === 1 ? "page" : "pages"}
+                      {d.lines ? ` · ${d.lines} lines` : ""}
+                    </span>
+                  </span>
+                  <span className="tabular-nums whitespace-nowrap text-sm">
+                    {d.total != null ? money(d.total) : "—"}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
         <div className="p-4 border-t border-stone-200 flex gap-2">
           <button className="py-2.5 px-4 rounded-xl bg-stone-100" onClick={onClose}>
@@ -672,6 +780,7 @@ function DocumentView({
   onDeleted: () => Promise<void>;
 }) {
   const [pages, setPages] = useState<SupplierPage[] | null>(null);
+  const [lines, setLines] = useState<DocumentLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -685,6 +794,17 @@ function DocumentView({
       cancelled = true;
     };
   }, [pin, doc.id]);
+
+  useEffect(() => {
+    if (!doc.lines) return;
+    let cancelled = false;
+    purchasingDocumentLines(pin, doc.id)
+      .then((l) => !cancelled && setLines(l))
+      .catch(() => !cancelled && setLines([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [pin, doc.id, doc.lines]);
 
   async function remove() {
     setBusy(true);
@@ -729,6 +849,34 @@ function DocumentView({
         </div>
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
           {error && <p className="acc-note is-bad">{error}</p>}
+
+          {/* What it says, before what it looks like: the lines are the part
+              a person came back to this document for. */}
+          {lines && lines.length > 0 && (
+            <table className="acc-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Unit</th>
+                  <th className="num">Line</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.line_no}>
+                    <td>
+                      <span className="acc-name">{l.description}</span>
+                      {l.supplier_code && <span className="acc-sub">{l.supplier_code}</span>}
+                    </td>
+                    <td className="num">{l.qty ?? "—"}</td>
+                    <td className="num">{l.unit_price != null ? money(l.unit_price) : "—"}</td>
+                    <td className="num">{l.line_total != null ? money(l.line_total) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {!pages && !error && <p className="text-sm text-stone-500">Opening the pages…</p>}
           {pages?.length === 0 && <p className="text-sm text-stone-500">No pages were filed.</p>}
           {pages?.map((p) =>
