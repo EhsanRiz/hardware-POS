@@ -37,7 +37,9 @@ function renderMarkup(text: string): ReactNode[] {
             key={key++}
             className="block text-center py-1"
             data-barcode={bar}
-            dangerouslySetInnerHTML={{ __html: code128Svg(bar) + `<div style="font-size:11px">${bar}</div>` }}
+            // Bars only. The number is already on the line above the barcode,
+            // and printing it again beneath read as the invoice number twice.
+            dangerouslySetInnerHTML={{ __html: code128Svg(bar) }}
           />
         );
         bar = null;

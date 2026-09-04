@@ -11,6 +11,7 @@ import type {
   ReceiptItem,
   Sale,
 } from "./types";
+import { fmtDate, fmtDateTime } from "./dates";
 
 // Plain-text receipt builder. Width-parameterised (RECEIPT_WIDTH columns) so it
 // adapts to the paper + font scale. The print layer wraps this with ESC/POS.
@@ -84,16 +85,46 @@ const MARKUP_RE = new RegExp(
   "[" + BOLD_ON + BOLD_OFF + UL_ON + UL_OFF + BAR_ON + BAR_OFF + "]",
   "g"
 );
+/**
+ * A paragraph of small print, folded to the paper.
+ *
+ * Words are kept whole and blank lines in the shop's text start a new
+ * paragraph, so the returns policy reads as it was typed and not as one
+ * 300-character line the printer chops wherever it runs out of paper.
+ */
+export function wrapTerms(text: string, width = RECEIPT_WIDTH): string[] {
+  const out: string[] = [];
+  for (const para of text.replace(/\r/g, "").split(/\n\s*\n/)) {
+    const words = para.split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    if (out.length) out.push("");
+    let line = "";
+    for (const w of words) {
+      if (line && line.length + 1 + w.length > width) {
+        out.push(line);
+        line = w;
+      } else {
+        line = line ? `${line} ${w}` : w;
+      }
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+
+/** The shop's small print, if it has any, under a rule of its own. */
+function termsBlock(out: string[], text: string | null | undefined): void {
+  const lines = wrapTerms((text ?? "").trim());
+  if (!lines.length) return;
+  out.push(divider());
+  out.push(...lines);
+}
+
 export function stripMarkup(s: string): string {
   return s.replace(MARKUP_RE, "");
 }
 
-function fmtDateTime(d: Date): string {
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-}
+
 
 /**
  * Trim trailing zeros from a quantity: 3 stays "3", 2.5 stays "2.5", 0.750
@@ -291,6 +322,10 @@ export function buildReceiptText(
     taken.some((p) => p.method === "account" || p.method === "eft");
   if (owed) bankingBlock(out);
 
+  // The returns policy, on the paper the customer brings back. The sign
+  // behind the counter is not in their kitchen drawer; the slip is.
+  termsBlock(out, shopSettings().receipt_terms);
+
   out.push("");
   out.push(center("Thank you"));
   out.push("");
@@ -322,8 +357,44 @@ function bankingBlock(out: string[]): void {
  * Explicitly not a tax invoice — it carries no document number and says so, so
  * it can never be mistaken for one in a shoebox of receipts.
  */
+/**
+ * One line of a quote, however it got here: the till's cart (a product and a
+ * quantity, priced for this customer) or a saved quote read back from the
+ * server (the promise as it was made, with today's product long since
+ * repriced or gone). The paper is the same either way, so the builder takes
+ * the paper's own shape and the two callers each map to it.
+ */
+export interface QuoteTextLine {
+  name: string;
+  unit_code: string;
+  qty: number;
+  /** The unit price this customer was quoted. */
+  unit: number;
+  /** Money off this line, already worked out. */
+  off?: number;
+  discountPercent?: number | null;
+}
+
+/** The till's cart as quote lines, priced the way the customer is priced. */
+export function cartQuoteLines(lines: CartLine[], trade: boolean): QuoteTextLine[] {
+  return lines.map((l) => ({
+    name: l.product.name,
+    unit_code: l.product.unit_code,
+    qty: l.qty,
+    // The price this customer is actually being quoted. It read price_retail
+    // regardless, so a trade quote printed retail against every line while the
+    // subtotal underneath was worked out at trade — the paper disagreed with
+    // itself, in the customer's favour on the total and against them on every
+    // line above it.
+    unit:
+      trade && l.product.price_trade != null ? l.product.price_trade : l.product.price_retail,
+    off: l.discount ?? 0,
+    discountPercent: l.discountPercent,
+  }));
+}
+
 export function buildQuoteText(
-  lines: CartLine[],
+  lines: QuoteTextLine[],
   opts: {
     subtotal: number;
     discount: number;
@@ -332,6 +403,10 @@ export function buildQuoteText(
     /** Set when the quote was saved: the number the builder brings back. */
     docNumber?: string | null;
     validUntil?: string | null;
+    /** Who it is for. A quote with no name on it is a price list. */
+    customerName?: string | null;
+    /** When the quote was made. Now, unless it is being reprinted. */
+    createdAt?: string | null;
     /**
      * Whether each line carries a price. False prints the scope and one total
      * — the ordinary way a trade counter quotes a job, because an itemised
@@ -356,21 +431,15 @@ export function buildQuoteText(
     out.push(bold(opts.docNumber));
     out.push(barcode(opts.docNumber));
   }
-  out.push(fmtDateTime(new Date()));
+  const made = opts.createdAt ? new Date(opts.createdAt) : new Date();
+  out.push(fmtDateTime(Number.isNaN(made.getTime()) ? new Date() : made));
+  if (opts.customerName?.trim()) out.push(`For: ${opts.customerName.trim()}`);
   if (opts.trade) out.push("Trade pricing");
   out.push(solid());
 
   for (const l of lines) {
-    // The price this customer is actually being quoted. It read price_retail
-    // regardless, so a trade quote printed retail against every line while the
-    // subtotal underneath was worked out at trade — the paper disagreed with
-    // itself, in the customer's favour on the total and against them on every
-    // line above it.
-    const unit =
-      opts.trade && l.product.price_trade != null
-        ? l.product.price_trade
-        : l.product.price_retail;
-    const label = itemLabel(l.qty, l.product.unit_code, l.product.name);
+    const unit = l.unit;
+    const label = itemLabel(l.qty, l.unit_code, l.name);
 
     if (!priced) {
       out.push(label);
@@ -381,10 +450,10 @@ export function buildQuoteText(
     // on a line that had been marked down, and left the difference unexplained
     // between the subtotal and the total.
     const gross = unit * l.qty;
-    const off = l.discount ?? 0;
+    const off = l.off ?? 0;
     out.push(lineItem(label, amount(gross - off)));
-    if (l.product.unit_code !== "ea" || l.qty !== 1) {
-      out.push(unitRate(unit, l.product.unit_code));
+    if (l.unit_code !== "ea" || l.qty !== 1) {
+      out.push(unitRate(unit, l.unit_code));
     }
     if (off > 0) {
       out.push(
@@ -426,6 +495,9 @@ export function buildQuoteText(
   if (opts.docNumber) {
     out.push(center(`quote this number to buy: ${opts.docNumber}`));
   }
+  // Its own small print, not the invoice's: nothing has been sold yet, so a
+  // returns policy is beside the point and "subject to stock" is the point.
+  termsBlock(out, shopSettings().quote_terms);
   out.push("");
   out.push("");
   return out.join("\n");
@@ -689,11 +761,9 @@ export function buildDayCloseText(d: DayClose, from: Date, to: Date): string {
   return out.join("\n");
 }
 
-/** "12 Mar 26" — compact enough for a 42-column slip line. */
+/** "12 Mar 2026" — the same form as everywhere else; it fits the line. */
 function shortDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "2-digit" });
+  return fmtDate(iso);
 }
 
 /** A sample slip for testing the printer / RawBT setup on the tablet. */

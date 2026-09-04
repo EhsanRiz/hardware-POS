@@ -300,6 +300,13 @@ export interface ShopSettings {
   bank_account_number?: string | null;
   bank_branch_code?: string | null;
   /**
+   * The small print. `receipt_terms` ends every till slip (returns, special
+   * orders, warranty); `quote_terms` ends every quote (validity, stock).
+   * Both are the shop's own words, empty for a shop that wants none.
+   */
+  receipt_terms?: string | null;
+  quote_terms?: string | null;
+  /**
    * The standard VAT rate as a fraction, served from the same table the sale
    * reads. What is CHARGED has always come from there and is stored per line at
    * the moment of sale; this is so the rate shown on screen cannot outlive it.

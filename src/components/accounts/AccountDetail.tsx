@@ -13,6 +13,7 @@ import { printReceipt } from "../../lib/print";
 import { buildStatementText } from "../../lib/receipt";
 import type { AccountRow, LedgerEntry, User } from "../../lib/types";
 import ManagerPinModal from "../ManagerPinModal";
+import { fmtDate } from "../../lib/dates";
 
 const METHODS = [
   { key: "cash", label: "Cash" },
@@ -308,9 +309,5 @@ export default function AccountDetail({
 function shortDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-ZA", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return fmtDate(d);
 }

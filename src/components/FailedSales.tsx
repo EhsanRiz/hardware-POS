@@ -10,6 +10,7 @@ import { syncNow } from "../lib/sync";
 import { useOnline } from "../lib/offline";
 import { money } from "../lib/format";
 import { itemLabel } from "../lib/receipt";
+import { fmtDayMonthTime } from "../lib/dates";
 
 // Manager view of sales that were taken offline on this device but the server
 // rejected on sync. Lets them read the reason and retry or discard each one.
@@ -59,12 +60,7 @@ export default function FailedSales({ onClose }: { onClose: () => void }) {
                     </span>
                   </span>
                   <span className="text-xs text-stone-500">
-                    {new Date(it.createdAt).toLocaleString([], {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {fmtDayMonthTime(it.createdAt)}
                   </span>
                 </div>
                 <p className="text-sm text-stone-600 mt-1">{summary(it)}</p>

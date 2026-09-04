@@ -7,6 +7,7 @@ import {
 import { CURRENCY } from "../../lib/config";
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/format";
+import { fmtDayMonthTime, fmtTime } from "../../lib/dates";
 
 const MINUTES = [5, 10, 30, 60];
 
@@ -152,10 +153,7 @@ export default function Approvals({ pin }: { pin: string }) {
           </p>
           <p className="text-sm text-emerald-900">
             Good until{" "}
-            {new Date(issued.expires_at).toLocaleTimeString("en-ZA", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            {fmtTime(issued.expires_at)}
             , once. It will not be shown again.
           </p>
         </div>
@@ -184,12 +182,7 @@ export default function Approvals({ pin }: { pin: string }) {
                       {r.reason && <span className="text-stone-500"> · {r.reason}</span>}
                     </span>
                     <span className="block text-stone-500">
-                      {new Date(r.created_at).toLocaleString("en-ZA", {
-                        day: "2-digit",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {fmtDayMonthTime(r.created_at)}
                     </span>
                   </span>
                   <span

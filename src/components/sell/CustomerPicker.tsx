@@ -5,6 +5,7 @@ import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
 import { formatPhone, looksLikePhone, phoneMatches } from "../../lib/phone";
 import type { Customer, CustomerVisit } from "../../lib/types";
+import { fmtDate } from "../../lib/dates";
 
 /**
  * Who is buying.
@@ -30,6 +31,7 @@ export default function CustomerPicker({
   onPick,
   onAdded,
   onClose,
+  onOpenSale,
 }: {
   customers: Customer[];
   /** Whose permission authorises recording a buyer. */
@@ -38,6 +40,8 @@ export default function CustomerPicker({
   /** A newly recorded buyer, so the till's cached list stays current. */
   onAdded?: (c: Customer) => void;
   onClose: () => void;
+  /** An invoice from a buyer's history, opened by number. */
+  onOpenSale?: (docNumber: string) => void;
 }) {
   const online = useOnline();
   const [term, setTerm] = useState("");
@@ -90,6 +94,7 @@ export default function CustomerPicker({
         customer={view.customer}
         onBack={() => setView({ kind: "list" })}
         onClose={onClose}
+        onOpen={onOpenSale}
       />
     );
   }
@@ -249,10 +254,13 @@ function PurchaseHistory({
   customer,
   onBack,
   onClose,
+  onOpen,
 }: {
   customer: Customer;
   onBack: () => void;
   onClose: () => void;
+  /** Open one of the invoices — reprint it, or take a return against it. */
+  onOpen?: (docNumber: string) => void;
 }) {
   const [visits, setVisits] = useState<CustomerVisit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -300,21 +308,41 @@ function PurchaseHistory({
             </p>
           )}
 
-          {visits?.map((v) => (
-            <div key={v.sale_id} className="modal-row" style={{ cursor: "default" }}>
-              <span className="modal-row-name">
-                {v.doc_number ?? "—"} · {money(v.total)}
-              </span>
-              <span className="modal-row-meta">
-                {visitDate(v.created_at)} · {v.item_count}{" "}
-                {v.item_count === 1 ? "item" : "items"}
-                {v.payment_method ? ` · ${v.payment_method}` : ""}
-              </span>
-              {v.summary && (
-                <span className="modal-row-meta">{v.summary}</span>
-              )}
-            </div>
-          ))}
+          {/* Each invoice is a door, as it is on the Sales screen: the
+              customer at the returns counter with no slip has just been
+              found, and the next thing wanted is the slip itself. */}
+          {visits?.map((v) => {
+            const openable = !!(onOpen && v.doc_number);
+            const body = (
+              <>
+                <span className="modal-row-name">
+                  {v.doc_number ?? "—"} · {money(v.total)}
+                </span>
+                <span className="modal-row-meta">
+                  {visitDate(v.created_at)} · {v.item_count}{" "}
+                  {v.item_count === 1 ? "item" : "items"}
+                  {v.payment_method ? ` · ${v.payment_method}` : ""}
+                </span>
+                {v.summary && (
+                  <span className="modal-row-meta">{v.summary}</span>
+                )}
+              </>
+            );
+            return openable ? (
+              <button
+                key={v.sale_id}
+                className="modal-row"
+                onClick={() => onOpen!(v.doc_number!)}
+                title="Open this invoice"
+              >
+                {body}
+              </button>
+            ) : (
+              <div key={v.sale_id} className="modal-row" style={{ cursor: "default" }}>
+                {body}
+              </div>
+            );
+          })}
 
           {error && (
             <p className="modal-row-meta" style={{ color: "var(--color-owing)" }}>
@@ -364,11 +392,7 @@ function describe(c: Customer): string {
 function visitDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-ZA", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return fmtDate(d);
 }
 
 function ReceiptGlyph() {

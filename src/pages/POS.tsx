@@ -33,7 +33,7 @@ import { cashSessionStatus, STALE_SESSION_HOURS, type CashSessionStatus } from "
 import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
-import { buildQuoteText, buildReceiptText } from "../lib/receipt";
+import { buildQuoteText, buildReceiptText, cartQuoteLines } from "../lib/receipt";
 import { refreshSettings } from "../lib/settings";
 import { submitSale, usePendingSync } from "../lib/sync";
 import type {
@@ -61,6 +61,7 @@ import ProductDetail from "../components/sell/ProductDetail";
 import ScanBar from "../components/sell/ScanBar";
 import SellHeader from "../components/sell/SellHeader";
 import InnovaMark from "../components/InnovaMark";
+import { fmtWeekdayTime } from "../lib/dates";
 
 // The catalogue is cached so the till can sell through an outage. It is the one
 // piece of server state the shop genuinely cannot work without.
@@ -193,6 +194,9 @@ export default function POS() {
   const [stockPin, setStockPin] = useState<string | null>(null);
   const [askStockPin, setAskStockPin] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  // "Save as quote" with nobody picked asks who it is for first. Null when
+  // the question is not being asked; the text typed so far while it is.
+  const [quoteName, setQuoteName] = useState<string | null>(null);
   // The line a discount is being set on. The sale-level one has no product id.
   const [discountLine, setDiscountLine] = useState<string | null>(null);
   const [showFailed, setShowFailed] = useState(false);
@@ -488,17 +492,38 @@ export default function POS() {
    * Offline it still prints — a builder at the counter cannot wait for the
    * line — but without a number, and the slip says so.
    */
-  async function quoteThis() {
+  /**
+   * Save the basket as a quote, for somebody.
+   *
+   * An account customer's quote is theirs by the account. Anybody else is
+   * asked for a name first — a quote for "Walk-in" cannot be found on Thursday
+   * when the builder phones about "my quote", and the paper does not say whose
+   * it was. The name is optional, since a customer at the counter may decline
+   * to give one, but it is asked for every time.
+   */
+  function startQuote() {
     if (!user || lines.length === 0) return;
+    if (customer) {
+      void quoteThis(customer.name);
+      return;
+    }
+    setQuoteName("");
+  }
+
+  async function quoteThis(forName: string | null) {
+    if (!user || lines.length === 0) return;
+    const customerName = forName?.trim() || null;
+    setQuoteName(null);
     if (!online) {
       printReceipt(
-        buildQuoteText(lines, {
+        buildQuoteText(cartQuoteLines(lines, trade), {
           subtotal,
           // Everything off, not just the blanket discount — the same figure the
           // invoice prints, so subtotal less discount equals total on both.
           discount: allDiscount,
           total,
           trade,
+          customerName,
         }),
         "Quote"
       );
@@ -510,16 +535,20 @@ export default function POS() {
       const q = await saveQuote(
         user.id,
         lines.map((l) => ({ product_id: l.product.id, qty: l.qty })),
-        customer?.id ?? null
+        customer?.id ?? null,
+        14,
+        null,
+        customer ? null : customerName
       );
       printReceipt(
-        buildQuoteText(lines, {
+        buildQuoteText(cartQuoteLines(lines, trade), {
           subtotal,
           discount: allDiscount,
           total,
           trade,
           docNumber: q.doc_number,
           validUntil: q.valid_until,
+          customerName,
         }),
         "Quote"
       );
@@ -747,9 +776,7 @@ export default function POS() {
         <div className="sell-banner is-warning" role="alert">
           <span>
             The cash-up on this till has been open since{" "}
-            {new Date(staleSession.opened_at).toLocaleString("en-ZA", {
-              weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-            })}{" "}
+            {fmtWeekdayTime(staleSession.opened_at)}{" "}
             ({staleSession.opened_by_name}). Close it before today's sales pile onto yesterday's.
             {!can(user, "cash_management") && " Ask a manager to cash up."}
           </span>
@@ -802,7 +829,7 @@ export default function POS() {
             <button
               className="btn-line"
               disabled={lines.length === 0 || busy}
-              onClick={() => void quoteThis()}
+              onClick={startQuote}
             >
               Save as quote
             </button>
@@ -902,6 +929,11 @@ export default function POS() {
             });
           }}
           onClose={() => setShowCustomers(false)}
+          // The same popup a scanned slip opens: reprint, or a return.
+          onOpenSale={(d) => {
+            setShowCustomers(false);
+            void openDocument(d);
+          }}
         />
       )}
 
@@ -930,6 +962,47 @@ export default function POS() {
             scanRef.current?.focus();
           }}
         />
+      )}
+
+      {quoteName !== null && (
+        <div className="modal-backdrop" onClick={() => setQuoteName(null)}>
+          <form
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Who is this quote for?"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void quoteThis(quoteName);
+            }}
+          >
+            <h2 className="modal-title">Who is this quote for?</h2>
+            <p className="acc-note">
+              A name or a company, so the quote can be found again and says whose
+              it is. Pick a customer on the till instead to put it on an account.
+            </p>
+            <input
+              className="modal-input"
+              value={quoteName}
+              onChange={(e) => setQuoteName(e.target.value)}
+              placeholder="Name or company"
+              aria-label="Quote for"
+              autoFocus
+              maxLength={120}
+            />
+            <div className="modal-actions">
+              <button type="button" className="btn-line" onClick={() => setQuoteName(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-line" onClick={() => void quoteThis(null)}>
+                No name
+              </button>
+              <button type="submit" className="btn-fill" disabled={busy}>
+                Save quote
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showDiscount && (

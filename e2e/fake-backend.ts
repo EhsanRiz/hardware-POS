@@ -258,8 +258,12 @@ export class Backend {
     bank_account_name: "",
     bank_account_number: "",
     bank_branch_code: "",
+    // 0052: the small print, seeded as the migration seeds it.
+    receipt_terms: "Returns within 10 days with this invoice and the original packaging. No returns on special orders or tinted paint.",
+    quote_terms: "Prices are subject to stock availability.",
   };
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
+    customer_name: string | null;
             customer_id: string | null;
             items: { product_id: string; qty: number; unit_price: number }[] }[] = [];
   /** When set, every request fails as though the connection dropped. */
@@ -789,9 +793,26 @@ export async function installBackend(page: Page): Promise<Backend> {
         be.customers.push(made);
         return json([made]);
       }
-      case "rpc/pos_customer_history":
+      case "rpc/pos_customer_history": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        return json([]);
+        // Newest first, as 0023 lists them; the number is the one the Sales
+        // screen and pos_sale_by_number give the same sale.
+        const mine = be.sales
+          .map((x, i) => ({ x, i }))
+          .filter(({ x }) => x.customer_id === body.p_customer_id)
+          .reverse();
+        return json(mine.map(({ x, i }) => ({
+          sale_id: "s" + i,
+          doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+          created_at: x.created_at ?? new Date().toISOString(),
+          total: x.total,
+          payment_method: x.payment_method,
+          item_count: x.items.length,
+          summary: x.items
+            .map((it) => PRODUCTS.find((p) => p.id === it.product_id)?.name ?? "?")
+            .join(", "),
+        })));
+      }
       case "rpc/pos_save_quote": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const items = (body.p_items as { product_id: string; qty: number }[]) ?? [];
@@ -801,6 +822,11 @@ export async function installBackend(page: Page): Promise<Backend> {
           doc_number: "QUO-" + String(be.quotes.length + 1).padStart(6, "0"),
           status: "open", sale_id: null as string | null,
           customer_id: (body.p_customer_id as string) ?? null,
+          // 0052: the account's name when there is an account, otherwise
+          // whatever the counter was told.
+          customer_name: body.p_customer_id
+            ? be.customers.find((c) => c.id === body.p_customer_id)?.name ?? null
+            : (String(body.p_customer_name ?? "").trim() || null),
           items: items.map((it) => ({
             product_id: it.product_id, qty: it.qty,
             unit_price: PRODUCTS.find((x) => x.id === it.product_id)?.price_retail ?? 0,
@@ -844,7 +870,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!q) return json([]);
         return json([{
           id: q.id, doc_number: q.doc_number, created_at: "2026-01-01T08:00:00Z",
-          cashier_name: "Sam", customer_id: q.customer_id, customer_name: null,
+          cashier_name: "Sam", customer_id: q.customer_id, customer_name: q.customer_name,
           total: q.items.reduce((t, i) => t + i.unit_price * i.qty, 0),
           valid_until: "2099-01-01", expired: false,
           item_count: q.items.length, note: null, status: q.status,
@@ -854,7 +880,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(be.quotes.filter((q) => q.status === "open").map((q) => ({
           id: q.id, doc_number: q.doc_number, created_at: "2026-01-01T08:00:00Z",
-          cashier_name: "Sam", customer_id: q.customer_id, customer_name: null,
+          cashier_name: "Sam", customer_id: q.customer_id, customer_name: q.customer_name,
           total: q.items.reduce((t, i) => t + i.unit_price * i.qty, 0),
           valid_until: "2099-01-01", expired: false,
           item_count: q.items.length, note: null,

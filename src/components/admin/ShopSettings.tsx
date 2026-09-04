@@ -214,6 +214,46 @@ export default function ShopSettings({ pin }: { pin: string }) {
         </label>
       </div>
 
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
+          <h2 className="font-medium">Small print</h2>
+          {/* The customer who wants to return a special-order basin on day
+              twelve reads the slip in their kitchen drawer, not the sign
+              behind the counter. The policy goes on the slip, in the shop's
+              own words, and can be changed the day the shop changes it. */}
+          <p className="text-sm text-stone-500">
+            Printed at the foot of every till slip and every quote. Leave a box
+            empty to print nothing there.
+          </p>
+        </div>
+
+        <label className="block">
+          <span className="text-sm text-stone-600">On a till slip</span>
+          <textarea
+            className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 min-h-[7rem]"
+            value={f.receipt_terms}
+            onChange={(e) => set("receipt_terms", e.target.value)}
+            aria-label="Terms on a till slip"
+          />
+          <span className="text-xs text-stone-500">
+            Returns, special orders, warranty, deliveries — the conditions of the sale.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm text-stone-600">On a quote</span>
+          <textarea
+            className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 min-h-[5rem]"
+            value={f.quote_terms}
+            onChange={(e) => set("quote_terms", e.target.value)}
+            aria-label="Terms on a quote"
+          />
+          <span className="text-xs text-stone-500">
+            Nothing has been sold yet, so this is about validity and stock, not returns.
+          </span>
+        </label>
+      </div>
+
       {/* One Save for the page, not one per card. Every card edits the same
           record and a single save writes all of it, so repeated buttons would
           only raise the question of which one this field belongs to. */}
@@ -252,6 +292,8 @@ function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
     bank_account_name: s.bank_account_name ?? "",
     bank_account_number: s.bank_account_number ?? "",
     bank_branch_code: s.bank_branch_code ?? "",
+    receipt_terms: s.receipt_terms ?? "",
+    quote_terms: s.quote_terms ?? "",
     quote_show_line_prices: s.quote_show_line_prices !== false,
   };
 }

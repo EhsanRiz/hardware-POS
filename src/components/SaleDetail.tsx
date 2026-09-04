@@ -8,6 +8,7 @@ import type { SaleRow } from "../lib/sales";
 import type { Payment, Sale, SaleItem } from "../lib/types";
 import ManagerPinModal from "./ManagerPinModal";
 import ReturnSheet from "./admin/ReturnSheet";
+import { fmtDateTime } from "../lib/dates";
 
 /**
  * One sale, opened. The same window whether the counter scanned the slip a
@@ -82,9 +83,7 @@ export default function SaleDetail({
     );
   }
 
-  const when = new Date(sale.created_at).toLocaleString("en-ZA", {
-    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
-  });
+  const when = fmtDateTime(sale.created_at);
   const returnable = sale.status === "completed";
 
   return (

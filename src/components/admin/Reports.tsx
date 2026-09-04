@@ -19,6 +19,7 @@ import { rangeBounds, type RangeKey } from "../../lib/sales";
 import { buildCashUpText } from "../../lib/receipt";
 import { Figures } from "./CashUp";
 import type { DayCloseSession } from "../../lib/reports";
+import { fmtDayMonth, fmtDayMonthTime, fmtTime } from "../../lib/dates";
 
 /**
  * Reports: the numbers, out of the till.
@@ -265,7 +266,7 @@ function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }
                 <td className="p-2">
                   <span className="block">{s.register_name ?? "Till"}</span>
                   <span className="block text-xs text-stone-500">
-                    {new Date(s.opened_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short" })}
+                    {fmtDayMonth(s.opened_at)}
                     <span className="md:hidden"> · {s.opened_by_name}</span>
                   </span>
                   {!s.closed_at && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">still open</span>}
@@ -306,9 +307,9 @@ function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }
               <div className="flex-1">
                 <h2 className="text-lg font-semibold">{open.register_name ?? "Till"}</h2>
                 <p className="text-sm text-stone-500">
-                  Opened {new Date(open.opened_at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} by {open.opened_by_name}
+                  Opened {fmtDayMonthTime(open.opened_at)} by {open.opened_by_name}
                   {open.closed_at
-                    ? ` · closed ${new Date(open.closed_at).toLocaleString("en-ZA", { hour: "2-digit", minute: "2-digit" })} by ${open.closed_by_name ?? ""}`
+                    ? ` · closed ${fmtTime(open.closed_at)} by ${open.closed_by_name ?? ""}`
                     : " · still open"}
                 </p>
               </div>

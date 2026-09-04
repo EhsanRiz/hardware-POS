@@ -7,6 +7,7 @@ import { fmtQty } from "../lib/receipt";
 import BarcodeScanner from "./BarcodeScanner";
 import ProductPhotos from "./ProductPhotos";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "../lib/types";
+import { fmtDate } from "../lib/dates";
 
 /**
  * Add or edit a line in the catalogue.
@@ -422,7 +423,7 @@ export default function ProductEditor({
                   {history.map((m, i) => (
                     <li key={i} className="py-1 flex gap-2">
                       <span className="w-28 shrink-0 text-stone-400">
-                        {new Date(m.at).toLocaleDateString()}
+                        {fmtDate(new Date(m.at))}
                       </span>
                       <span
                         className={`w-16 shrink-0 tabular-nums ${

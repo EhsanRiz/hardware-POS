@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { Backend, installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
@@ -1599,6 +1599,16 @@ test("a phone scans the barcode into a new product", async ({ page }) => {
 });
 
 /** Open Manage and get past the PIN, which every back-office test needs first. */
+/**
+ * "Save as quote" with nobody picked asks who it is for (0052). These tests
+ * are about something else, so they decline to say.
+ */
+async function saveAsQuote(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+}
+
 async function openManage(
   page: import("@playwright/test").Page,
   pin: string = USERS.manager.pin
@@ -2079,7 +2089,7 @@ test("a scanned quote comes back onto the till", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(banner(page)).toContainText(/QUO-000001 saved/);
   await page.getByLabel("Close").click();
   await expect(page.locator(".line-desc")).toHaveCount(0);
@@ -2096,7 +2106,7 @@ test("a quote row opens a popup with its lines, and the cross closes it", async 
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(banner(page)).toContainText(/QUO-000001 saved/);
   await page.getByLabel("Close").click();
 
@@ -3125,7 +3135,7 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
 
   // A receipt is a fixed-width document: each line is padded so the amount sits
@@ -3180,7 +3190,7 @@ test("a quote adds up: the line shows what came off it, and so does the total", 
   await page.getByLabel("Discount amount").fill("15");
   await page.getByRole("button", { name: /^Apply$/ }).click();
 
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
 
   // A quote used to print the line at full price, no discount row at all, and
@@ -3208,6 +3218,7 @@ test("a trade customer's quote is priced at trade, line by line", async ({ page 
   await page.getByRole("button", { name: /Walk-in customer/i }).click();
   await page.locator(".modal-row", { hasText: "Mokoena" }).click();
 
+  // An account customer's quote is theirs already: nobody is asked.
   await page.getByRole("button", { name: /Save as quote/ }).click();
   await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
 
@@ -3239,7 +3250,7 @@ test("a shop can quote the job without pricing the shopping list", async ({ page
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
 
   const slip = page.locator("#print-area");
@@ -3286,7 +3297,7 @@ test("a saved quote is recalled by number and closes against its sale", async ({
   // Build a cart and save it as a quote instead of ringing it.
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await saveAsQuote(page);
   await expect(page.locator(".sell-banner").first()).toContainText(/QUO-\d+ saved/);
   await page.getByLabel("Close").click();
   expect(be.quotes).toHaveLength(1);
@@ -3566,4 +3577,172 @@ test("Manage and the pop-ups wear the shop's colours, not a stranger's", async (
   await expect(dlg).toBeVisible();
   expect(await bg(dlg.getByRole("button", { name: "Apply" }))).toBe(AMBER);
   expect(await bg(dlg.getByRole("button", { name: /^Amount/ }))).toBe(GREEN);
+});
+
+/*
+ * 0052: the small print, whose quote it is, and a tab that is not for you.
+ */
+test("the till slip ends with the shop's terms and prints the invoice number once", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const slip = page.locator("#print-area");
+  // Dated the one way a date is written here — "4 Sep 2026 14:05", never
+  // 9/4/2026, which is April to half the people who read it.
+  await expect(slip).toContainText(
+    /\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}\b/
+  );
+  await expect(slip).not.toContainText(/\d+\/\d+\/\d{4}/);
+  // The returns policy is on the paper the customer brings back with.
+  await expect(slip).toContainText("Returns within 10 days with this invoice");
+  await expect(slip).toContainText("Thank you");
+
+  // "Invoice No: INV-000001" on its line, the bars beneath — and the number
+  // under the bars gone, so it is no longer on the slip twice.
+  const text = (await slip.evaluate((el) => el.textContent)) ?? "";
+  expect(text.match(/INV-000001/g)?.length).toBe(1);
+  await expect(slip.locator("[data-barcode='INV-000001']")).toHaveCount(1);
+});
+
+test("a manager writes the small print, and the next slip carries it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await page.getByLabel("Terms on a till slip").fill("No returns on cut lengths of rope, chain or cable.");
+  await page.getByLabel("Terms on a quote").fill("Valid for 7 days from the date shown.");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  expect(be.orgSettings.receipt_terms).toBe("No returns on cut lengths of rope, chain or cable.");
+  expect(be.orgSettings.quote_terms).toBe("Valid for 7 days from the date shown.");
+
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("No returns on cut lengths of rope, chain or cable.");
+  await expect(slip).not.toContainText("Returns within 10 days");
+  await page.getByLabel("Close").click();
+
+  // And a quote gets the quote's wording, not the invoice's.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  await expect(slip).toContainText("Valid for 7 days from the date shown.");
+  await expect(slip).not.toContainText("No returns on cut lengths");
+});
+
+test("a quote is saved for somebody by name, printed and emailed", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+
+  // Nobody picked, so the till asks. The name goes on the record and the paper.
+  const ask = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await ask.getByLabel("Quote for").fill("Mokoena Builders");
+  await ask.getByRole("button", { name: "Save quote" }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  expect(be.quotes[0].customer_name).toBe("Mokoena Builders");
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("For: Mokoena Builders");
+  await expect(slip).toContainText("Prices are subject to stock availability");
+  await page.getByLabel("Close").click();
+
+  // Listed under the name, so Thursday's phone call can find it.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  const row = page.locator("tr.acc-row", { hasText: "QUO-000001" });
+  await expect(row).toContainText("Mokoena Builders");
+  await row.click();
+  const dialog = page.getByRole("dialog", { name: "Quote QUO-000001" });
+
+  // Print again from the record, as it was: number, name, lines, small print.
+  await dialog.getByRole("button", { name: "Print" }).click();
+  await expect(slip).toContainText("QUO-000001");
+  await expect(slip).toContainText("For: Mokoena Builders");
+  await expect(slip).toContainText("Cement 42.5N 50kg");
+  await expect(slip).toContainText("115.00");
+  await expect(slip).toContainText("Prices are subject to stock availability");
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // One tap to email: the device's mail app opens with the quote in the body.
+  const href = await dialog.getByRole("link", { name: "Email" }).getAttribute("href");
+  expect(href).toMatch(/^mailto:\?subject=Quote%20QUO-000001%20from%20Ladybrand%20Hardware/);
+  const body = decodeURIComponent(href!.split("&body=")[1]);
+  expect(body).toContain("For: Mokoena Builders");
+  expect(body).toContain("Cement 42.5N 50kg");
+  expect(body).not.toMatch(/[\x01-\x06]/);
+});
+
+test("an account customer's quote is theirs without being asked", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(page.getByRole("dialog", { name: "Who is this quote for?" })).toHaveCount(0);
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  expect(be.quotes[0].customer_id).toBe("k1");
+  expect(be.quotes[0].customer_name).toBe("Mokoena Building Contractors");
+  await expect(page.locator("#print-area")).toContainText("For: Mokoena Building Contractors");
+});
+
+test("the Stock tab is not on the till for somebody who cannot open it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  const nav = page.getByRole("navigation", { name: "Sections" });
+  await expect(nav.getByRole("button", { name: "Sell" })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Stock" })).toHaveCount(0);
+});
+
+test("and is there for somebody who can", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await expect(page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" })).toBeVisible();
+});
+
+test("an invoice in a buyer's purchase history opens, ready to reprint or return", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001/);
+  await page.getByLabel("Close").click();
+
+  // "I bought it here last week" — found under the name, then opened from
+  // the list rather than read off it and typed back in. The sale cleared the
+  // buyer, so the picker is reached through "Walk-in customer" again.
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("button", { name: "Purchases by Mokoena Building Contractors" }).click();
+  const history = page.getByRole("dialog", { name: /Purchases by Mokoena/ });
+  await expect(history).toContainText("Cement 42.5N 50kg");
+  await history.getByRole("button", { name: /INV-000001/ }).click();
+
+  const sale = page.getByRole("dialog", { name: "Sale INV-000001" });
+  await expect(sale).toBeVisible();
+  await expect(sale).toContainText("Cement 42.5N 50kg");
+  await expect(sale.getByRole("button", { name: /^Reprint$/ })).toBeVisible();
+  await expect(sale.getByRole("button", { name: /^Return$/ })).toBeVisible();
+  await expect(history).toHaveCount(0);
 });

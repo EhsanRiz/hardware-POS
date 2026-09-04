@@ -169,6 +169,8 @@ export async function fetchSettings(): Promise<ShopSettings> {
     bank_account_name: row?.bank_account_name ?? "",
     bank_account_number: row?.bank_account_number ?? "",
     bank_branch_code: row?.bank_branch_code ?? "",
+    receipt_terms: row?.receipt_terms ?? "",
+    quote_terms: row?.quote_terms ?? "",
     // Null rather than a stand-in: settings.vatRate() falls back to the
     // build's constant only when the server has never been reached, and a
     // zero here would print "VAT at 0%" on a brand-new till.
@@ -525,7 +527,9 @@ export async function saveQuote(
   items: { product_id: string; qty: number }[],
   customerId: string | null,
   validDays = 14,
-  note?: string | null
+  note?: string | null,
+  /** Who it is for when there is no account: the name the counter was told. */
+  customerName?: string | null
 ): Promise<{ quote_id: string; doc_number: string; valid_until: string; total: number }> {
   const { data, error } = await supabase.rpc("pos_save_quote", {
     p_register_token: requireToken(),
@@ -534,6 +538,7 @@ export async function saveQuote(
     p_customer_id: customerId,
     p_valid_days: validDays,
     p_note: note ?? null,
+    p_customer_name: customerName ?? null,
   });
   if (error) throw error;
   return (data as { quote_id: string; doc_number: string; valid_until: string; total: number }[])[0];
