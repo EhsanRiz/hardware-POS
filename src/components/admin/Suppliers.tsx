@@ -647,8 +647,8 @@ function NewDocument({
         style={{ maxWidth: 560, maxHeight: "92vh", overflowY: "auto" }}
       >
         <h2 className="modal-title">File a document</h2>
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <label className="block col-span-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+          <label className="block sm:col-span-2">
             <span className="text-sm text-stone-600">Supplier</span>
             <select
               className="modal-input"
@@ -686,7 +686,7 @@ function NewDocument({
             <span className="text-sm text-stone-600">Total (incl VAT)</span>
             <input className="modal-input" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} aria-label="Document total" placeholder="0.00" />
           </label>
-          <label className="block col-span-2">
+          <label className="block sm:col-span-2">
             <span className="text-sm text-stone-600">Note</span>
             <input className="modal-input" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Document note" placeholder="Plumbing order for the Sithole job" />
           </label>

@@ -4266,3 +4266,29 @@ test("a supplier's documents open from its popup, without going through Manage",
   await expect(view).toContainText("COMP ELBOW 15MM");
   await expect(view).toContainText("16.85");
 });
+
+test("on a phone the scan dialog keeps all its buttons on the screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: /^Suppliers/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+
+  // Three buttons at 390px. The row ran off the LEFT edge, so the one that
+  // vanished was Cancel — the button somebody presses when they are stuck.
+  for (const name of ["Cancel", "Type it in instead", "Read 1 page"]) {
+    await expect(scan.getByRole("button", { name })).toBeInViewport({ ratio: 1 });
+  }
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  // And the same on the checking screen, where File it is the whole point.
+  for (const name of ["Cancel", "Back to pages", "File it"]) {
+    await expect(scan.getByRole("button", { name })).toBeInViewport({ ratio: 1 });
+  }
+  await expect(scan.getByLabel("Document number")).toBeInViewport({ ratio: 1 });
+});

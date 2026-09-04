@@ -317,7 +317,7 @@ export default function ScanDocument({
               </span>
             </label>
 
-            <div className="grid grid-cols-2 gap-3 mt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
               <label className="block">
                 <span className="text-sm text-stone-600">Kind</span>
                 <select
@@ -364,7 +364,7 @@ export default function ScanDocument({
                   onChange={(e) => setHeader((h) => ({ ...h, tax_total: e.target.value }))}
                 />
               </label>
-              <label className="block col-span-2">
+              <label className="block sm:col-span-2">
                 <span className="text-sm text-stone-600">Note</span>
                 <input
                   className="modal-input" value={header.note} aria-label="Document note"
