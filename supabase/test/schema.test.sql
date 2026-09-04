@@ -2338,4 +2338,108 @@ begin
     'the supplier-documents bucket is not public');
 end $$;
 
+-- 0056: a document read off the page, filed in one step ------------------------
+
+do $$
+declare v_tok text; v_r record; v_sup public.suppliers; v_n int; v_row record;
+        v_doc uuid; v_lines jsonb; v_moves_before int;
+begin
+  select token into v_tok from till;
+  select count(*) into v_moves_before from public.stock_movements;
+
+  v_lines := jsonb_build_array(
+    jsonb_build_object('supplier_code', ' PL 0065 ', 'description', 'COMP ELBOW 15MM',
+                       'qty', 20, 'unit_price', 16.85, 'line_total', 337.00),
+    jsonb_build_object('supplier_code', 'PL 0107', 'description', 'COMP SPARE RING 15MM',
+                       'qty', 100, 'unit_price', 1.1050, 'line_total', 110.50),
+    -- A rule the reader mistook for a row. Dropped rather than filed as a puzzle.
+    jsonb_build_object('description', '   ', 'qty', 1));
+
+  -- Nobody buys from this letterhead yet: the supplier comes off the page.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Jasbro Plumbing', '4370229645', '010 442 0625',
+    'info@jasbro.co.za', 'quote', '27181', date '2026-08-13',
+    4609.00, 691.35, 5300.35, null, v_lines);
+  perform assert(v_r.supplier_created, 'an unknown letterhead becomes a supplier');
+  perform assert_eq(v_r.supplier_name, 'Jasbro Plumbing', 'named as the page names it');
+  select * into v_sup from public.suppliers where id = v_r.supplier_id;
+  perform assert_eq(v_sup.vat_number, '4370229645', 'with its registration');
+  perform assert_eq(v_sup.phone, '010 442 0625', 'and its phone off the letterhead');
+  v_doc := v_r.document_id;
+
+  select count(*) into v_n from public.pos_purchasing_document_lines(v_tok, '1234', v_doc);
+  perform assert_eq(v_n, 2, 'the blank row is not a line');
+  select * into v_row from public.pos_purchasing_document_lines(v_tok, '1234', v_doc)
+   where line_no = 1;
+  perform assert_eq(v_row.supplier_code, 'PL 0065', 'the supplier''s own code, trimmed');
+  perform assert_eq(v_row.unit_price, 16.85::numeric, 'and the price it was quoted at');
+  select * into v_row from public.pos_purchasing_document_lines(v_tok, '1234', v_doc)
+   where line_no = 2;
+  perform assert_eq(v_row.unit_price, 1.1050::numeric,
+    'a fraction of a cent survives: a thousand washers are priced at four decimals');
+
+  select * into v_row from public.pos_purchasing_documents(v_tok, '1234') where id = v_doc;
+  perform assert_eq(v_row.status, 'read', 'a read document says so');
+  perform assert_eq(v_row.lines, 2, 'and the list counts its lines');
+  perform assert_eq(v_row.total, 5300.35::numeric, 'with the total off the page');
+
+  -- The second document from the same shop, whoever typed the name.
+  select * into v_row from public.pos_purchasing_match_supplier(
+    v_tok, '1234', '4370 229 645', 'JASBRO PLUMBING (PTY) LTD');
+  perform assert_eq(v_row.id, v_sup.id, 'a registration matches through its spacing');
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'JASBRO PLUMBING (PTY) LTD', '4370 229 645', null, null,
+    'invoice', '8812', current_date, null, null, 1420.50, null, '[]'::jsonb);
+  perform assert(not v_r.supplier_created, 'and does not make a second Jasbro');
+  perform assert_eq(v_r.supplier_id, v_sup.id, 'the invoice lands under the same supplier');
+  select count(*) into v_n from public.suppliers
+   where org_id = v_sup.org_id and active
+     and regexp_replace(coalesce(vat_number, ''), '\D', '', 'g') = '4370229645';
+  perform assert_eq(v_n, 1, 'one Jasbro, two documents');
+
+  -- The name alone, when there is no registration on the page.
+  select * into v_row from public.pos_purchasing_match_supplier(v_tok, '1234', null, '  jasbro plumbing ');
+  perform assert_eq(v_row.id, v_sup.id, 'the name matches, case and spacing aside');
+  perform assert(not exists (
+    select 1 from public.pos_purchasing_match_supplier(v_tok, '1234', null, 'Nobody Ltd')),
+    'and a stranger matches nothing');
+
+  -- A document filed against a supplier the manager chose, not the letterhead.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup.id, 'Somebody Else', '9999999999', null, null,
+    'delivery_note', 'DN-1', current_date, null, null, null, 'off the truck', '[]'::jsonb);
+  perform assert_eq(v_r.supplier_id, v_sup.id, 'a chosen supplier wins over the letterhead');
+  select count(*) into v_n from public.suppliers
+   where org_id = v_sup.org_id and active and name = 'Somebody Else';
+  perform assert_eq(v_n, 0, 'and no supplier is invented behind it');
+
+  -- Nothing here touches the shelves or the cost base. That is the receive
+  -- step, and it is the manager's decision, not a consequence of filing.
+  perform assert_eq(
+    (select count(*)::int from public.stock_movements) - v_moves_before, 0,
+    'filing a document moves no stock');
+
+  -- Guards.
+  perform assert_refuses(
+    format($f$select * from public.pos_purchasing_file_document(
+      %L, %L, null, 'X', null, null, null, 'receipt', null, null, null, null, null, null, '[]'::jsonb)$f$,
+      v_tok, '1234'),
+    'a document has to be a known kind');
+  perform assert_refuses(
+    format($f$select * from public.pos_purchasing_file_document(
+      %L, %L, null, '  ', null, null, null, 'quote', null, null, null, null, null, null, '[]'::jsonb)$f$,
+      v_tok, '1234'),
+    'a nameless letterhead cannot become a supplier');
+  perform assert_refuses(
+    format($f$select * from public.pos_purchasing_file_document(
+      %L, %L, null, 'X', null, null, null, 'quote', null, null, null, null, null, null, '[]'::jsonb)$f$,
+      v_tok, '2222'),
+    'filing needs the purchasing right');
+
+  -- A wrong reading is removed with its lines.
+  perform public.pos_purchasing_delete_document(v_tok, '1234', v_doc);
+  select count(*) into v_n from public.supplier_document_lines where document_id = v_doc;
+  perform assert_eq(v_n, 0, 'the lines go with the document');
+end $$;
+
 select 'all database tests passed' as result;

@@ -254,6 +254,33 @@ export class Backend {
     doc_date: string | null; total: number | null; note: string | null; status: string;
     created_at: string }[] = [];
   supplierPages: { document_id: string; page_no: number; mime: string; data: string; by_pin: string }[] = [];
+  supplierLines: { document_id: string; line_no: number; supplier_code: string | null;
+    description: string; qty: number | null; unit_price: number | null; line_total: number | null }[] = [];
+  /**
+   * 0056: what the reader says the pages contain. A browser test cannot run a
+   * vision model, and should not: what it must pin is what the till DOES with
+   * a reading — matches the supplier, shows it for checking, files it whole.
+   * Set `readFails` to see the path where the reading does not come back.
+   */
+  documentReading: Record<string, unknown> = {
+    supplier_name: "Jasbro Plumbing",
+    supplier_vat: "4370229645",
+    supplier_phone: "010 442 0625",
+    supplier_email: "info@jasbro.co.za",
+    kind: "quote",
+    doc_number: "27181",
+    doc_date: "2026-08-13",
+    subtotal: 4609.0,
+    tax_total: 691.35,
+    total: 5300.35,
+    lines: [
+      { supplier_code: "PL 0065", description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337.0 },
+      { supplier_code: "PL 0107", description: "COMP SPARE RING 15MM", qty: 100, unit_price: 1.1, line_total: 110.0 },
+    ],
+  };
+  readFails = false;
+  /** How many pages the last reading was given. */
+  readPages = 0;
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string | boolean> = {
     // A shop that has never been asked prices every line, as 0042 defaults it.
@@ -752,6 +779,33 @@ export async function installBackend(page: Page): Promise<Backend> {
     const page_no = be.supplierPages.filter((pg) => pg.document_id === doc.id).length + 1;
     be.supplierPages.push({ document_id: doc.id, page_no, mime: m[1], data: String(b.file), by_pin: String(b.pin) });
     return respond(200, { ok: true, page_no, path: `org1/${doc.id}/${page_no}` });
+  });
+
+  // 0056: the reader. The model itself is not here — what a test can pin is
+  // that the till sends the pages, shows the answer for checking, and files
+  // exactly what was on that screen.
+  await page.route("**/functions/v1/read-document", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, unknown> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    const u = Object.values(USERS).find((x) => x.pin === b.pin);
+    if (!u || !u.row.permissions.includes("manage_purchasing")) {
+      return respond(403, { ok: false, message: "Not permitted" });
+    }
+    const pages = (b.pages as { mime: string; data: string }[]) ?? [];
+    if (pages.length === 0) return respond(400, { ok: false, message: "No pages to read" });
+    be.readPages = pages.length;
+    if (be.readFails) {
+      return respond(502, { ok: false, message: "The pages could not be read. File them and type the details in." });
+    }
+    return respond(200, { ok: true, read: be.documentReading, model: "fake" });
   });
 
   await page.route("**/rest/v1/**", async (route: Route) => {
@@ -1279,6 +1333,73 @@ export async function installBackend(page: Page): Promise<Backend> {
         be.suppliers.push(made);
         return json({ ...made });
       }
+      case "rpc/pos_purchasing_match_supplier": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const hit = matchSupplier(be, body.p_vat_number, body.p_name);
+        return json(hit ? [{ id: hit.id, name: hit.name, vat_number: hit.vat_number }] : []);
+      }
+      case "rpc/pos_purchasing_file_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const kind = String(body.p_kind ?? "");
+        if (!["quote", "invoice", "delivery_note", "statement", "other"].includes(kind)) {
+          return fail("Say what kind of document it is");
+        }
+        let sup = body.p_supplier_id
+          ? be.suppliers.find((x) => x.id === body.p_supplier_id)
+          : matchSupplier(be, body.p_supplier_vat, body.p_supplier_name);
+        if (body.p_supplier_id && !sup) return fail("Supplier not found");
+        let created = false;
+        if (!sup) {
+          const name = String(body.p_supplier_name ?? "").trim();
+          if (!name) return fail("A supplier needs a name");
+          sup = {
+            id: "sup" + (be.suppliers.length + 1), name,
+            contact_name: null,
+            phone: (String(body.p_supplier_phone ?? "").trim() || null),
+            email: (String(body.p_supplier_email ?? "").trim() || null),
+            vat_number: (String(body.p_supplier_vat ?? "").trim() || null),
+            notes: null,
+          };
+          be.suppliers.push(sup);
+          created = true;
+        }
+        const lines = (body.p_lines as Record<string, unknown>[]) ?? [];
+        const doc = {
+          id: "doc" + (be.supplierDocs.length + 1), supplier_id: sup.id, kind,
+          doc_number: (String(body.p_doc_number ?? "").trim() || null),
+          doc_date: (body.p_doc_date as string) ?? null,
+          total: body.p_total == null ? null : Number(body.p_total),
+          note: (String(body.p_note ?? "").trim() || null),
+          status: body.p_read ? "read" : "stored",
+          created_at: new Date().toISOString(),
+        };
+        be.supplierDocs.push(doc);
+        let no = 0;
+        for (const l of lines) {
+          const description = String(l.description ?? "").trim();
+          if (!description) continue;
+          no += 1;
+          be.supplierLines.push({
+            document_id: doc.id, line_no: no,
+            supplier_code: (String(l.supplier_code ?? "").trim() || null),
+            description,
+            qty: l.qty == null ? null : Number(l.qty),
+            unit_price: l.unit_price == null ? null : Number(l.unit_price),
+            line_total: l.line_total == null ? null : Number(l.line_total),
+          });
+        }
+        return json([{ document_id: doc.id, supplier_id: sup.id, supplier_name: sup.name,
+          supplier_created: created }]);
+      }
+      case "rpc/pos_purchasing_document_lines": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        return json(be.supplierLines
+          .filter((l) => l.document_id === body.p_document_id)
+          .map((l) => ({ ...l, product_id: null, product_name: null })));
+      }
       case "rpc/pos_purchasing_add_document": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
@@ -1308,6 +1429,7 @@ export async function installBackend(page: Page): Promise<Backend> {
             ...d,
             supplier_name: be.suppliers.find((s) => s.id === d.supplier_id)?.name ?? "?",
             pages: be.supplierPages.filter((pg) => pg.document_id === d.id).length,
+            lines: be.supplierLines.filter((l) => l.document_id === d.id).length,
             created_by_name: "Manager",
           })));
       }
@@ -1318,6 +1440,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (i < 0) return fail("Document not found, or it has already been booked in");
         be.supplierDocs.splice(i, 1);
         be.supplierPages = be.supplierPages.filter((pg) => pg.document_id !== body.p_document_id);
+        be.supplierLines = be.supplierLines.filter((l) => l.document_id !== body.p_document_id);
         return json(null);
       }
 
@@ -1969,4 +2092,21 @@ export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}
+
+/**
+ * The supplier a letterhead belongs to, as 0056 matches it: VAT number first
+ * and digits only, then the name, case and spacing aside.
+ */
+function matchSupplier(be: Backend, vat: unknown, name: unknown) {
+  const digits = String(vat ?? "").replace(/\D/g, "");
+  if (digits) {
+    const byVat = be.suppliers.find(
+      (s) => (s.vat_number ?? "").replace(/\D/g, "") === digits
+    );
+    if (byVat) return byVat;
+  }
+  const n = String(name ?? "").trim().toLowerCase();
+  if (n) return be.suppliers.find((s) => s.name.trim().toLowerCase() === n);
+  return undefined;
 }

@@ -3991,7 +3991,7 @@ test("a supplier's quote is filed from its pages and opens again", async ({ page
   await expect(page.getByText(/Nothing filed for Jasbro Plumbing yet/)).toBeVisible();
 
   // Then the quote: two photographed pages, the number, date and total off it.
-  await page.getByRole("button", { name: "New document" }).click();
+  await page.getByRole("button", { name: "File by hand" }).click();
   const doc = page.getByRole("dialog", { name: "New supplier document" });
   await doc.getByLabel("Document kind").selectOption("quote");
   await doc.getByLabel("Document number").fill("27181");
@@ -4049,7 +4049,7 @@ test("a PDF the supplier emailed is filed whole, and a wrong filing can be remov
   await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
   await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
     .getByRole("button", { name: "Manage" }).click();
-  await page.getByRole("button", { name: "New document" }).click();
+  await page.getByRole("button", { name: "File by hand" }).click();
   const doc = page.getByRole("dialog", { name: "New supplier document" });
   await doc.getByLabel("Document kind").selectOption("invoice");
   await doc.getByLabel("Document number").fill("INV 8812");
@@ -4096,4 +4096,173 @@ test("on a phone the supplier form scrolls, so its buttons are never under the k
   await expect(form.getByRole("button", { name: "Save supplier" })).toBeInViewport();
   await form.getByRole("button", { name: "Save supplier" }).click();
   await expect(page.getByRole("heading", { name: "Focus Suppliers" })).toBeVisible();
+});
+
+/*
+ * 0056: the page says it, so nobody types it.
+ */
+test("a scanned quote reads itself, creates the supplier and files with its lines", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+
+  // One button. No supplier chosen first, because the letterhead says who.
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await expect(scan.getByRole("button", { name: /^Read/ })).toBeDisabled();
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+    { name: "p2.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 2 pages" }).click();
+
+  // Both pages went to the reader, and what came back is on screen to check.
+  await expect(page.getByRole("dialog", { name: "Scan a document" })).toContainText("Check what it says");
+  expect(be.readPages).toBe(2);
+  await expect(scan.getByLabel("Document number")).toHaveValue("27181");
+  await expect(scan.getByLabel("Document date")).toHaveValue("2026-08-13");
+  await expect(scan.getByLabel("Document total")).toHaveValue("5300.35");
+  await expect(scan.getByLabel("Document kind")).toHaveValue("quote");
+  await expect(scan).toContainText("COMP ELBOW 15MM");
+  await expect(scan).toContainText("PL 0107");
+  // Nobody buys from Jasbro yet, so the letterhead becomes the supplier.
+  await expect(scan).toContainText(/Not one of your suppliers yet/);
+  await expect(scan.getByLabel("Supplier on this document")).toHaveValue("");
+
+  // Nothing is a record until this tap.
+  expect(be.supplierDocs).toHaveLength(0);
+  await scan.getByRole("button", { name: "File it" }).click();
+
+  await expect(page.getByText(/Filed under Jasbro Plumbing \(added as a new supplier\) with 2 lines/)).toBeVisible();
+  expect(be.suppliers).toHaveLength(1);
+  expect(be.suppliers[0]).toMatchObject({
+    name: "Jasbro Plumbing", vat_number: "4370229645",
+    phone: "010 442 0625", email: "info@jasbro.co.za",
+  });
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "quote", doc_number: "27181", total: 5300.35, status: "read" });
+  expect(be.supplierLines.map((l) => [l.line_no, l.supplier_code, l.qty, l.unit_price])).toEqual([
+    [1, "PL 0065", 20, 16.85],
+    [2, "PL 0107", 100, 1.1],
+  ]);
+  // The pages went up too, against the document that was just made.
+  expect(be.supplierPages.filter((p) => p.document_id === be.supplierDocs[0].id)).toHaveLength(2);
+
+  // And it lands open, showing what it says.
+  const view = page.getByRole("dialog", { name: "Quote 27181" });
+  await expect(view).toContainText("COMP ELBOW 15MM");
+  await expect(view).toContainText("337.00");
+});
+
+test("a second document from the same supplier is matched by its VAT number, however the name is written", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "JASBRO PLUMBING (PTY) LTD", contact_name: null,
+    phone: null, email: null, vat_number: "4370 229 645", notes: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 fake") },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  // The name on the page is spelt differently; the registration is the same.
+  await expect(scan).toContainText("Matched JASBRO PLUMBING (PTY) LTD by its VAT number");
+  await scan.getByRole("button", { name: "File it" }).click();
+  await expect(page.getByText(/Filed under JASBRO PLUMBING \(PTY\) LTD with 2 lines/)).toBeVisible();
+  // Matched, not duplicated.
+  expect(be.suppliers).toHaveLength(1);
+  expect(be.supplierDocs[0].supplier_id).toBe("sup1");
+});
+
+test("a reading that fails still leaves the pages filed, typed in by hand", async ({ page }) => {
+  be.readFails = true;
+  be.suppliers.push({
+    id: "sup1", name: "PPC Cement", contact_name: null, phone: null,
+    email: null, vat_number: null, notes: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  // The reader is down; the paper is still in the manager's hand and the same
+  // screen takes it typed.
+  await expect(scan.getByRole("alert")).toContainText(/could not be read/);
+  await expect(scan).toContainText("Check what it says");
+  await scan.getByLabel("Supplier on this document").selectOption("sup1");
+  await scan.getByLabel("Document kind").selectOption("invoice");
+  await scan.getByLabel("Document number").fill("8812");
+  await scan.getByLabel("Document total").fill("1420.50");
+  await scan.getByRole("button", { name: "File it" }).click();
+
+  await expect(page.getByText(/Filed under PPC Cement\./)).toBeVisible();
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "invoice", doc_number: "8812", total: 1420.5, status: "stored" });
+  expect(be.supplierLines).toHaveLength(0);
+  expect(be.supplierPages).toHaveLength(1);
+});
+
+test("a misread line is dropped before filing, and the sum that disagrees is said out loud", async ({ page }) => {
+  // A row the reader saw twice: the lines now add to more than the page's own
+  // subtotal, which is exactly the case a person must be shown.
+  be.documentReading = {
+    ...be.documentReading,
+    lines: [
+      { supplier_code: "PL 0065", description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337.0 },
+      { supplier_code: "PL 0065", description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337.0 },
+    ],
+    subtotal: 337.0,
+  };
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  await expect(scan).toContainText("The lines add to R 674.00 but the page says R 337.00");
+  await scan.getByRole("button", { name: "Drop COMP ELBOW 15MM" }).first().click();
+  await expect(scan).not.toContainText("but the page says");
+  await scan.getByRole("button", { name: "File it" }).click();
+  await expect(page.getByText(/with 1 line\./)).toBeVisible();
+  expect(be.supplierLines).toHaveLength(1);
+});
+
+test("a supplier's documents open from its popup, without going through Manage", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: "010 442 0625",
+    email: null, vat_number: "4370229645", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "quote", doc_number: "27181",
+    doc_date: "2026-08-13", total: 5300.35, note: null, status: "read",
+    created_at: "2026-08-13T08:00:00Z",
+  });
+  be.supplierLines.push({
+    document_id: "doc1", line_no: 1, supplier_code: "PL 0065",
+    description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+
+  // The popup carries the paperwork, and a tap opens the document itself.
+  const peek = page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" });
+  await expect(peek).toContainText("Quote 27181");
+  await expect(peek).toContainText("1 lines");
+  await peek.getByRole("button", { name: /Quote 27181/ }).click();
+  const view = page.getByRole("dialog", { name: "Quote 27181" });
+  await expect(view).toContainText("COMP ELBOW 15MM");
+  await expect(view).toContainText("16.85");
 });
