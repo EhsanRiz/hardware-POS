@@ -3672,7 +3672,7 @@ test("a quote is saved for somebody by name, printed and emailed", async ({ page
   const dialog = page.getByRole("dialog", { name: "Quote QUO-000001" });
 
   // Print again from the record, as it was: number, name, lines, small print.
-  await dialog.getByRole("button", { name: "Print" }).click();
+  await dialog.getByRole("button", { name: "Till slip" }).click();
   await expect(slip).toContainText("QUO-000001");
   await expect(slip).toContainText("For: Mokoena Builders");
   await expect(slip).toContainText("Cement 42.5N 50kg");
@@ -4506,4 +4506,142 @@ test("a quote is not offered for receiving, because nothing has been bought", as
   const view = page.getByRole("dialog", { name: "Quote 27181" });
   await expect(view).toContainText("COMP ELBOW 15MM");
   await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+});
+
+/*
+ * 0059: the A4 documents that leave the building, and the shop's mark on them.
+ */
+test("a quote prints as an A4 quotation with a line for the builder to sign", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  const ask = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await ask.getByLabel("Quote for").fill("Mokoena Builders");
+  await ask.getByRole("button", { name: "Save quote" }).click();
+  await page.getByLabel("Close").click();
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "A4 quote" }).click();
+
+  const doc = page.getByRole("dialog", { name: "Quotation QUO-000001" });
+  // The shop's own letterhead, from settings — no logo yet, so the name.
+  await expect(doc).toContainText("Ladybrand Hardware");
+  await expect(doc).toContainText("VAT No 4001234567");
+  await expect(doc.locator("img")).toHaveCount(0);
+  // Whose it is, what is on it, and what it comes to.
+  await expect(doc).toContainText("Mokoena Builders");
+  await expect(doc).toContainText("Cement 42.5N 50kg");
+  await expect(doc).toContainText("CEM-425-50");
+  await expect(doc).toContainText("115.00");
+  // VAT is worked back out of the till's prices, which include it.
+  await expect(doc.locator(".doc-totals")).toContainText("15.00");
+  // The reason it is A4 at all: a builder signs it and sends it back.
+  await expect(doc).toContainText("Accepted by");
+  await expect(doc).toContainText("Signature");
+  // The quote's own small print, not the invoice's.
+  await expect(doc).toContainText("Prices are subject to stock availability");
+  await expect(doc).not.toContainText("Returns within 10 days");
+  // Email opens the device's own mail app with the document in the body.
+  const href = await doc.getByRole("link", { name: "Email" }).getAttribute("href");
+  expect(href).toMatch(/^mailto:\?subject=Quotation%20QUO-000001%20from%20Ladybrand%20Hardware/);
+  expect(decodeURIComponent(href!.split("&body=")[1])).toContain("Cement 42.5N 50kg");
+});
+
+test("an account sale prints as a full A4 tax invoice, with where to pay on it", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  Object.assign(be.orgSettings, {
+    bank_name: "FNB", bank_account_name: "5 Star Hardware",
+    bank_account_number: "62012345678", bank_branch_code: "250655",
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001/);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000001");
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog", { name: "Sale INV-000001" })
+    .getByRole("button", { name: "A4 invoice" }).click();
+
+  const doc = page.getByRole("dialog", { name: "Tax Invoice INV-000001" });
+  // The words SARS asks for, and the shop's own registration.
+  await expect(doc).toContainText("Tax Invoice");
+  await expect(doc).toContainText("VAT No 4001234567");
+  // The customer's details: what makes it a FULL tax invoice rather than the
+  // abridged one a till slip is.
+  await expect(doc).toContainText("Mokoena Building Contractors");
+  await expect(doc).toContainText("Cement 42.5N 50kg");
+  // It leaves owing, so it must say where the money goes.
+  await expect(doc).toContainText("62012345678");
+  await expect(doc).toContainText("250655");
+  // The invoice's small print, not the quote's, and no signature block.
+  await expect(doc).toContainText("Returns within 10 days");
+  await expect(doc).not.toContainText("Accepted by");
+});
+
+test("a cash sale's A4 invoice says how it was paid, and does not print the banking", async ({ page }) => {
+  Object.assign(be.orgSettings, { bank_name: "FNB", bank_account_number: "62012345678" });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000001");
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog", { name: "Sale INV-000001" })
+    .getByRole("button", { name: "A4 invoice" }).click();
+
+  // Already paid at the counter: the shop's account number has no business
+  // on it, and printing it on every slip puts the banking in the car park.
+  const doc = page.getByRole("dialog", { name: "Tax Invoice INV-000001" });
+  await expect(doc).toContainText("Paid");
+  await expect(doc).not.toContainText("62012345678");
+});
+
+test("a logo uploaded in settings turns up on the documents", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await expect(page.getByText(/No logo yet/)).toBeVisible();
+  await page.getByLabel("Upload a logo").setInputFiles([
+    { name: "logo.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
+  expect(be.uploadedLogos).toHaveLength(1);
+  expect(be.orgSettings.logo_url).toBe("org1/logo/1.png");
+
+  // And it is on the next document that leaves the building, without anybody
+  // redeploying anything.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000001");
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog", { name: "Sale INV-000001" })
+    .getByRole("button", { name: "A4 invoice" }).click();
+  const doc = page.getByRole("dialog", { name: "Tax Invoice INV-000001" });
+  // The document points at the file that was just uploaded. Whether the
+  // browser can fetch it from storage is not this test's business — the fake
+  // serves no bucket, so a real <img> here would have no size to see.
+  await expect(doc.locator("img.doc-logo")).toHaveAttribute("src", /org1\/logo\/1\.png$/);
+  // The name still prints beside it: a mark is not a name, and a tax invoice
+  // must carry the supplier's name.
+  await expect(doc).toContainText("Ladybrand Hardware");
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { adminSaveSettings, type ShopDetails } from "../../lib/adminApi";
+import { adminSaveSettings, uploadShopLogo, type ShopDetails } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
+import { downscaleImage, imageSrc } from "../../lib/images";
 import { refreshSettings, shopSettings } from "../../lib/settings";
 
 /** The text fields only — the one boolean is edited by its own control. */
@@ -82,6 +83,54 @@ export default function ShopSettings({ pin }: { pin: string }) {
     touched.current = true;
     setF((prev) => ({ ...prev, [k]: v }));
     setSaved(false);
+  }
+
+  const logoRef = useRef<HTMLInputElement>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+
+  /**
+   * The shop's mark. Saved on its own the moment it is chosen rather than
+   * waiting for Save: it goes through a different door (an edge function, not
+   * the settings RPC), and a manager who uploads a logo and then presses
+   * Cancel has still uploaded a logo. Better that the screen agrees with what
+   * happened.
+   */
+  async function pickLogo(file: File | null | undefined) {
+    if (!file) return;
+    setLogoBusy(true);
+    setError(null);
+    try {
+      // SVG is already small and scaling it through a canvas would rasterise
+      // it. Everything else is shrunk: a logo is printed a few centimetres
+      // wide and a 4 MB photograph of one helps nobody.
+      const data =
+        file.type === "image/svg+xml"
+          ? await readAsDataUrl(file)
+          : await downscaleImage(file, 800, 0.92);
+      const path = await uploadShopLogo(pin, data);
+      setF((prev) => ({ ...prev, logo_url: path }));
+      await refreshSettings();
+      setSaved(true);
+    } catch (e) {
+      setError(errorMessage(e, "The logo could not be uploaded"));
+    } finally {
+      setLogoBusy(false);
+      if (logoRef.current) logoRef.current.value = "";
+    }
+  }
+
+  async function removeLogo() {
+    setLogoBusy(true);
+    setError(null);
+    try {
+      await adminSaveSettings(pin, { logo_url: "" });
+      setF((prev) => ({ ...prev, logo_url: "" }));
+      await refreshSettings();
+    } catch (e) {
+      setError(errorMessage(e, "The logo could not be removed"));
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   function setQuotePrices(v: boolean) {
@@ -216,6 +265,59 @@ export default function ShopSettings({ pin }: { pin: string }) {
 
       <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
         <div>
+          <h2 className="font-medium">Logo</h2>
+          {/* Only on the A4 documents. The till slip is a 48-column thermal
+              print and a logo on it is a grey smudge. */}
+          <p className="text-sm text-stone-500">
+            Printed at the head of an A4 quote or tax invoice. Not on the till
+            slip, where it would only be a grey smudge.
+          </p>
+        </div>
+        <div className="flex items-center gap-4">
+          {f.logo_url ? (
+            <img
+              src={imageSrc(f.logo_url) ?? ""}
+              alt="The shop's logo"
+              className="h-16 max-w-[200px] object-contain border border-stone-200 rounded bg-white p-1"
+            />
+          ) : (
+            <span className="text-sm text-stone-500">
+              No logo yet — documents set the shop's name in type.
+            </span>
+          )}
+          <div className="flex gap-2 ml-auto">
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg border border-stone-300 disabled:opacity-40"
+              onClick={() => logoRef.current?.click()}
+              disabled={logoBusy}
+            >
+              {logoBusy ? "Uploading…" : f.logo_url ? "Replace" : "Upload a logo"}
+            </button>
+            {f.logo_url && (
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg text-red-700 disabled:opacity-40"
+                onClick={() => void removeLogo()}
+                disabled={logoBusy}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          <input
+            ref={logoRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            className="hidden"
+            aria-label="Upload a logo"
+            onChange={(e) => void pickLogo(e.target.files?.[0])}
+          />
+        </div>
+      </div>
+
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
           <h2 className="font-medium">Small print</h2>
           {/* The customer who wants to return a special-order basin on day
               twelve reads the slip in their kitchen drawer, not the sign
@@ -294,6 +396,16 @@ function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
     bank_branch_code: s.bank_branch_code ?? "",
     receipt_terms: s.receipt_terms ?? "",
     quote_terms: s.quote_terms ?? "",
+    logo_url: s.logo_url ?? "",
     quote_show_line_prices: s.quote_show_line_prices !== false,
   };
+}
+
+function readAsDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error ?? new Error("read failed"));
+    r.readAsDataURL(file);
+  });
 }

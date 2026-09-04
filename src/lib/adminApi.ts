@@ -382,6 +382,8 @@ export interface ShopDetails {
   /** The small print at the foot of a till slip, and of a quote. */
   receipt_terms: string;
   quote_terms: string;
+  /** The shop's mark on its A4 documents. A storage path, or "" for none. */
+  logo_url: string;
   /**
    * Whether a printed quote prices each line, or gives the scope and one total.
    * The only non-text setting here, which is why the form and the RPC both
@@ -1056,4 +1058,35 @@ export async function purchasingReceiveDocument(
   });
   if (error) throw error;
   return (data as ReceivedLine[]) ?? [];
+}
+
+// --- The shop's logo (0059) --------------------------------------------------
+
+/**
+ * Upload the shop's mark.
+ *
+ * Through an edge function, like a product photograph and for the same
+ * reason: the browser holds only the anon key. Returns the storage path,
+ * which is what the settings then carry.
+ */
+export async function uploadShopLogo(pin: string, dataUrl: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/functions/v1/shop-logo`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ register_token: requireToken(), pin, image: dataUrl }),
+  });
+  let out: { ok?: boolean; path?: string; message?: string } = {};
+  try {
+    out = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !out.ok || !out.path) {
+    throw new Error(out.message ?? "The logo could not be uploaded.");
+  }
+  return out.path;
 }

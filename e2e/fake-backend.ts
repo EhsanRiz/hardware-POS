@@ -291,6 +291,8 @@ export class Backend {
   readFails = false;
   /** How many pages the last reading was given. */
   readPages = 0;
+  /** Logos the shop-logo function accepted, newest last. */
+  uploadedLogos: string[] = [];
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string | boolean> = {
     // A shop that has never been asked prices every line, as 0042 defaults it.
@@ -310,6 +312,9 @@ export class Backend {
     // 0052: the small print, seeded as the migration seeds it.
     receipt_terms: "Returns within 10 days with this invoice and the original packaging. No returns on special orders or tinted paint.",
     quote_terms: "Prices are subject to stock availability.",
+    // 0059: no logo until a shop uploads one, and the documents then set the
+    // name in type instead.
+    logo_url: "",
   };
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
     customer_name: string | null;
@@ -755,6 +760,32 @@ export async function installBackend(page: Page): Promise<Backend> {
     // The first photograph becomes the thumbnail, as 0020 does it.
     target.image_url = target.image_url ?? path;
     return respond(200, { ok: true, id: "img" + be.uploadedPhotos.length, path });
+  });
+
+  // 0059: the shop's logo. Its own door, gated on manage_settings, and it
+  // records itself through the ordinary settings RPC.
+  await page.route("**/functions/v1/shop-logo", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, string> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    const u = Object.values(USERS).find((x) => x.pin === b.pin);
+    if (!u || !u.row.permissions.includes("manage_settings")) {
+      return respond(403, { ok: false, message: "Not permitted" });
+    }
+    if (!/^data:image\/(png|jpeg|webp|svg\+xml);base64,./.test(String(b.image ?? ""))) {
+      return respond(400, { ok: false, message: "Use a PNG, JPEG, WebP or SVG" });
+    }
+    const path = `org1/logo/${be.uploadedLogos.length + 1}.png`;
+    be.uploadedLogos.push(path);
+    be.orgSettings.logo_url = path;
+    return respond(200, { ok: true, path });
   });
 
   // 0055: the supplier-document function. Pages in, signed URLs out; the fake

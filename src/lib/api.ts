@@ -171,6 +171,7 @@ export async function fetchSettings(): Promise<ShopSettings> {
     bank_branch_code: row?.bank_branch_code ?? "",
     receipt_terms: row?.receipt_terms ?? "",
     quote_terms: row?.quote_terms ?? "",
+    logo_url: row?.logo_url ?? "",
     // Null rather than a stand-in: settings.vatRate() falls back to the
     // build's constant only when the server has never been reached, and a
     // zero here would print "VAT at 0%" on a brand-new till.
