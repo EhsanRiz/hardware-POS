@@ -4364,3 +4364,146 @@ test("a scan fills what the shop was missing, and never overwrites what it knew"
   expect(be.suppliers[0].bank_account_number).toBe("9999999999");
   expect(be.suppliers).toHaveLength(1);
 });
+
+/*
+ * 0058: the delivery note becomes stock on the shelf.
+ */
+test("a delivery is booked in from its own invoice, and the pairing is remembered", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4370229645", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "INV-8812",
+    doc_date: "2026-08-20", total: 1200, note: null, status: "read",
+    created_at: "2026-08-20T08:00:00Z",
+  });
+  // One line the shop will recognise, one it has never sold.
+  be.supplierLines.push(
+    { document_id: "doc1", line_no: 1, supplier_code: "PL 0065",
+      description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337 },
+    { document_id: "doc1", line_no: 2, supplier_code: "WAX",
+      description: "WAX PAN SEAL RING BROWN", qty: 5, unit_price: 17.5, line_total: 87.5 },
+  );
+  const cementBefore = PRODUCTS.find((p) => p.id === "p1")!.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: /Invoice INV-8812/ }).click();
+  await page.getByRole("dialog", { name: "Invoice INV-8812" })
+    .getByRole("button", { name: "Receive this delivery" }).click();
+
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await expect(recv).toContainText("COMP ELBOW 15MM");
+  // Nothing is matched yet, so nothing can be booked in.
+  await expect(recv).toContainText(/2 lines are not matched/);
+  await expect(recv.getByRole("button", { name: /^Book in/ })).toBeDisabled();
+
+  // The person says what Jasbro's code means. Once.
+  await recv.getByRole("button", { name: "Match" }).first().click();
+  await recv.getByLabel("Find a product for COMP ELBOW 15MM").fill("cement");
+  await recv.getByRole("button", { name: /Cement 42.5N 50kg/ }).click();
+  await expect(recv).toContainText("→ Cement 42.5N 50kg");
+  // One matched, one not. Still refused — this is the assertion that pins the
+  // rule, because with nothing matched the button is disabled anyway and a
+  // check there would hold for the wrong reason.
+  await expect(recv).toContainText(/1 line is not matched/);
+  await expect(recv.getByRole("button", { name: /^Book in/ })).toBeDisabled();
+  // The cost moved: said before anything is booked in, not after.
+  await expect(recv).toContainText("Cost R 50.00 → R 16.85 (down)");
+
+  // The second line is something the shop has never sold.
+  await recv.getByRole("button", { name: "Match" }).click();
+  await recv.getByRole("button", { name: "Not on our list — create it" }).click();
+  await expect(recv).toContainText("→ a new item, priced later");
+
+  // Nineteen arrived, not the twenty on the invoice. The shelf follows the
+  // delivery, not the paper.
+  await recv.getByLabel("Quantity received of COMP ELBOW 15MM").fill("19");
+  await recv.getByRole("button", { name: "Book in 2 lines" }).click();
+
+  await expect(page.getByText(/2 lines booked in, 1 new item created and waiting to be priced/)).toBeVisible();
+  expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(cementBefore + 19);
+  expect(be.stockMoves).toEqual([
+    { product_id: "p1", qty_delta: 19, reason: "receipt", note: "INV-8812" },
+    { product_id: expect.stringContaining("new"), qty_delta: 5, reason: "receipt", note: "INV-8812" },
+  ]);
+  // Born inactive and unpriced: the till must not offer something nobody priced.
+  const made = PRODUCTS.find((p) => p.name === "WAX PAN SEAL RING BROWN")!;
+  expect(made.price_retail).toBe(0);
+  // And Jasbro's code now means something, so the next delivery matches itself.
+  expect(be.supplierCodes).toEqual([
+    { supplier_id: "sup1", supplier_code: "PL 0065", product_id: "p1" },
+    { supplier_id: "sup1", supplier_code: "WAX", product_id: made.id },
+  ]);
+});
+
+test("the second delivery from a supplier matches itself, and cannot be booked in twice", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4370229645", notes: null,
+  });
+  // The pairing a person confirmed on an earlier delivery.
+  be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "PL 0065", product_id: "p1" });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "delivery_note", doc_number: "DN-77",
+    doc_date: "2026-08-21", total: 337, note: null, status: "read",
+    created_at: "2026-08-21T08:00:00Z",
+  });
+  be.supplierLines.push({
+    document_id: "doc1", line_no: 1, supplier_code: "PL 0065",
+    description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: /Delivery note DN-77/ }).click();
+  await page.getByRole("dialog", { name: "Delivery note DN-77" })
+    .getByRole("button", { name: "Receive this delivery" }).click();
+
+  // Nobody matches anything this time: it was learnt.
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await expect(recv).toContainText("→ Cement 42.5N 50kg · remembered");
+  await expect(recv).not.toContainText("not matched");
+  await recv.getByRole("button", { name: "Book in 1 line" }).click();
+  await expect(page.getByText(/1 line booked in/)).toBeVisible();
+
+  // A delivery booked in twice is stock the shop does not have.
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: /Delivery note DN-77/ }).click();
+  const view = page.getByRole("dialog", { name: "Delivery note DN-77" });
+  await expect(view).toContainText("Booked in.");
+  await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+});
+
+test("a quote is not offered for receiving, because nothing has been bought", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4370229645", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "quote", doc_number: "27181",
+    doc_date: "2026-08-13", total: 5300.35, note: null, status: "read",
+    created_at: "2026-08-13T08:00:00Z",
+  });
+  be.supplierLines.push({
+    document_id: "doc1", line_no: 1, supplier_code: "PL 0065",
+    description: "COMP ELBOW 15MM", qty: 20, unit_price: 16.85, line_total: 337,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: /Quote 27181/ }).click();
+  const view = page.getByRole("dialog", { name: "Quote 27181" });
+  await expect(view).toContainText("COMP ELBOW 15MM");
+  await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+});

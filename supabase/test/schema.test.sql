@@ -2516,4 +2516,121 @@ begin
   delete from public.suppliers where id = v_sup.id;
 end $$;
 
+-- 0058: the delivery note becomes stock on the shelf ---------------------------
+
+do $$
+declare v_tok text; v_r record; v_sup uuid; v_doc uuid; v_cem uuid;
+        v_before numeric; v_row record; v_n int; v_made uuid; v_cost numeric;
+        v_lines jsonb;
+begin
+  select token into v_tok from till;
+  select id, stock_qty, cost into v_cem, v_before, v_cost
+    from public.products where sku = 'CEM-425-50';
+
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Benoni Valves 58', '4581122333', null, null,
+    'invoice', 'BV58-1', current_date, null, null, 500, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'PL 0065', 'description', 'COMP ELBOW 15MM',
+                         'qty', 20, 'unit_price', 16.85, 'line_total', 337.00),
+      jsonb_build_object('supplier_code', 'WAX', 'description', 'WAX PAN SEAL RING BROWN',
+                         'qty', 5, 'unit_price', 17.50, 'line_total', 87.50)));
+  v_sup := v_r.supplier_id;
+  v_doc := v_r.document_id;
+
+  -- Nothing is known yet: neither code means anything to this shop.
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_doc)
+   where line_no = 1;
+  perform assert(v_row.product_id is null, 'an unknown supplier code matches nothing');
+  perform assert(not v_row.remembered, 'and is not pretending to be remembered');
+  perform assert_eq(v_row.unit_price, 16.85::numeric, 'the price off the page is offered');
+
+  -- A person says what it is, and only nineteen of the twenty arrived.
+  v_lines := jsonb_build_array(
+    jsonb_build_object('line_no', 1, 'product_id', v_cem, 'qty', 19,
+                       'unit_cost', 16.85, 'remember', true),
+    jsonb_build_object('line_no', 2, 'create', true, 'qty', 5,
+                       'unit_cost', 17.50, 'remember', true));
+  select count(*) into v_n from public.pos_purchasing_receive_document(v_tok, '1234', v_doc, v_lines);
+  perform assert_eq(v_n, 2, 'both lines are received');
+
+  perform assert_eq((select stock_qty from public.products where id = v_cem),
+    v_before + 19, 'the shelf follows the delivery, not the invoice');
+  perform assert_eq((select cost from public.products where id = v_cem), 16.85::numeric,
+    'and the cost is what the supplier charged');
+  perform assert_eq((select unit_cost from public.stock_movements
+     where product_id = v_cem order by created_at desc limit 1), 16.85::numeric,
+    'the movement records what it cost, so stock can be valued later');
+  perform assert_eq((select note from public.stock_movements
+     where product_id = v_cem order by created_at desc limit 1), 'BV58-1',
+    'against the document it came in on');
+
+  -- The new item is born INACTIVE and unpriced, as a shelf capture is: the
+  -- till must not offer something nobody has priced.
+  select id into v_made from public.products
+   where name = 'WAX PAN SEAL RING BROWN' and org_id = (select org_id from fixture);
+  perform assert(v_made is not null, 'a line for something new becomes a product');
+  select * into v_row from public.products where id = v_made;
+  perform assert(not v_row.active, 'born inactive');
+  perform assert_eq(v_row.price_retail, 0::numeric, 'and unpriced');
+  perform assert_eq(v_row.cost, 17.50::numeric, 'but knowing what it cost');
+  perform assert(v_row.sku ~ '^SKU-\d{6}$', 'with a code from the shop''s own sequence');
+  perform assert_eq(v_row.stock_qty, 5::numeric, 'and the five that arrived');
+
+  -- Booked in once. Twice would be stock the shop does not have.
+  perform assert_eq((select status from public.supplier_documents where id = v_doc),
+    'received', 'the document says it has been booked in');
+  perform assert_refuses(
+    format('select * from public.pos_purchasing_receive_document(%L, %L, %L, %L::jsonb)',
+      v_tok, '1234', v_doc, v_lines),
+    'a delivery cannot be booked in twice');
+
+  -- The pairing was learnt, so the NEXT delivery matches itself.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'delivery_note', 'BV58-2', current_date, null, null, 100, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'PL 0065',
+      'description', 'COMP ELBOW 15MM', 'qty', 3, 'unit_price', 17.00)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 1;
+  perform assert_eq(v_row.product_id, v_cem, 'the supplier''s code is remembered');
+  perform assert(v_row.remembered, 'and says so, rather than looking like a guess');
+  perform assert_eq(v_row.current_cost, 16.85::numeric,
+    'with what it costs today, so a change is visible before it is booked');
+
+  -- A line nobody matched cannot be received by accident.
+  perform assert_refuses(
+    format($f$select * from public.pos_purchasing_receive_document(%L, %L, %L,
+      jsonb_build_array(jsonb_build_object('line_no', 1, 'qty', 3)))$f$,
+      v_tok, '1234', v_r.document_id),
+    'a line with nothing behind it is refused');
+  -- And a delivery of nothing is not a delivery.
+  perform assert_refuses(
+    format($f$select * from public.pos_purchasing_receive_document(%L, %L, %L,
+      jsonb_build_array(jsonb_build_object('line_no', 1, 'product_id', %L, 'qty', 0)))$f$,
+      v_tok, '1234', v_r.document_id, v_cem),
+    'nothing to receive is refused');
+
+  perform assert_refuses(
+    format('select * from public.pos_purchasing_receive_lines(%L, %L, %L)',
+      v_tok, '2222', v_doc),
+    'receiving needs the purchasing right');
+
+  -- What this supplier's codes are known to mean, for a manager correcting one.
+  select count(*) into v_n from public.pos_purchasing_supplier_codes(v_tok, '1234', v_sup);
+  perform assert_eq(v_n, 2, 'both codes are on the supplier''s list');
+
+  -- apply_stock kept its old callers: one signature, and a sale still moves
+  -- stock without naming the new argument.
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'apply_stock'), 1,
+    'apply_stock has exactly one signature');
+
+  update public.products set cost = v_cost, stock_qty = v_before where id = v_cem;
+  delete from public.products where id = v_made;
+  delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+end $$;
+
 select 'all database tests passed' as result;

@@ -1917,3 +1917,31 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 .head-calc-btn:hover { background: rgba(255, 255, 255, 0.08); }
 .head-calc-btn:active { color: var(--color-accent-400); border-color: var(--color-accent-400); }
+
+/* ---- Receiving a delivery from its paperwork ---------------------------- */
+
+.recv-row {
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--divider);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: start;
+}
+.recv-what { min-width: 0; }
+.recv-nums { display: flex; gap: 10px; align-items: flex-end; }
+.recv-nums label { display: flex; flex-direction: column; gap: 2px; }
+.recv-drift {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--color-accent-700);
+  font-variant-numeric: tabular-nums;
+}
+.recv-pick { grid-column: 1 / -1; }
+
+@media (max-width: 599px) {
+  /* The numbers go under the description rather than beside it: at this width
+     two inputs and a button beside a product name is four things fighting. */
+  .recv-row { grid-template-columns: minmax(0, 1fr); }
+  .recv-nums { flex-wrap: wrap; }
+}

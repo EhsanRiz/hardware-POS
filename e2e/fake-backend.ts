@@ -257,7 +257,10 @@ export class Backend {
     created_at: string }[] = [];
   supplierPages: { document_id: string; page_no: number; mime: string; data: string; by_pin: string }[] = [];
   supplierLines: { document_id: string; line_no: number; supplier_code: string | null;
-    description: string; qty: number | null; unit_price: number | null; line_total: number | null }[] = [];
+    description: string; qty: number | null; unit_price: number | null;
+    line_total: number | null; product_id?: string | null }[] = [];
+  /** 0058: what a supplier's own code is known to mean. */
+  supplierCodes: { supplier_id: string; supplier_code: string; product_id: string }[] = [];
   /**
    * 0056: what the reader says the pages contain. A browser test cannot run a
    * vision model, and should not: what it must pin is what the till DOES with
@@ -1434,6 +1437,82 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
         return json([{ document_id: doc.id, supplier_id: sup.id, supplier_name: sup.name,
           supplier_created: created, details_filled: filled }]);
+      }
+      // ---- 0058: the delivery note becomes stock on the shelf. ----
+      case "rpc/pos_purchasing_receive_lines": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Document not found");
+        return json(be.supplierLines
+          .filter((l) => l.document_id === d.id)
+          .map((l) => {
+            const code = be.supplierCodes.find(
+              (c) => c.supplier_id === d.supplier_id && c.supplier_code === l.supplier_code
+            );
+            // The same order the server trusts: a confirmed pairing, then the
+            // supplier's code being our own SKU, then an earlier match.
+            const bySku = l.supplier_code
+              ? PRODUCTS.find((p) => p.sku.toLowerCase() === l.supplier_code!.toLowerCase())
+              : undefined;
+            const pid = l.product_id ?? code?.product_id ?? bySku?.id ?? null;
+            const prod = PRODUCTS.find((p) => p.id === pid);
+            return {
+              ...l, product_id: pid, product_name: prod?.name ?? null,
+              product_sku: prod?.sku ?? null, stock_qty: prod?.stock_qty ?? null,
+              current_cost: prod ? 50 : null, retail: prod?.price_retail ?? null,
+              remembered: !!code,
+            };
+          }));
+      }
+      case "rpc/pos_purchasing_receive_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Document not found");
+        if (d.status === "received") return fail("This document has already been booked in");
+        const wanted = (body.p_lines as Record<string, unknown>[]) ?? [];
+        const out: Record<string, unknown>[] = [];
+        for (const w of wanted) {
+          const qty = Number(w.qty ?? 0);
+          if (!(qty > 0)) continue;
+          const src = be.supplierLines.find(
+            (l) => l.document_id === d.id && l.line_no === Number(w.line_no)
+          );
+          if (!src) return fail(`No line ${w.line_no} on this document`);
+          let pid = (w.product_id as string) ?? null;
+          let created = false;
+          if (!pid) {
+            if (!w.create) return fail(`Line ${w.line_no} has nothing to receive it against`);
+            // Born inactive and unpriced, as the shelf's captures are.
+            const made = mk("new" + PRODUCTS.length, "SKU-" + String(++be.skuSeq).padStart(6, "0"),
+              null, src.description, "ea", "Each", false, 0, null, 0, null);
+            PRODUCTS.push(made);
+            pid = made.id;
+            created = true;
+          }
+          const prod = PRODUCTS.find((p) => p.id === pid);
+          if (!prod) return fail(`Unknown product on line ${w.line_no}`);
+          const oldCost = created ? null : 50;
+          const cost = w.unit_cost == null ? null : Number(w.unit_cost);
+          prod.stock_qty = Math.round(((prod.stock_qty ?? 0) + qty) * 1000) / 1000;
+          be.stockMoves.push({ product_id: pid, qty_delta: qty, reason: "receipt",
+            note: d.doc_number ?? "Goods received" });
+          src.product_id = pid;
+          if ((w.remember ?? true) && src.supplier_code) {
+            const at = be.supplierCodes.findIndex(
+              (c) => c.supplier_id === d.supplier_id && c.supplier_code === src.supplier_code
+            );
+            const row = { supplier_id: d.supplier_id, supplier_code: src.supplier_code, product_id: pid };
+            if (at >= 0) be.supplierCodes[at] = row; else be.supplierCodes.push(row);
+          }
+          out.push({ product_id: pid, name: prod.name, received: qty,
+            stock_qty: prod.stock_qty, old_cost: oldCost,
+            new_cost: cost ?? oldCost, created });
+        }
+        if (out.length === 0) return fail("Nothing to receive");
+        d.status = "received";
+        return json(out);
       }
       case "rpc/pos_purchasing_document_lines": {
         if (!tokenOk) return fail("Register not paired or revoked");
