@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { setPrintPreviewHandler } from "../lib/printPreview";
+import { setPrintPreviewHandler, type PreviewAction } from "../lib/printPreview";
 
 // Turn the receipt's emphasis markers (0x01/0x02 bold, 0x03/0x04 underline)
 // into styled spans so the preview (and the browser print-out) matches what the
@@ -74,10 +74,10 @@ function renderMarkup(text: string): ReactNode[] {
 // thermal printer). On the tablet, printing goes straight to RawBT and this
 // never shows.
 export default function PrintPreview() {
-  const [slip, setSlip] = useState<{ text: string; title: string } | null>(null);
+  const [slip, setSlip] = useState<{ text: string; title: string; action?: PreviewAction } | null>(null);
 
   useEffect(() => {
-    setPrintPreviewHandler((text, title) => setSlip({ text, title }));
+    setPrintPreviewHandler((text, title, action) => setSlip({ text, title, action }));
     return () => setPrintPreviewHandler(null);
   }, []);
 
@@ -90,7 +90,7 @@ export default function PrintPreview() {
   }, [slip]);
 
   if (!slip) return null;
-  const { text, title } = slip;
+  const { text, title, action } = slip;
 
   // The browser prints the whole page, but our @media print CSS hides
   // everything except #print-area — so only the logo + slip text comes out.
@@ -140,6 +140,19 @@ export default function PrintPreview() {
           </div>
 
           <div className="p-3 border-t border-stone-100 shrink-0 flex gap-2">
+            {/* "Actually, no." — offered here because this popup is what the
+                cashier is looking at when the customer says it. */}
+            {action && (
+              <button
+                onClick={() => {
+                  setSlip(null);
+                  action.run();
+                }}
+                className="h-11 px-4 rounded-lg border border-red-200 text-red-700 font-medium active:bg-red-50"
+              >
+                {action.label}
+              </button>
+            )}
             <button
               onClick={() => setSlip(null)}
               className="flex-1 h-11 rounded-lg bg-stone-100 text-stone-700 font-medium active:bg-stone-200"

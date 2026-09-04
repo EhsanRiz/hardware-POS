@@ -808,7 +808,7 @@
   color: #1c1917;
   cursor: default;
 }
-.sell-banner.is-warning .cash-up-now {
+.sell-banner .cash-up-now {
   margin-left: auto;
   flex: none;
   padding: 6px 14px;

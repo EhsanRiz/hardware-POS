@@ -127,6 +127,9 @@ export interface RecordedSale {
    */
   amount_tendered: number | null;
   change_due: number | null;
+  /** 0054: cancelled at the counter. Stays on the list, struck through. */
+  voided?: boolean;
+  void_reason?: string | null;
 }
 
 /** A buyer on file, in the shape pos_list_customers returns. */
@@ -303,7 +306,8 @@ export class Backend {
   cashFigures() {
     const s = this.cashSession;
     if (!s) throw new Error("No session");
-    const inWindow = this.sales.slice(s.fromIndex);
+    // A voided sale is not takings: the cash went back across the counter.
+    const inWindow = this.sales.slice(s.fromIndex).filter((x) => !x.voided);
     const tenders: Record<string, number> = {};
     for (const sale of inWindow) {
       for (const p of sale.payments) {
@@ -544,7 +548,10 @@ export class Backend {
     const pending =
       sale.discount_amount > 0 && !sale.approved_by && !sale.within_limit;
     return {
-      id: "s" + this.seq,
+      // The id every other handler resolves it by: its index in the list.
+      // It used to be the 1-based sequence, so a sale rung on the till came
+      // back with an id under which its own lines could not be found.
+      id: "s" + this.sales.indexOf(sale),
       doc_number: pending ? null : "INV-" + String(this.seq).padStart(6, "0"),
       cashier_id: sale.cashier_id,
       cashier_name: "Sam",
@@ -556,7 +563,7 @@ export class Backend {
       discount_reason: sale.discount_reason,
       tax_amount: Math.round((sale.total - sale.total / 1.15) * 100) / 100,
       total: sale.total,
-      status: pending ? "pending_approval" : "completed",
+      status: sale.voided ? "voided" : pending ? "pending_approval" : "completed",
       approved_by: sale.approved_by,
       approved_by_name: sale.approved_by ? "Manager" : null,
       payment_method: sale.payment_method,
@@ -805,7 +812,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         // screen and pos_sale_by_number give the same sale.
         const mine = be.sales
           .map((x, i) => ({ x, i }))
-          .filter(({ x }) => x.customer_id === body.p_customer_id)
+          .filter(({ x }) => x.customer_id === body.p_customer_id && !x.voided)
           .reverse();
         return json(mine.map(({ x, i }) => ({
           sale_id: "s" + i,
@@ -844,6 +851,43 @@ export async function installBackend(page: Page): Promise<Backend> {
           valid_until: "2099-01-01", total }]);
       }
       // ---- 0051: a slip scanned back in. Register token only. ----
+      // ---- 0054: "actually, no". A manager's PIN or a phoned code. ----
+      case "rpc/pos_void_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const idx = Number(String(body.p_sale_id ?? "").replace(/^s/, ""));
+        const x = be.sales[idx];
+        if (!x) return fail("Sale not found");
+        if (x.voided) return fail("Already voided");
+        if (be.returns.some((r) => r.sale_id === body.p_sale_id)) {
+          return fail("Part of this sale has been returned — return the rest instead of cancelling");
+        }
+        const secret = String(body.p_pin ?? "");
+        if (secret === USERS.manager.pin) {
+          // fine
+        } else if (secret === USERS.employee.pin || secret === USERS.shelf.pin) {
+          return fail("Not permitted: void_refund");
+        } else {
+          const code = be.approvalCodes.find(
+            (c) => c.code === secret && !c.used_at && Date.parse(c.expires_at) > Date.now()
+          );
+          if (!code) {
+            return fail("Not a manager's PIN, and not a code we recognise. A code may have expired or already been used.");
+          }
+          if (code.max_amount != null && x.total > code.max_amount + 0.005) {
+            return fail(`That code covers up to ${code.max_amount.toFixed(2)}, and this sale is ${x.total.toFixed(2)}.`);
+          }
+          const who = Object.values(USERS).find((u) => u.row.id === body.p_cashier_id);
+          if (!who) return fail("A code has to be used by a signed-in cashier");
+          code.used_at = new Date().toISOString();
+          code.used_by_name = who.row.name;
+          code.doc_number = "INV-" + String(idx + 1).padStart(6, "0");
+        }
+        x.voided = true;
+        x.void_reason = String(body.p_reason ?? "").trim() || null;
+        // Stock is not put back here because a sale never takes it off in
+        // this fake; the database test is where restocking is proved.
+        return json({ ...be.saleRow(x, false), id: body.p_sale_id, status: "voided" });
+      }
       case "rpc/pos_sale_by_number": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const want = String(body.p_doc_number ?? "").trim().toUpperCase();
@@ -861,7 +905,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           subtotal: r2(x.total + x.discount_amount), total: x.total,
           tax_amount: r2(x.total - x.total / 1.15),
           discount_amount: x.discount_amount, discount_reason: x.discount_reason,
-          paid_cash: null, paid_card: null, status: "completed",
+          paid_cash: null, paid_card: null, status: x.voided ? "voided" : "completed",
           payment_method: x.payment_method, amount_tendered: x.amount_tendered,
           change_due: x.change_due, rounding: x.rounding, po_number: x.po_number,
           customer_vat_number: x.customer_vat_number,
@@ -1413,7 +1457,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         // parked sale went unnoticed.
         const parked = (x: RecordedSale) =>
           x.discount_amount > 0 && !x.approved_by && !x.within_limit;
-        const done = inWindow.filter((x) => !parked(x));
+        const done = inWindow.filter((x) => !parked(x) && !x.voided);
         const tenders: Record<string, number> = {};
         for (const sale of done) {
           for (const p of sale.payments) {
@@ -1443,7 +1487,7 @@ export async function installBackend(page: Page): Promise<Backend> {
             total: x.total,
             tax_amount: round2(x.total - x.total / 1.15),
             discount_amount: x.discount_amount,
-            status: parked(x) ? "pending_approval" : "completed",
+            status: x.voided ? "voided" : parked(x) ? "pending_approval" : "completed",
             payment_method: x.payment_method,
             amount_tendered: x.amount_tendered,
             change_due: x.change_due,

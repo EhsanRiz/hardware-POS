@@ -3659,6 +3659,8 @@ test("a quote is saved for somebody by name, printed and emailed", async ({ page
   const slip = page.locator("#print-area");
   await expect(slip).toContainText("For: Mokoena Builders");
   await expect(slip).toContainText("Prices are subject to stock availability");
+  // The number sits centred over its barcode, as the invoice number does.
+  expect((await slip.evaluate((el) => el.textContent)) ?? "").toMatch(/^ {6,}QUO-000001\s*$/m);
   await page.getByLabel("Close").click();
 
   // Listed under the name, so Thursday's phone call can find it.
@@ -3775,4 +3777,122 @@ test("a new product left without a SKU is given the shop's next code", async ({ 
   await editor.getByLabel(/^Retail/).fill("129");
   await editor.getByRole("button", { name: /^Save$/ }).click();
   await expect(page.locator("tr", { hasText: "Galvanised bucket 20L" })).toContainText("BKT-20");
+});
+
+/*
+ * 0054: "actually, no" — cancelling a sale at the counter.
+ */
+test("a sale is cancelled from the receipt with a manager's PIN, and the stock comes back", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001 completed/);
+
+  // The receipt popup is what the cashier is looking at when the customer
+  // says no; the way out is on it. The banner offers the same behind the
+  // popup; the popup's is the last in the page.
+  await page.getByRole("button", { name: "Cancel this sale" }).last().click();
+  const ask = page.getByRole("dialog", { name: "Cancel this sale" });
+  await expect(ask).toContainText("Cancel INV-000001?");
+  await expect(ask).toContainText("115.00 is handed back");
+  // Nothing goes without a reason.
+  await expect(ask.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await ask.getByLabel("Reason for cancelling").fill("Customer changed their mind");
+  await ask.getByRole("button", { name: "Continue" }).click();
+
+  // A cashier's own PIN is not enough — the server says so and the pad stays.
+  for (const d of USERS.employee.pin.split("")) {
+    await ask.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(ask.getByRole("alert")).toContainText(/Not permitted/);
+  for (const d of USERS.manager.pin.split("")) {
+    await ask.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(ask).toHaveCount(0);
+  await expect(banner(page)).toContainText("INV-000001 cancelled — hand back R 115.00");
+  expect(be.storedSales[0].voided).toBe(true);
+  expect(be.storedSales[0].void_reason).toBe("Customer changed their mind");
+  // Once cancelled the offer is gone from the banner.
+  await expect(page.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
+});
+
+test("with the manager on the phone, a one-time code cancels the sale from the banner", async ({ page }) => {
+  be.approvalCodes.push({
+    id: "ac1", code: "313131", issued_by: USERS.manager.row.id, issued_by_name: "Manager",
+    max_amount: 50, reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: null, used_by_name: null, doc_number: null,
+  });
+  be.approvalCodes.push({
+    id: "ac2", code: "424242", issued_by: USERS.manager.row.id, issued_by_name: "Manager",
+    max_amount: null, reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: null, used_by_name: null, doc_number: null,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001 completed/);
+  // The slip is closed (on a thermal till it went straight to paper). The
+  // banner still offers the way out.
+  await page.getByLabel("Close", { exact: true }).click();
+  await banner(page).getByRole("button", { name: "Cancel this sale" }).click();
+
+  const ask = page.getByRole("dialog", { name: "Cancel this sale" });
+  await ask.getByLabel("Reason for cancelling").fill("Wrong item");
+  await ask.getByRole("button", { name: "Continue" }).click();
+  await expect(ask).toContainText(/code they issue/);
+
+  // A code for R50 cannot cancel an R115 sale; the right code can, once.
+  for (const d of "313131".split("")) {
+    await ask.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(ask.getByRole("alert")).toContainText(/covers up to 50.00/);
+  for (const d of "424242".split("")) {
+    await ask.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(ask).toHaveCount(0);
+  await expect(banner(page)).toContainText(/INV-000001 cancelled/);
+  expect(be.storedSales[0].voided).toBe(true);
+  expect(be.approvalCodes[0].used_at).toBeNull();
+  expect(be.approvalCodes[1].used_at).toBeTruthy();
+  expect(be.approvalCodes[1].used_by_name).toBe("Sam");
+  expect(be.approvalCodes[1].doc_number).toBe("INV-000001");
+});
+
+test("a scanned slip can be cancelled from the sale popup, and a cancelled sale offers nothing more", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001 completed/);
+  await page.getByLabel("Close", { exact: true }).click();
+  // Dismissing the banner drops its offer; the slip itself is the next door.
+  await banner(page).getByText("dismiss").click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000001");
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Sale INV-000001" });
+  await dialog.getByRole("button", { name: "Cancel this sale" }).click();
+  const ask = page.getByRole("dialog", { name: "Cancel this sale" });
+  await ask.getByLabel("Reason for cancelling").fill("Came back two minutes later");
+  await ask.getByRole("button", { name: "Continue" }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await ask.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(ask).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
+  expect(be.storedSales[0].voided).toBe(true);
+
+  // Scanned again: voided, so neither a return nor a second cancel is offered.
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000001");
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: /^Return$/ })).toHaveCount(0);
 });

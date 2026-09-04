@@ -432,7 +432,7 @@ export function buildQuoteText(
   shopHeader(out, "QUOTE");
   out.push("");
   if (opts.docNumber) {
-    out.push(bold(opts.docNumber));
+    out.push(bold(center(opts.docNumber)));
     out.push(barcode(opts.docNumber));
   }
   const made = opts.createdAt ? new Date(opts.createdAt) : new Date();
