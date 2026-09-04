@@ -3604,6 +3604,11 @@ test("the till slip ends with the shop's terms and prints the invoice number onc
   // under the bars gone, so it is no longer on the slip twice.
   const text = (await slip.evaluate((el) => el.textContent)) ?? "";
   expect(text.match(/INV-000001/g)?.length).toBe(1);
+  // Centred over the bars, and the small print centred too, rather than a
+  // label and a paragraph hanging off the left margin under a centred slip.
+  expect(text).toMatch(/^ {6,}Invoice No: INV-000001\s*$/m);
+  expect(text).toMatch(/^ {2,}Returns within 10 days/m);
+  expect(text).not.toMatch(/^Returns within 10 days/m);
   await expect(slip.locator("[data-barcode='INV-000001']")).toHaveCount(1);
 });
 
@@ -3745,4 +3750,29 @@ test("an invoice in a buyer's purchase history opens, ready to reprint or return
   await expect(sale.getByRole("button", { name: /^Reprint$/ })).toBeVisible();
   await expect(sale.getByRole("button", { name: /^Return$/ })).toBeVisible();
   await expect(history).toHaveCount(0);
+});
+
+test("a new product left without a SKU is given the shop's next code", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /New product/i }).click();
+  const editor = page;
+  // The box says it may be left blank, and Save does not wait for it.
+  await expect(editor.getByText(/leave blank and the next number/i)).toBeVisible();
+  await editor.getByLabel("Name").fill("Galvanised bucket 10L");
+  await editor.getByLabel(/^Retail/).fill("89");
+  await editor.getByRole("button", { name: /^Save$/ }).click();
+
+  // Listed under the code the shop's sequence handed out.
+  const row = page.locator("tr", { hasText: "Galvanised bucket 10L" });
+  await expect(row).toContainText("SKU-000001");
+  expect(PRODUCTS.find((p) => p.name === "Galvanised bucket 10L")?.sku).toBe("SKU-000001");
+
+  // A typed code is kept as typed.
+  await page.getByRole("button", { name: /New product/i }).click();
+  await editor.getByLabel("SKU").fill("BKT-20");
+  await editor.getByLabel("Name").fill("Galvanised bucket 20L");
+  await editor.getByLabel(/^Retail/).fill("129");
+  await editor.getByRole("button", { name: /^Save$/ }).click();
+  await expect(page.locator("tr", { hasText: "Galvanised bucket 20L" })).toContainText("BKT-20");
 });

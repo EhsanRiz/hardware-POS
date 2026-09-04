@@ -2151,4 +2151,47 @@ begin
   perform assert(v_q.doc_number is not null, 'and a call naming no optional argument still works');
 end $$;
 
+-- 0053: a new product gets a stock code if nobody types one ---------------------
+
+do $$
+declare v_tok text; v_a public.products; v_b public.products; v_c public.products;
+        v_again public.products;
+begin
+  select token into v_tok from till;
+
+  -- Blank box, generated code; the next blank box gets the next number.
+  v_a := public.pos_admin_save_product(v_tok, '1234', null, '', null,
+    'Galvanised bucket 10L', null, null, 'ea', 89, null, null, 'standard', 0, null, true);
+  v_b := public.pos_admin_save_product(v_tok, '1234', null, '   ', null,
+    'Galvanised bucket 15L', null, null, 'ea', 109, null, null, 'standard', 0, null, true);
+  perform assert(v_a.sku ~ '^SKU-\d{6}$', 'a blank SKU is filled in from the sequence');
+  perform assert(v_b.sku ~ '^SKU-\d{6}$' and v_b.sku > v_a.sku,
+    'and the next one is the next number');
+
+  -- A typed code is the code; the sequence is not consulted.
+  v_c := public.pos_admin_save_product(v_tok, '1234', null, 'BKT-20', null,
+    'Galvanised bucket 20L', null, null, 'ea', 129, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_c.sku, 'BKT-20', 'a typed SKU still wins');
+
+  -- The sequence steps past a code somebody typed by hand.
+  update public.products set sku = 'SKU-000003' where id = v_c.id;
+  v_c := public.pos_admin_save_product(v_tok, '1234', null, '', null,
+    'Galvanised bucket 25L', null, null, 'ea', 149, null, null, 'standard', 0, null, true);
+  perform assert(v_c.sku <> 'SKU-000003' and v_c.sku ~ '^SKU-\d{6}$',
+    'a generated code never collides with one typed earlier');
+
+  -- Editing an existing product with the box cleared keeps its code.
+  v_again := public.pos_admin_save_product(v_tok, '1234', v_a.id, '', null,
+    'Galvanised bucket 10L (heavy)', null, null, 'ea', 95, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_again.sku, v_a.sku, 'clearing the box on an edit keeps the code');
+  perform assert_eq(v_again.name, 'Galvanised bucket 10L (heavy)', 'and the edit still lands');
+
+  -- Only one signature, as before.
+  perform assert_eq((select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_admin_save_product')::int, 1,
+    'pos_admin_save_product has exactly one signature');
+
+  delete from public.products where id in (v_a.id, v_b.id, v_c.id);
+end $$;
+
 select 'all database tests passed' as result;

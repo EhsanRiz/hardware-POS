@@ -174,6 +174,8 @@ export interface RecordedAccountPayment {
 /** Everything the fake server saw, so tests can assert on it. */
 export class Backend {
   sales: RecordedSale[] = [];
+  /** The shop's SKU sequence (0053): SKU-000001 is the first one generated. */
+  skuSeq = 0;
   calls: string[] = [];
   customers: FakeCustomer[] = [];
   accountPayments: RecordedAccountPayment[] = [];
@@ -643,6 +645,10 @@ export async function installBackend(page: Page): Promise<Backend> {
   // PRODUCTS is module state and the catalogue editor now writes to it, so a
   // cap set by one test would still be there for the next one in the same
   // worker. Put it back rather than leaving tests to depend on their order.
+  // Products the catalogue editor created in an earlier test are not seed.
+  for (let i = PRODUCTS.length - 1; i >= 0; i--) {
+    if (PRODUCTS[i].id.startsWith("new")) PRODUCTS.splice(i, 1);
+  }
   for (const p of PRODUCTS) {
     p.max_discount_percent = null;
     p.max_discount_amount = null;
@@ -1130,9 +1136,21 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_admin_save_product": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const pct = body.p_max_discount_percent;
+        if (body.p_id == null) {
+          // 0053: born with the shop's next code unless one was typed.
+          if (!String(body.p_name ?? "").trim()) return fail("A name is required");
+          const typed = String(body.p_sku ?? "").trim();
+          const sku = typed || "SKU-" + String(++be.skuSeq).padStart(6, "0");
+          if (PRODUCTS.some((x) => x.sku === sku)) return fail("That SKU already exists");
+          const made = mk("new" + PRODUCTS.length, sku, (body.p_barcode as string) || null,
+            String(body.p_name), "ea", "Each", false, Number(body.p_price_retail ?? 0),
+            null, Number(body.p_stock_qty ?? 0), null);
+          PRODUCTS.push(made);
+          return json([{ ...made }]);
+        }
         const p = PRODUCTS.find((x) => x.id === body.p_id);
         if (!p) return fail("Product not found");
-        const pct = body.p_max_discount_percent;
         if (pct != null && (Number(pct) < 0 || Number(pct) > 100)) {
           return fail("A discount cap is a percentage between 0 and 100");
         }
