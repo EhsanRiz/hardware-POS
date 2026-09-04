@@ -1,0 +1,203 @@
+import { useEffect, useState } from "react";
+import { saleItems, salePayments } from "../lib/api";
+import { errorMessage } from "../lib/errors";
+import { money } from "../lib/money";
+import { printReceipt } from "../lib/print";
+import { buildReceiptText } from "../lib/receipt";
+import type { SaleRow } from "../lib/sales";
+import type { Payment, Sale, SaleItem } from "../lib/types";
+import ManagerPinModal from "./ManagerPinModal";
+import ReturnSheet from "./admin/ReturnSheet";
+
+/**
+ * One sale, opened. The same window whether the counter scanned the slip a
+ * customer brought back, or a manager tapped a row on the Sales screen: what
+ * was sold, how it was paid, a reprint, and a return.
+ *
+ * A return needs a manager. Opened from Manage the PIN is already in hand;
+ * opened from the till it is asked for here, and the server checks it again.
+ */
+export interface SaleLike {
+  id: string;
+  doc_number: string | null;
+  created_at: string;
+  cashier_name: string;
+  customer_name: string | null;
+  total: number;
+  tax_amount: number;
+  status: string;
+  payment_method: string | null;
+}
+
+const TENDER_LABEL: Record<string, string> = {
+  cash: "Cash", card: "Card", eft: "EFT", zapper: "Zapper", account: "On account", split: "Split",
+};
+
+export default function SaleDetail({
+  sale,
+  pin,
+  onClose,
+  onChanged,
+}: {
+  sale: SaleLike;
+  /** A manager's PIN if one is already held (Manage); null asks for it. */
+  pin: string | null;
+  onClose: () => void;
+  onChanged?: () => Promise<void> | void;
+}) {
+  const [items, setItems] = useState<SaleItem[] | null>(null);
+  const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [askPin, setAskPin] = useState(false);
+  const [returnPin, setReturnPin] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([saleItems(sale.id), salePayments(sale.id)])
+      .then(([i, p]) => {
+        if (cancelled) return;
+        setItems(i);
+        setPayments(p);
+      })
+      .catch((e) => !cancelled && setError(errorMessage(e, "Could not load the sale")));
+    return () => {
+      cancelled = true;
+    };
+  }, [sale.id]);
+
+  function reprint() {
+    if (!items) return;
+    printReceipt(
+      buildReceiptText(
+        sale as unknown as Sale,
+        items.map((i) => ({
+          name: i.name, unit_code: i.unit_code, qty: i.qty, unit_price: i.unit_price,
+          line_total: i.line_total, discount_amount: i.discount_amount,
+          discount_percent: i.discount_percent, discount_reason: i.discount_reason,
+        })),
+        sale.customer_name ? { name: sale.customer_name, balance: 0 } : null,
+        payments
+      ),
+      `Tax Invoice ${sale.doc_number ?? ""}`.trim()
+    );
+  }
+
+  const when = new Date(sale.created_at).toLocaleString("en-ZA", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+  const returnable = sale.status === "completed";
+
+  return (
+    <div
+      className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-50"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Sale ${sale.doc_number ?? ""}`.trim()}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-stone-200 flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold">
+              {sale.doc_number ?? "No invoice number"}
+              {sale.status === "voided" && <span className="ml-2 text-xs text-amber-700">voided</span>}
+              {sale.status === "pending_approval" && (
+                <span className="ml-2 text-xs text-amber-700">awaiting approval</span>
+              )}
+            </h2>
+            <p className="text-sm text-stone-500">
+              {when} · {sale.cashier_name}
+              {sale.customer_name ? ` · ${sale.customer_name}` : ""}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-stone-400 text-2xl leading-none" aria-label="Close sale">
+            ×
+          </button>
+        </div>
+
+        <div className="p-4 overflow-y-auto flex-1 space-y-3">
+          {error && <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg">{error}</p>}
+          {!items ? (
+            <p className="text-sm text-stone-500">Loading…</p>
+          ) : (
+            <ul className="divide-y divide-stone-100">
+              {items.map((i, n) => (
+                <li key={n} className="py-2 flex items-baseline gap-3 text-sm even:bg-stone-50/70 px-1">
+                  <span className="flex-1 min-w-0">
+                    <span className="block">{i.name}</span>
+                    <span className="block text-xs text-stone-500">
+                      {i.qty} {i.unit_code} × {money(i.unit_price)}
+                      {(i.discount_amount ?? 0) > 0 && (
+                        <span className="text-amber-700"> · {money(i.discount_amount)} off</span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="tabular-nums whitespace-nowrap">{money(i.line_total)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex justify-between items-baseline border-t-2 border-stone-800 pt-2">
+            <span className="text-sm text-stone-600">
+              {payments && payments.length > 1
+                ? payments.map((p) => `${TENDER_LABEL[p.method] ?? p.method} ${money(p.amount)}`).join(" · ")
+                : TENDER_LABEL[sale.payment_method ?? ""] ?? sale.payment_method ?? ""}
+            </span>
+            <span className="text-lg tabular-nums">{money(sale.total)}</span>
+          </div>
+          <p className="text-xs text-stone-500">VAT within {money(sale.tax_amount)}</p>
+        </div>
+
+        <div className="p-4 border-t border-stone-200 flex gap-2">
+          <button
+            className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700 disabled:opacity-40"
+            disabled={!items}
+            onClick={reprint}
+          >
+            Reprint
+          </button>
+          {returnable && (
+            <button
+              className="flex-1 py-2.5 rounded-xl bg-colophon text-paper"
+              onClick={() => (pin ? setReturnPin(pin) : setAskPin(true))}
+            >
+              Return
+            </button>
+          )}
+        </div>
+      </div>
+
+      {askPin && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ManagerPinModal
+            title="Return needs a manager"
+            subtitle={`${sale.doc_number ?? "This sale"} — a manager's PIN`}
+            onApprove={async (entered) => {
+              setReturnPin(entered);
+              setAskPin(false);
+            }}
+            onCancel={() => setAskPin(false)}
+          />
+        </div>
+      )}
+
+      {returnPin && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ReturnSheet
+            pin={returnPin}
+            sale={sale as unknown as SaleRow}
+            onClose={() => setReturnPin(null)}
+            onDone={async () => {
+              setReturnPin(null);
+              await onChanged?.();
+              onClose();
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

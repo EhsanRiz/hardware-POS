@@ -2041,4 +2041,41 @@ begin
   perform public.pos_cash_session_close(v_tok2, '1234', 100);
 end $$;
 
+-- 0051: a slip comes back to the counter -----------------------------------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_cem uuid; v_price numeric; v_sale public.sales; v_q record; v_found record;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id, price_retail into v_cem, v_price from public.products where sku = 'CEM-425-50';
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  perform assert(v_sale.doc_number is not null, 'the sale has a number to print');
+
+  -- The number on the slip, however the gun reads it.
+  perform assert_eq(
+    (public.pos_sale_by_number(v_tok, lower(v_sale.doc_number) || ' ')->>'id')::uuid, v_sale.id,
+    'the invoice is found by its number, case and spaces aside');
+  perform assert_eq(
+    (public.pos_sale_by_number(v_tok, v_sale.doc_number)->>'subtotal')::numeric, v_price,
+    'and comes with every figure the slip needs');
+  perform assert(public.pos_sale_by_number(v_tok, 'INV-999999') is null,
+    'an unknown number finds nothing');
+
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 2)));
+  select * into v_found from public.pos_quote_by_number(v_tok, v_q.doc_number);
+  perform assert_eq(v_found.id, v_q.quote_id, 'a quote is found by its number');
+  perform assert_eq(v_found.status, 'open', 'and says whether it is still open');
+
+  perform assert_refuses(
+    format('select public.pos_sale_by_number(%L, %L)', 'not-a-token', v_sale.doc_number),
+    'a stranger cannot look invoices up');
+end $$;
+
 select 'all database tests passed' as result;

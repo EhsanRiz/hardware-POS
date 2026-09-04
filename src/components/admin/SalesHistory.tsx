@@ -15,6 +15,7 @@ import type { Sale, SaleItem, User } from "../../lib/types";
 import { can } from "../../lib/permissions";
 import ManagerPinModal from "../ManagerPinModal";
 import ReturnSheet from "./ReturnSheet";
+import SaleDetail from "../SaleDetail";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "today", label: "Today" },
@@ -70,6 +71,8 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
   const [releasing, setReleasing] = useState<SaleRow | null>(null);
   // The sale taking a return, if any.
   const [returning, setReturning] = useState<SaleRow | null>(null);
+  // A row is a door, not only a line: tapping it opens the sale.
+  const [detail, setDetail] = useState<SaleRow | null>(null);
   // Which sale has its discounts open, and the lines once they have been
   // fetched. Kept per sale rather than cleared on close: an owner working down
   // a day opens several, and a second look should not cost a second round trip.
@@ -282,7 +285,11 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
         ) : (
           <ul className="divide-y divide-stone-200 bg-white rounded-xl border border-stone-200">
             {data.rows.map((s) => (
-              <li key={s.id} className="px-4 py-3 flex items-center gap-3 flex-wrap">
+              <li
+                key={s.id}
+                className="px-4 py-3 flex items-center gap-3 flex-wrap cursor-pointer even:bg-stone-50/70 hover:bg-amber-50"
+                onClick={() => setDetail(s)}
+              >
                 <span className="flex-1 min-w-0">
                   <span className="block">
                     <span className={s.status === "voided" ? "line-through text-stone-400" : ""}>
@@ -343,7 +350,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                 {s.status === "pending_approval" && (
                   <button
                     className="text-sm text-gold-700 underline underline-offset-2"
-                    onClick={() => setReleasing(s)}
+                    onClick={(e) => { e.stopPropagation(); setReleasing(s); }}
                   >
                     Release
                   </button>
@@ -355,7 +362,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                     disabled={loadingLines === s.id}
                     aria-expanded={openDiscount === s.id}
                     aria-label={`Discounts on ${s.doc_number ?? "this sale"}`}
-                    onClick={() => void toggleDiscounts(s)}
+                    onClick={(e) => { e.stopPropagation(); void toggleDiscounts(s); }}
                   >
                     {loadingLines === s.id
                       ? "Opening…"
@@ -372,7 +379,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                 {s.status === "completed" && can(user, "void_refund") && (
                   <button
                     className="text-sm text-red-800 underline underline-offset-2"
-                    onClick={() => setReturning(s)}
+                    onClick={(e) => { e.stopPropagation(); setReturning(s); }}
                   >
                     Return
                   </button>
@@ -381,7 +388,7 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                 <button
                   className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
                   disabled={printing === s.id}
-                  onClick={() => void reprint(s)}
+                  onClick={(e) => { e.stopPropagation(); void reprint(s); }}
                 >
                   {printing === s.id ? "Printing…" : "Reprint"}
                 </button>
@@ -435,6 +442,15 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
               </li>
             ))}
           </ul>
+        )}
+
+        {detail && (
+          <SaleDetail
+            sale={detail}
+            pin={pin}
+            onClose={() => setDetail(null)}
+            onChanged={load}
+          />
         )}
 
         {returning && (

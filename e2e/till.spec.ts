@@ -907,6 +907,7 @@ test("a cashier inside their limit does not have to fetch anybody", async ({ pag
 
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect.poll(() => be.storedSales.length).toBe(1);
   expect(be.storedSales[0].discount_amount).toBe(11.5);
   // Nobody was asked, so nobody is recorded as having approved it — and the
   // sale completes rather than parking.
@@ -1913,6 +1914,18 @@ test("the day closes for the whole shop: every till, the card machine, the banki
   await expect(row).toContainText("Balanced");
   await expect(row).toContainText("400.00");
 
+  // A till's row is a door to its whole cash-up, and its own slip.
+  await row.click();
+  const cashup = page.getByRole("dialog", { name: "Cash-up Front Counter" });
+  await expect(cashup).toBeVisible();
+  await expect(cashup).toContainText("Expected in drawer");
+  await expect(cashup).toContainText("Banked · float kept");
+  await cashup.getByRole("button", { name: /Print this cash-up/i }).click();
+  await expect(page.locator("#print-area")).toContainText("CASH-UP");
+  const closePreview = page.getByLabel("Close", { exact: true });
+  if (await closePreview.count()) await closePreview.first().click();
+  await page.getByLabel("Close cash-up").click();
+
   // And the piece of paper for the banking bag.
   await page.getByRole("button", { name: /Print day close/i }).click();
   const slip = page.locator("#print-area");
@@ -1963,6 +1976,175 @@ test("departments report what sold and at what margin, VAT by month nets the cre
   expect(lines[1]).toContain("INV-000001");
   expect(lines[1]).toContain("Cement 42.5N 50kg");
   expect(lines[1]).toContain("115");
+});
+
+test("a slip carries its number as a barcode, and the shelf decoder reads it back", async ({ page }) => {
+  // The tablet's printer draws the bars itself from ESC/POS; the preview
+  // draws them from the same encoder. This hands the preview's bars to the
+  // real decoder — the one the Shelf phone uses — and asks for the number.
+  await pairAndSignIn(page, USERS.manager.pin);
+  // The decoder loads with the Shelf screen; open it once so it is on hand.
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shelf$/ }).click();
+  await expect(page.getByText("Point at the barcode")).toBeVisible();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001/);
+
+  const decoded = await page.evaluate(async () => {
+    const holder = document.querySelector("#print-area [data-barcode]") as HTMLElement | null;
+    if (!holder) return "NO BARCODE ON THE SLIP";
+    const svg = holder.querySelector("svg")!;
+    const rects = Array.from(svg.querySelectorAll("g rect"));
+    const w = Number(svg.getAttribute("width")), h = Number(svg.getAttribute("height"));
+    // Drawn big and with a quiet zone, as a printer would.
+    const scale = 3, pad = 40;
+    const canvas = document.createElement("canvas");
+    canvas.width = w * scale + pad * 2;
+    canvas.height = h * scale + pad * 2;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000";
+    for (const r of rects) {
+      ctx.fillRect(
+        pad + Number(r.getAttribute("x")) * scale, pad,
+        Number(r.getAttribute("width")) * scale, h * scale
+      );
+    }
+    const reader = (window as unknown as {
+      __zxingReader?: { detect(s: unknown): Promise<{ rawValue: string }[]> };
+    }).__zxingReader;
+    if (!reader) return "NO READER EXPOSED";
+    const found = await reader.detect(canvas);
+    return found[0]?.rawValue ?? "NOT DECODED";
+  });
+  expect(decoded).toBe("INV-000001");
+});
+
+test("a scanned invoice opens the sale at the till: reprint, and a return behind a manager's PIN", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001/);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // The customer is back with the slip. The gun reads its barcode into the
+  // same box that reads products — lower case and no padding, as a worn
+  // label might come through — and the sale opens.
+  await page.getByPlaceholder(/Scan barcode/i).fill("inv-1");
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Sale INV-000001" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Cement 42.5N 50kg");
+  await expect(dialog).toContainText("115.00");
+
+  await dialog.getByRole("button", { name: /^Reprint$/ }).click();
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("TAX INVOICE");
+  await expect(slip).toContainText("INV-000001");
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // A return needs a manager, and a drawer open to pay it from.
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  await dialog.getByRole("button", { name: /^Return$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Return needs a manager" });
+  await expect(gate).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("wrong size");
+  await page.getByRole("button", { name: /Refund R\s115\.00 & print credit note/ }).click();
+  await expect(page.locator("#print-area")).toContainText("CREDIT NOTE");
+  expect(be.returns).toHaveLength(1);
+
+  // A number nobody printed says so, rather than opening nothing.
+  await page.getByLabel("Close", { exact: true }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000999");
+  await page.keyboard.press("Enter");
+  await expect(banner(page)).toContainText(/No sale INV-000999/);
+});
+
+test("a scanned quote comes back onto the till", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  await page.getByLabel("Close").click();
+  await expect(page.locator(".line-desc")).toHaveCount(0);
+
+  // The builder is back with the quote. Its barcode goes into the scan box
+  // and the lines are on the till again, ready to be sold.
+  await page.getByPlaceholder(/Scan barcode/i).fill("QUO-000001");
+  await page.keyboard.press("Enter");
+  await expect(banner(page)).toContainText(/QUO-000001 is back on the till/);
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("a quote row opens a popup with its lines, and the cross closes it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  await page.getByLabel("Close").click();
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  // The row opens the quote without loading it onto the till.
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  const dialog = page.getByRole("dialog", { name: "Quote QUO-000001" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Cement 42.5N 50kg");
+  await expect(dialog).toContainText("115.00");
+  await expect(page.locator(".line-desc")).toHaveCount(0);
+
+  await dialog.getByLabel("Close quote").click();
+  await expect(dialog).toHaveCount(0);
+
+  // And from the popup, onto the till.
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  await dialog.getByRole("button", { name: /Open on the till/ }).click();
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("a Sales row opens the sale, and the list is striped", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  for (const code of ["6001234000015", "6001234000060"]) {
+    await page.getByPlaceholder(/Scan barcode/i).fill(code);
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: /^Cash$/ }).click();
+    await page.getByRole("button", { name: /Tender & print/i }).click();
+    await page.getByLabel("Close").click();
+  }
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+
+  // Neighbouring rows differ, so the eye can follow one across.
+  const [first, second] = await page.evaluate(() => {
+    const rows = document.querySelectorAll("li:has(button)");
+    return [getComputedStyle(rows[0]).backgroundColor, getComputedStyle(rows[1]).backgroundColor];
+  });
+  expect(first).not.toBe(second);
+
+  // The row itself is the door; the buttons on it still do their own jobs.
+  await page.locator("li", { hasText: "INV-000002" }).click();
+  const dialog = page.getByRole("dialog", { name: "Sale INV-000002" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Padlock 50mm Brass");
+  await dialog.getByRole("button", { name: /^Reprint$/ }).click();
+  await expect(page.locator("#print-area")).toContainText("INV-000002");
 });
 
 test("a balanced drawer closes on one press", async ({ page }) => {
@@ -2966,8 +3148,12 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
     const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre");
     if (!pre) return { drawn: -1, real: -1 };
     const lh = parseFloat(getComputedStyle(pre).lineHeight);
+    // A barcode is one line of the slip drawn taller on purpose; count it as
+    // the one line it is, not as the wrapping this test exists to catch.
+    const bars = Array.from(pre.querySelectorAll<HTMLElement>("[data-barcode]"));
+    const barHeight = bars.reduce((t, b) => t + b.getBoundingClientRect().height, 0);
     return {
-      drawn: Math.round(pre.getBoundingClientRect().height / lh),
+      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh) + bars.length,
       real: (pre.textContent ?? "").replace(/\n$/, "").split("\n").length,
     };
   });

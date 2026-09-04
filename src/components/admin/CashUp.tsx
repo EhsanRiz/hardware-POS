@@ -330,7 +330,7 @@ export default function CashUp({ pin }: { pin: string }) {
           <h2 className="font-medium mb-2">Earlier days</h2>
           <ul className="divide-y divide-stone-200 bg-white rounded-xl border border-stone-200">
             {past.map((s) => (
-              <li key={s.id} className="px-4 py-3 flex items-center gap-3">
+              <li key={s.id} className="px-4 py-3 flex items-center gap-3 even:bg-stone-50/70">
                 <span className="flex-1">
                   <span className="block text-sm">
                     {new Date(s.opened_at).toLocaleDateString("en-ZA", {
@@ -370,7 +370,7 @@ export default function CashUp({ pin }: { pin: string }) {
 }
 
 /** The working: what was sold, and what that means the drawer should hold. */
-function Figures({ session }: { session: CashSession }) {
+export function Figures({ session }: { session: CashSession }) {
   const f = session.figures;
   return (
     <div className="bg-white rounded-xl border border-stone-200 p-5">

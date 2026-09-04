@@ -11,6 +11,7 @@
 //     voiding a sale, pairing a till.
 import { registerToken } from "./device";
 import { supabase } from "./supabase";
+import type { SaleRow } from "./sales";
 import type {
   LoginCandidate,
   AccountRow,
@@ -599,6 +600,29 @@ export async function searchProducts(
 }
 
 // --- Recent sales -----------------------------------------------------------
+
+/** A sale by the number printed on its slip, or null. Register token only;
+    the row is the one the Sales screen lists, so a reprint has every figure. */
+export async function saleByNumber(docNumber: string): Promise<SaleRow | null> {
+  const { data, error } = await supabase.rpc("pos_sale_by_number", {
+    p_register_token: requireToken(),
+    p_doc_number: docNumber,
+  });
+  if (error) throw error;
+  return (data as SaleRow | null) ?? null;
+}
+
+/** A quote by the number on its slip — any status, so a closed one can say so. */
+export async function quoteByNumber(
+  docNumber: string
+): Promise<(QuoteSummary & { status: string }) | null> {
+  const { data, error } = await supabase.rpc("pos_quote_by_number", {
+    p_register_token: requireToken(),
+    p_doc_number: docNumber,
+  });
+  if (error) throw error;
+  return (data as (QuoteSummary & { status: string })[])[0] ?? null;
+}
 
 export async function recentSales(limit = 20): Promise<RecentSale[]> {
   const { data, error } = await supabase.rpc("pos_recent_sales", {

@@ -16,6 +16,9 @@ import {
   type VatMonth,
 } from "../../lib/reports";
 import { rangeBounds, type RangeKey } from "../../lib/sales";
+import { buildCashUpText } from "../../lib/receipt";
+import { Figures } from "./CashUp";
+import type { DayCloseSession } from "../../lib/reports";
 
 /**
  * Reports: the numbers, out of the till.
@@ -189,6 +192,8 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "go
 
 function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }) {
   const t = day.totals;
+  // A till's row is a door: the whole cash-up behind it, and its slip.
+  const [open, setOpen] = useState<DayCloseSession | null>(null);
   const vTone = (v: number) => (Math.abs(v) < 0.005 ? "good" : "bad");
   const vText = (v: number) => (Math.abs(v) < 0.005 ? "Balanced" : `${v > 0 ? "Over" : "Short"} ${money(Math.abs(v))}`);
   return (
@@ -239,12 +244,12 @@ function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }
           <thead className="bg-stone-100 text-stone-600 text-left">
             <tr>
               <th className="p-2 font-medium">Till</th>
-              <th className="p-2 font-medium">Opened by</th>
-              <th className="p-2 font-medium text-right">Expected</th>
-              <th className="p-2 font-medium text-right">Counted</th>
-              <th className="p-2 font-medium text-right">Cash</th>
-              <th className="p-2 font-medium text-right">Card machine</th>
-              <th className="p-2 font-medium text-right pr-4">Banked</th>
+              <th className="p-2 font-medium hidden md:table-cell">Opened by</th>
+              <th className="p-2 font-medium text-right whitespace-nowrap">Expected</th>
+              <th className="p-2 font-medium text-right whitespace-nowrap">Counted</th>
+              <th className="p-2 font-medium text-right whitespace-nowrap">Cash</th>
+              <th className="p-2 font-medium text-right whitespace-nowrap">Card machine</th>
+              <th className="p-2 font-medium text-right pr-4 whitespace-nowrap">Banked</th>
             </tr>
           </thead>
           <tbody>
@@ -252,21 +257,29 @@ function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }
               <tr><td className="p-3 text-stone-500" colSpan={7}>No drawer was opened in this range.</td></tr>
             )}
             {day.sessions.map((s) => (
-              <tr key={s.id} className="border-t border-stone-100 even:bg-stone-50/70">
+              <tr
+                key={s.id}
+                className="border-t border-stone-100 even:bg-stone-50/70 hover:bg-amber-50 cursor-pointer"
+                onClick={() => setOpen(s)}
+              >
                 <td className="p-2">
-                  {s.register_name ?? "Till"}
-                  {!s.closed_at && <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">still open</span>}
+                  <span className="block">{s.register_name ?? "Till"}</span>
+                  <span className="block text-xs text-stone-500">
+                    {new Date(s.opened_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short" })}
+                    <span className="md:hidden"> · {s.opened_by_name}</span>
+                  </span>
+                  {!s.closed_at && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">still open</span>}
                 </td>
-                <td className="p-2 text-stone-600">{s.opened_by_name}</td>
-                <td className="p-2 text-right tabular-nums">{money(s.expected_cash ?? s.figures.expected_cash)}</td>
-                <td className="p-2 text-right tabular-nums">{s.counted_cash == null ? "—" : money(s.counted_cash)}</td>
-                <td className={`p-2 text-right tabular-nums ${s.variance == null ? "" : Math.abs(s.variance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
+                <td className="p-2 text-stone-600 hidden md:table-cell whitespace-nowrap">{s.opened_by_name}</td>
+                <td className="p-2 text-right tabular-nums whitespace-nowrap">{money(s.expected_cash ?? s.figures.expected_cash)}</td>
+                <td className="p-2 text-right tabular-nums whitespace-nowrap">{s.counted_cash == null ? "—" : money(s.counted_cash)}</td>
+                <td className={`p-2 text-right tabular-nums whitespace-nowrap ${s.variance == null ? "" : Math.abs(s.variance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
                   {s.variance == null ? "—" : vText(s.variance)}
                 </td>
-                <td className={`p-2 text-right tabular-nums ${s.card_variance == null ? "" : Math.abs(s.card_variance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
+                <td className={`p-2 text-right tabular-nums whitespace-nowrap ${s.card_variance == null ? "" : Math.abs(s.card_variance) < 0.005 ? "text-emerald-700" : "text-amber-700"}`}>
                   {s.card_counted == null ? "—" : `${money(s.card_counted)} · ${vText(s.card_variance ?? 0)}`}
                 </td>
-                <td className="p-2 text-right tabular-nums pr-4">{s.banked == null ? "—" : money(s.banked)}</td>
+                <td className="p-2 text-right tabular-nums pr-4 whitespace-nowrap">{s.banked == null ? "—" : money(s.banked)}</td>
               </tr>
             ))}
           </tbody>
@@ -279,6 +292,58 @@ function DayCloseView({ day, from, to }: { day: DayClose; from: Date; to: Date }
       >
         Print day close
       </button>
+
+      {open && (
+        <div
+          className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Cash-up ${open.register_name ?? "Till"}`}
+          onClick={() => setOpen(null)}
+        >
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b border-stone-200 flex items-start gap-3">
+              <div className="flex-1">
+                <h2 className="text-lg font-semibold">{open.register_name ?? "Till"}</h2>
+                <p className="text-sm text-stone-500">
+                  Opened {new Date(open.opened_at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} by {open.opened_by_name}
+                  {open.closed_at
+                    ? ` · closed ${new Date(open.closed_at).toLocaleString("en-ZA", { hour: "2-digit", minute: "2-digit" })} by ${open.closed_by_name ?? ""}`
+                    : " · still open"}
+                </p>
+              </div>
+              <button onClick={() => setOpen(null)} className="text-stone-400 text-2xl leading-none" aria-label="Close cash-up">×</button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 space-y-3">
+              <Figures session={open} />
+              {open.counted_cash != null && (
+                <div className="bg-white rounded-xl border border-stone-200 p-4 text-sm space-y-1">
+                  <div className="flex justify-between"><span>Counted</span><span className="tabular-nums">{money(open.counted_cash)}</span></div>
+                  <div className="flex justify-between font-medium"><span>{vText(open.variance ?? 0)}</span><span /></div>
+                  {open.card_counted != null && (
+                    <div className="flex justify-between"><span>Card machine</span><span className="tabular-nums">{money(open.card_counted)} · {vText(open.card_variance ?? 0)}</span></div>
+                  )}
+                  {open.eft_counted != null && (
+                    <div className="flex justify-between"><span>EFTs received</span><span className="tabular-nums">{money(open.eft_counted)} · {vText(open.eft_variance ?? 0)}</span></div>
+                  )}
+                  {open.banked != null && (
+                    <div className="flex justify-between"><span>Banked · float kept</span><span className="tabular-nums">{money(open.banked)} · {money(open.float_kept ?? 0)}</span></div>
+                  )}
+                  {open.note && <p className="text-stone-600 pt-1">{open.note}</p>}
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-stone-200">
+              <button
+                className="w-full py-2.5 rounded-xl bg-colophon text-paper"
+                onClick={() => printReceipt(buildCashUpText(open), "Cash-up")}
+              >
+                Print this cash-up
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -306,8 +371,8 @@ function DepartmentsView({ rows }: { rows: DepartmentRow[] }) {
           {rows.map((r) => (
             <tr key={r.department} className="border-t border-stone-100 even:bg-stone-50/70">
               <td className="p-2">{r.department}</td>
-              <td className="p-2 text-right tabular-nums">{r.lines}</td>
-              <td className="p-2 text-right tabular-nums">{money(r.sales)}</td>
+              <td className="p-2 text-right tabular-nums whitespace-nowrap">{r.lines}</td>
+              <td className="p-2 text-right tabular-nums whitespace-nowrap">{money(r.sales)}</td>
               <td className="p-2 text-right tabular-nums text-stone-500">{total > 0 ? `${((r.sales / total) * 100).toFixed(0)}%` : "—"}</td>
               <td className="p-2 text-right tabular-nums text-stone-500">{money(r.net)}</td>
               <td className="p-2 text-right tabular-nums text-stone-500">
@@ -357,10 +422,10 @@ function VatView({ rows }: { rows: VatMonth[] }) {
           {rows.map((r) => (
             <tr key={r.month} className="border-t border-stone-100 even:bg-stone-50/70">
               <td className="p-2">{label(r.month)}</td>
-              <td className="p-2 text-right tabular-nums">{r.sales_count}</td>
-              <td className="p-2 text-right tabular-nums">{money(r.gross)}</td>
+              <td className="p-2 text-right tabular-nums whitespace-nowrap">{r.sales_count}</td>
+              <td className="p-2 text-right tabular-nums whitespace-nowrap">{money(r.gross)}</td>
               <td className="p-2 text-right tabular-nums text-stone-500">{money(r.net)}</td>
-              <td className="p-2 text-right tabular-nums">{money(r.vat)}</td>
+              <td className="p-2 text-right tabular-nums whitespace-nowrap">{money(r.vat)}</td>
               <td className="p-2 text-right tabular-nums text-stone-500">{r.refunds > 0 ? `-${money(r.refunds)}` : "—"}</td>
               <td className="p-2 text-right tabular-nums pr-4 font-medium">{money(r.vat_due)}</td>
             </tr>

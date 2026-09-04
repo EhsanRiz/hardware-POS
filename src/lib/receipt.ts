@@ -63,14 +63,25 @@ export const BOLD_ON = String.fromCharCode(1);
 export const BOLD_OFF = String.fromCharCode(2);
 export const UL_ON = String.fromCharCode(3);
 export const UL_OFF = String.fromCharCode(4);
+/** The text between these prints as a Code 128 barcode, number beneath. */
+export const BAR_ON = String.fromCharCode(5);
+export const BAR_OFF = String.fromCharCode(6);
 function bold(s: string): string {
   return BOLD_ON + s + BOLD_OFF;
 }
 function underline(s: string): string {
   return UL_ON + s + UL_OFF;
 }
+/**
+ * A document number as a barcode, so the paper can come back to the counter
+ * and be scanned into the same box that scans products. Its own line; the
+ * number is printed under the bars by the printer, so it is not repeated.
+ */
+function barcode(docNumber: string): string {
+  return BAR_ON + docNumber + BAR_OFF;
+}
 const MARKUP_RE = new RegExp(
-  "[" + BOLD_ON + BOLD_OFF + UL_ON + UL_OFF + "]",
+  "[" + BOLD_ON + BOLD_OFF + UL_ON + UL_OFF + BAR_ON + BAR_OFF + "]",
   "g"
 );
 export function stripMarkup(s: string): string {
@@ -165,6 +176,7 @@ export function buildReceiptText(
   // what happened and not what they need to do about it.
   if (sale.doc_number) {
     out.push(`Invoice No: ${sale.doc_number}`);
+    out.push(barcode(sale.doc_number));
   } else if (sale.status === "pending_approval") {
     out.push("NOT AN INVOICE — awaiting approval");
   } else {
@@ -340,7 +352,10 @@ export function buildQuoteText(
     opts.showLinePrices ?? shopSettings().quote_show_line_prices !== false;
   shopHeader(out, "QUOTE");
   out.push("");
-  if (opts.docNumber) out.push(bold(opts.docNumber));
+  if (opts.docNumber) {
+    out.push(bold(opts.docNumber));
+    out.push(barcode(opts.docNumber));
+  }
   out.push(fmtDateTime(new Date()));
   if (opts.trade) out.push("Trade pricing");
   out.push(solid());
@@ -729,7 +744,12 @@ export function buildCreditNoteText(cn: {
   shopHeader(out, "CREDIT NOTE");
   out.push("");
   out.push(bold(center(cn.doc_number)));
-  if (cn.sale_doc_number) out.push(center(`against Tax Invoice ${cn.sale_doc_number}`));
+  if (cn.sale_doc_number) {
+    out.push(center(`against Tax Invoice ${cn.sale_doc_number}`));
+    // The invoice's barcode, not the credit note's: what a counter looks up
+    // is the sale, and the credit notes hang off it.
+    out.push(barcode(cn.sale_doc_number));
+  }
   out.push(fmtDateTime(new Date(cn.created_at)));
   out.push(solid());
 

@@ -127,7 +127,7 @@ export default function StaffAdmin({
         ) : (
           <ul className="max-w-3xl divide-y divide-stone-200 bg-white rounded-xl border border-stone-200">
             {staff.map((s) => (
-              <li key={s.id}>
+              <li key={s.id} className="even:bg-stone-50/70">
                 <button
                   className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-stone-50"
                   onClick={() => setEditing(s)}

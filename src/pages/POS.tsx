@@ -8,10 +8,15 @@ import {
   fetchCategories,
   listCustomers,
   NotPairedError,
+  quoteByNumber,
+  quoteItems,
+  saleByNumber,
   saveQuote,
   type QuoteLine,
   type QuoteSummary,
 } from "../lib/api";
+import SaleDetail from "../components/SaleDetail";
+import type { SaleRow } from "../lib/sales";
 import { adminListProducts, shelfLookup, stockMovements } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
@@ -203,6 +208,9 @@ export default function POS() {
   // A drawer opened on another day. Asked of the server on every refresh so
   // the notice appears at sign-in and disappears the moment the day is closed.
   const [staleSession, setStaleSession] = useState<CashSessionStatus | null>(null);
+  // A slip scanned back into the till: the sale it names, opened for a
+  // reprint or a return.
+  const [docSale, setDocSale] = useState<SaleRow | null>(null);
   const [adminTab, setAdminTab] = useState<"cashup" | undefined>(undefined);
 
   // A trade customer prices off the trade list. Resolved server-side too — this
@@ -411,6 +419,40 @@ export default function POS() {
    * the banner before a single item is rung, so honouring the promise (with a
    * discount) is a decision made looking at the difference, not after it.
    */
+  /**
+   * The barcode on a slip is its number. An invoice opens for a reprint or a
+   * return; a quote comes back onto the till; a credit note points at the
+   * invoice it was written against, which is the thing to scan.
+   */
+  async function openDocument(docNumber: string) {
+    try {
+      if (docNumber.startsWith("INV-")) {
+        const sale = await saleByNumber(docNumber);
+        if (!sale) {
+          setBanner(`No sale ${docNumber} is on record.`);
+          return;
+        }
+        setDocSale(sale);
+      } else if (docNumber.startsWith("QUO-")) {
+        const q = await quoteByNumber(docNumber);
+        if (!q) {
+          setBanner(`No quote ${docNumber} is on record.`);
+          return;
+        }
+        if (q.status !== "open") {
+          setBanner(`Quote ${docNumber} is already ${q.status}.`);
+          return;
+        }
+        recallQuote(q, await quoteItems(q.id));
+        setBanner(`Quote ${docNumber} is back on the till.`);
+      } else {
+        setBanner("A credit note is found through its invoice — scan the invoice number instead.");
+      }
+    } catch (e) {
+      setBanner(errorMessage(e, "Could not open that slip"));
+    }
+  }
+
   function recallQuote(q: QuoteSummary, quoteLines: QuoteLine[]) {
     const byId = new Map(products.map((p) => [p.id, p]));
     const cart: CartLine[] = [];
@@ -737,6 +779,7 @@ export default function POS() {
             onAdd={addProduct}
             onInspect={(p) => setInspecting({ product: p, mode: "add" })}
             onPickCustomer={() => setShowCustomers(true)}
+            onDocument={(d) => void openDocument(d)}
             inputRef={scanRef}
           />
 
@@ -1083,6 +1126,18 @@ export default function POS() {
             setAdminTab(undefined);
             void refresh();
           }}
+        />
+      )}
+
+      {docSale && (
+        <SaleDetail
+          sale={docSale}
+          pin={null}
+          onClose={() => {
+            setDocSale(null);
+            scanRef.current?.focus();
+          }}
+          onChanged={refresh}
         />
       )}
 

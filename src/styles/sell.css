@@ -1366,8 +1366,11 @@
 }
 .acc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .acc-table .quiet { color: var(--color-neutral-700); }
+/* Zebra rows on every list of records under the till: accounts, quotes, the
+   ledger. Nine columns is a long way for the eye to travel. */
+.sell tbody tr:nth-child(even) > td { background: rgba(28, 25, 23, 0.035); }
 .acc-row { cursor: pointer; }
-.acc-row:hover td { background: var(--color-neutral-100); }
+.sell .acc-row:hover td { background: var(--color-neutral-100); }
 .acc-empty { text-align: center; color: var(--color-neutral-700); padding: 28px 10px; }
 
 .acc-name { display: block; font-weight: 500; }
