@@ -16,6 +16,7 @@ import {
   type QuoteSummary,
 } from "../lib/api";
 import SaleDetail from "../components/SaleDetail";
+import CancelSale, { type CancellableSale } from "../components/CancelSale";
 import type { SaleRow } from "../lib/sales";
 import { adminListProducts, shelfLookup, stockMovements } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
@@ -209,6 +210,10 @@ export default function POS() {
   const [askAdminPin, setAskAdminPin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  // The sale just rung, while "actually, no" is still a live possibility —
+  // cleared the moment the next one starts. And the one being cancelled.
+  const [lastSale, setLastSale] = useState<CancellableSale | null>(null);
+  const [cancelSale, setCancelSale] = useState<CancellableSale | null>(null);
   // A drawer opened on another day. Asked of the server on every refresh so
   // the notice appears at sign-in and disappears the moment the day is closed.
   const [staleSession, setStaleSession] = useState<CashSessionStatus | null>(null);
@@ -660,11 +665,23 @@ export default function POS() {
         note: null,
       });
 
+      // Only a sale the server accepted can be cancelled: a queued one has
+      // nothing on the server to void yet, and a parked one is not a sale.
+      const done: CancellableSale | null =
+        !queued && sale.id && sale.status === "completed"
+          ? {
+              id: sale.id,
+              doc_number: sale.doc_number,
+              total: sale.total,
+              payment_method: sale.payment_method,
+            }
+          : null;
       printReceipt(
         // The tenders go on the slip: a customer disputing a card charge needs
         // to see which card, for how much, against which invoice.
         buildReceiptText(sale, receiptItems(), customer, p.payments),
-        "Tax Invoice"
+        "Tax Invoice",
+        done ? { label: "Cancel this sale", run: () => setCancelSale(done) } : undefined
       );
 
       // If this cart came off a quote and the sale reached the server, close
@@ -680,6 +697,7 @@ export default function POS() {
       }
 
       clearSale();
+      setLastSale(done);
       // A sale the server parked is NOT completed, and saying so was how a
       // cashier came to hand over a slip that was not an invoice and walk away
       // believing the sale had gone through. A missing document number is the
@@ -763,8 +781,29 @@ export default function POS() {
       {header}
 
       {banner && (
-        <div className="sell-banner" onClick={() => setBanner(null)} role="status">
+        <div
+          className="sell-banner"
+          onClick={() => {
+            setBanner(null);
+            setLastSale(null);
+          }}
+          role="status"
+        >
           {banner}
+          {/* On a thermal till the slip went straight to paper, so this is
+              the only place the cancel can be offered. */}
+          {lastSale && (
+            <button
+              type="button"
+              className="cash-up-now"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCancelSale(lastSale);
+              }}
+            >
+              Cancel this sale
+            </button>
+          )}
           <span className="dismiss">dismiss</span>
         </div>
       )}
@@ -1202,9 +1241,26 @@ export default function POS() {
         />
       )}
 
+      {cancelSale && user && (
+        <CancelSale
+          sale={cancelSale}
+          cashierId={user.id}
+          pin={null}
+          onClose={() => setCancelSale(null)}
+          onDone={async () => {
+            const c = cancelSale;
+            setCancelSale(null);
+            setLastSale(null);
+            setBanner(`${c.doc_number ?? "The sale"} cancelled — hand back ${money(c.total)}.`);
+            await refresh();
+          }}
+        />
+      )}
+
       {docSale && (
         <SaleDetail
           sale={docSale}
+          cashierId={user?.id ?? null}
           pin={null}
           onClose={() => {
             setDocSale(null);

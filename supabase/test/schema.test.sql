@@ -2194,4 +2194,84 @@ begin
   delete from public.products where id in (v_a.id, v_b.id, v_c.id);
 end $$;
 
+-- 0054: cancelling a sale, with the manager on the phone -----------------------
+
+do $$
+declare v_tok text; v_mgr uuid; v_emp uuid; v_cem uuid; v_before numeric;
+        v_sale public.sales; v_row public.sales; v_code record; v_used record;
+        v_sigs int; v_ret record; v_li public.sale_items;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, stock_qty into v_cem, v_before from public.products where sku = 'CEM-425-50';
+
+  -- The old way still works: a manager's PIN, one signature.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 2)),
+    p_payment_method => 'cash');
+  v_row := public.pos_void_sale(v_sale.id, v_tok, '1234', 'changed mind');
+  perform assert_eq(v_row.status, 'voided'::sale_status, 'a manager''s PIN cancels a sale');
+  perform assert_eq(v_row.voided_by, v_mgr, 'and the manager is on record');
+  perform assert_eq((select stock_qty from public.products where id = v_cem), v_before,
+    'the stock is back on the shelf');
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_void_sale';
+  perform assert_eq(v_sigs, 1, 'pos_void_sale has exactly one signature');
+
+  -- A cashier's own PIN is not enough. ('2222' is the counter hand's PIN by
+  -- this point in the file — see the shelf block; '5678' was retired there.)
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'cash');
+  perform assert(exists (select 1 from public.app_users u where u.id = v_emp
+    and u.pin_hash = crypt('2222', u.pin_hash)), 'the counter hand still answers to 2222');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L)', v_sale.id, v_tok, '2222', 'x'),
+    'a cashier cannot cancel a sale unaided');
+
+  -- The manager on the phone: a code, capped, single use, attributed to them.
+  select * into v_code from public.pos_issue_approval_code(v_tok, '1234', 10, 50, 'phoned');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L, %L)',
+      v_sale.id, v_tok, v_code.code, 'phoned', v_emp),
+    'a code for R50 cannot cancel a R115 sale');
+  select * into v_code from public.pos_issue_approval_code(v_tok, '1234', 10, null, 'phoned');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L)', v_sale.id, v_tok, v_code.code, 'phoned'),
+    'a code needs the cashier who is using it');
+  v_row := public.pos_void_sale(v_sale.id, v_tok, v_code.code, 'phoned', v_emp);
+  perform assert_eq(v_row.status, 'voided'::sale_status, 'a phoned code cancels the sale');
+  perform assert_eq(v_row.voided_by, v_mgr, 'recorded against the manager who issued it');
+  select used_by, used_on_sale into v_used from public.approval_codes
+   where used_on_sale = v_sale.id;
+  perform assert_eq(v_used.used_by, v_emp, 'and the code is spent by the cashier who typed it');
+  perform assert_eq(v_used.used_on_sale, v_sale.id, 'on this sale');
+
+  -- Spent is spent.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 1)),
+    p_payment_method => 'cash');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L, %L)',
+      v_sale.id, v_tok, v_code.code, 'again', v_emp),
+    'a used code is refused');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L, %L)',
+      v_sale.id, v_tok, '000000', 'guess', v_emp),
+    'and so is a guess');
+
+  -- A sale with a credit note against it is finished with the return screen.
+  perform public.pos_cash_session_open(v_tok, '1234', 100);
+  select * into v_li from public.sale_items where sale_id = v_sale.id limit 1;
+  select * into v_ret from public.pos_return_sale(v_tok, '1234', v_sale.id,
+    jsonb_build_array(jsonb_build_object('sale_item_id', v_li.id, 'qty', 1)), 'part');
+  perform assert_refuses(
+    format('select public.pos_void_sale(%L, %L, %L, %L)', v_sale.id, v_tok, '1234', 'x'),
+    'a sale that has been returned against cannot then be cancelled');
+  perform public.pos_cash_session_close(v_tok, '1234', 100);
+end $$;
+
 select 'all database tests passed' as result;

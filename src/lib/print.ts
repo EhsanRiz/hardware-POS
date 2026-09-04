@@ -5,7 +5,7 @@
 // On desktop we fall back to a printable text preview.
 import { PRINT_HEIGHT_SCALE, PRINT_WIDTH_SCALE } from "./config";
 import { LOGO_ESCPOS_B64 } from "./logoRaster";
-import { openPrintPreview } from "./printPreview";
+import { openPrintPreview, type PreviewAction } from "./printPreview";
 import { stripMarkup } from "./receipt";
 
 const ESC = 0x1b;
@@ -117,14 +117,16 @@ export function buildEscPos(text: string): number[] {
   return b;
 }
 
-export function printReceipt(text: string, title = "Receipt"): void {
+export function printReceipt(text: string, title = "Receipt", action?: PreviewAction): void {
   if (useThermal()) {
+    // Straight to paper; there is no popup to put the action on. The till
+    // offers it in the banner instead, which is where the cashier looks next.
     window.location.href = "rawbt:base64," + bytesToB64(buildEscPos(text));
     return;
   }
 
   // Browser fallback: show an in-app popup preview (logo + monospace text).
-  openPrintPreview(text, title);
+  openPrintPreview(text, title, action);
 }
 
 // Save a slip as a .txt file (and offer the native share sheet on mobile when

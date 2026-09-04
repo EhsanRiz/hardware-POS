@@ -6,6 +6,7 @@ import { printReceipt } from "../lib/print";
 import { buildReceiptText } from "../lib/receipt";
 import type { SaleRow } from "../lib/sales";
 import type { Payment, Sale, SaleItem } from "../lib/types";
+import CancelSale from "./CancelSale";
 import ManagerPinModal from "./ManagerPinModal";
 import ReturnSheet from "./admin/ReturnSheet";
 import { fmtDateTime } from "../lib/dates";
@@ -37,12 +38,15 @@ const TENDER_LABEL: Record<string, string> = {
 export default function SaleDetail({
   sale,
   pin,
+  cashierId,
   onClose,
   onChanged,
 }: {
   sale: SaleLike;
   /** A manager's PIN if one is already held (Manage); null asks for it. */
   pin: string | null;
+  /** Who is at the till, for a cancel approved by a phoned code. */
+  cashierId?: string | null;
   onClose: () => void;
   onChanged?: () => Promise<void> | void;
 }) {
@@ -51,6 +55,7 @@ export default function SaleDetail({
   const [error, setError] = useState<string | null>(null);
   const [askPin, setAskPin] = useState(false);
   const [returnPin, setReturnPin] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,8 +171,32 @@ export default function SaleDetail({
               Return
             </button>
           )}
+          {returnable && (
+            <button
+              className="py-2.5 px-4 rounded-xl border border-red-200 text-red-700"
+              onClick={() => setCancelling(true)}
+            >
+              Cancel this sale
+            </button>
+          )}
         </div>
       </div>
+
+      {cancelling && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <CancelSale
+            sale={sale}
+            cashierId={cashierId ?? null}
+            pin={pin}
+            onClose={() => setCancelling(false)}
+            onDone={async () => {
+              setCancelling(false);
+              await onChanged?.();
+              onClose();
+            }}
+          />
+        </div>
+      )}
 
       {askPin && (
         <div onClick={(e) => e.stopPropagation()}>

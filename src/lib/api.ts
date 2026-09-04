@@ -341,14 +341,18 @@ export async function approveSale(
 /** Void a sale: puts the stock back and takes it out of the totals. */
 export async function voidSale(
   saleId: string,
-  managerPin: string,
-  reason: string | null
+  /** A manager's PIN, or a one-time code a manager issued (0054). */
+  secret: string,
+  reason: string | null,
+  /** Who is at the till, recorded when a code is spent. */
+  cashierId: string | null = null
 ): Promise<Sale> {
   const { data, error } = await supabase.rpc("pos_void_sale", {
     p_sale_id: saleId,
     p_register_token: requireToken(),
-    p_pin: managerPin,
+    p_pin: secret,
     p_reason: reason,
+    p_cashier_id: cashierId,
   });
   if (error) throw error;
   return data as Sale;
