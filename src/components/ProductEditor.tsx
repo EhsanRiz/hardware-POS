@@ -151,12 +151,19 @@ export default function ProductEditor({
 
         <div className="p-4 space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="SKU" hint="Your own code. Must be unique.">
+            <Field
+              label="SKU"
+              hint={
+                product
+                  ? "Your own code. Must be unique."
+                  : "Your own code, or leave blank and the next number (SKU-000412) is assigned."
+              }
+            >
               <input
                 value={f.sku}
                 onChange={(e) => set("sku", e.target.value)}
                 className={inputCls}
-                placeholder="CEM-425-50"
+                placeholder={product ? "CEM-425-50" : "Assigned if blank"}
               />
             </Field>
             <Field label="Barcode" hint="Scanned at the till. Leave blank if none.">
@@ -465,7 +472,7 @@ export default function ProductEditor({
           </button>
           <button
             onClick={save}
-            disabled={busy || !f.sku || !f.name}
+            disabled={busy || !f.name}
             className="px-6 py-2.5 rounded-xl bg-gold-400 text-colophon font-semibold disabled:opacity-40"
           >
             {busy ? "Saving…" : "Save"}

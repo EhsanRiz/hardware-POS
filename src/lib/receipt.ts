@@ -112,12 +112,14 @@ export function wrapTerms(text: string, width = RECEIPT_WIDTH): string[] {
   return out;
 }
 
-/** The shop's small print, if it has any, under a rule of its own. */
+/** The shop's small print, if it has any, under a rule of its own, centred. */
 function termsBlock(out: string[], text: string | null | undefined): void {
-  const lines = wrapTerms((text ?? "").trim());
+  // Folded two columns short of the paper on each side, so a centred
+  // paragraph reads as a block with margins rather than ragged full lines.
+  const lines = wrapTerms((text ?? "").trim(), RECEIPT_WIDTH - 4);
   if (!lines.length) return;
   out.push(divider());
-  out.push(...lines);
+  out.push(...lines.map((l) => center(l)));
 }
 
 export function stripMarkup(s: string): string {
@@ -205,13 +207,15 @@ export function buildReceiptText(
   // other is waiting for a manager. Printing "pending sync" over both told a
   // customer holding a parked sale that the shop's line was down, which is not
   // what happened and not what they need to do about it.
+  // Centred, over the centred bars, so the number and its barcode read as
+  // one block rather than a label hanging off the left margin.
   if (sale.doc_number) {
-    out.push(`Invoice No: ${sale.doc_number}`);
+    out.push(center(`Invoice No: ${sale.doc_number}`));
     out.push(barcode(sale.doc_number));
   } else if (sale.status === "pending_approval") {
-    out.push("NOT AN INVOICE — awaiting approval");
+    out.push(center("NOT AN INVOICE — awaiting approval"));
   } else {
-    out.push("Invoice No: pending sync");
+    out.push(center("Invoice No: pending sync"));
   }
   out.push(fmtDateTime(new Date(sale.created_at)));
   out.push(`Served by: ${sale.cashier_name}`);
