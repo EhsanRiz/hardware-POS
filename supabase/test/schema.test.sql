@@ -2442,4 +2442,78 @@ begin
   perform assert_eq(v_n, 0, 'the lines go with the document');
 end $$;
 
+-- 0057: the address and the banking, off the same letterhead --------------------
+
+do $$
+declare v_tok text; v_r record; v_sup public.suppliers; v_row record; v_id uuid;
+begin
+  select token into v_tok from till;
+
+  -- A new supplier learns everything the page carries.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Benoni Valves', '4111222333', '011 555 0100',
+    'sales@benonivalves.co.za', 'invoice', 'BV-1', current_date,
+    null, null, 998.00, null, '[]'::jsonb, true,
+    '25 Birmingham Road, Benoni South, 1502',
+    'FNB', 'BENONI VALVES', '62399227258', '250655');
+  perform assert(v_r.supplier_created, 'the letterhead becomes a supplier');
+  perform assert_eq(v_r.details_filled, 0, 'nothing was "filled in" — it was born with them');
+  select * into v_sup from public.suppliers where id = v_r.supplier_id;
+  perform assert_eq(v_sup.address, '25 Birmingham Road, Benoni South, 1502',
+    'with the address off the letterhead');
+  perform assert_eq(v_sup.bank_account_number, '62399227258',
+    'and the account its invoice gets paid into');
+  perform assert_eq(v_sup.bank_branch_code, '250655', 'and the branch code');
+
+  select * into v_row from public.pos_purchasing_suppliers(v_tok, '1234')
+   where id = v_sup.id;
+  perform assert_eq(v_row.bank_name, 'FNB', 'the list carries the banking');
+  perform assert_eq(v_row.address, '25 Birmingham Road, Benoni South, 1502',
+    'and the address');
+
+  -- A supplier already on file, with a gap and a decision.
+  update public.suppliers set address = null, bank_name = null,
+         bank_account_number = '9999999999'
+   where id = v_sup.id;
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Benoni Valves', '4111222333', null, null,
+    'invoice', 'BV-2', current_date, null, null, 12.00, null, '[]'::jsonb, true,
+    '25 Birmingham Road, Benoni South, 1502',
+    'FNB', 'BENONI VALVES', '62399227258', '250655');
+  perform assert(not v_r.supplier_created, 'the same shop, matched');
+  perform assert_eq(v_r.details_filled, 2, 'two blanks were filled, and counted');
+  select * into v_sup from public.suppliers where id = v_r.supplier_id;
+  perform assert_eq(v_sup.address, '25 Birmingham Road, Benoni South, 1502',
+    'the blank address is learnt');
+  perform assert_eq(v_sup.bank_name, 'FNB', 'and the blank bank');
+  -- The one that matters: a photograph does not get to change an account
+  -- number somebody put there.
+  perform assert_eq(v_sup.bank_account_number, '9999999999',
+    'what a person entered is never overwritten by a reading');
+
+  -- The form is the other way round: a person clearing a box means it.
+  v_sup := public.pos_purchasing_save_supplier(
+    v_tok, '1234', v_sup.id, 'Benoni Valves', p_bank_account_number => '62399227258');
+  perform assert_eq(v_sup.bank_account_number, '62399227258',
+    'a person correcting the account number is obeyed');
+  perform assert(v_sup.address is null, 'and a box they left blank is blank');
+
+  -- One signature each, after the drop-and-recreate.
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_file_document'), 1,
+    'pos_purchasing_file_document has exactly one signature');
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_save_supplier'), 1,
+    'and so does pos_purchasing_save_supplier');
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_suppliers'), 1,
+    'and pos_purchasing_suppliers');
+
+  delete from public.supplier_documents where supplier_id = v_sup.id;
+  delete from public.suppliers where id = v_sup.id;
+end $$;
+
 select 'all database tests passed' as result;

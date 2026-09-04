@@ -63,7 +63,11 @@ export default function ScanDocument({
   /** Opened from a supplier's own page: start pointed at them. */
   forSupplier?: Supplier | null;
   onClose: () => void;
-  onFiled: (result: { documentId: string; supplierName: string; created: boolean; lines: number }) => Promise<void>;
+  onFiled: (result: {
+    documentId: string; supplierName: string; created: boolean;
+    /** Blanks on a supplier we already had, learnt from this letterhead. */
+    filled: number; lines: number;
+  }) => Promise<void>;
 }) {
   const [stage, setStage] = useState<Stage>("capture");
   const [pages, setPages] = useState<PendingPage[]>([]);
@@ -188,6 +192,11 @@ export default function ScanDocument({
         supplier_vat: read?.supplier_vat ?? null,
         supplier_phone: read?.supplier_phone ?? null,
         supplier_email: read?.supplier_email ?? null,
+        supplier_address: read?.supplier_address ?? null,
+        bank_name: read?.bank_name ?? null,
+        bank_account_name: read?.bank_account_name ?? null,
+        bank_account_number: read?.bank_account_number ?? null,
+        bank_branch_code: read?.bank_branch_code ?? null,
         kind: header.kind,
         doc_number: header.doc_number.trim() || null,
         doc_date: header.doc_date || null,
@@ -208,6 +217,7 @@ export default function ScanDocument({
         documentId: filed.document_id,
         supplierName: filed.supplier_name,
         created: filed.supplier_created,
+        filled: filed.details_filled ?? 0,
         lines: lines.length,
       });
     } catch (e) {
@@ -218,6 +228,13 @@ export default function ScanDocument({
   }
 
   const newSupplierName = read?.supplier_name?.trim() || "";
+  const letterhead = [
+    read?.supplier_address,
+    read?.supplier_phone,
+    read?.supplier_email,
+    [read?.bank_name, read?.bank_account_number, read?.bank_branch_code]
+      .filter(Boolean).join(" ") || null,
+  ].filter((v): v is string => !!v && v.trim() !== "");
   const willCreate = !supplierId && !!newSupplierName;
 
   return (
@@ -315,6 +332,15 @@ export default function ScanDocument({
                     ? `Not one of your suppliers yet — it will be added${read?.supplier_vat ? `, VAT ${read.supplier_vat}` : ""}.`
                     : "Pick who sent this."}
               </span>
+              {/* What else the letterhead gave up. Shown because it is about
+                  to be kept: an address and an account number are things a
+                  person should see before they become the shop's record.
+                  On a supplier we already have, only the blanks are filled. */}
+              {letterhead.length > 0 && (
+                <span className="block text-xs text-stone-500 mt-1">
+                  Also off the page: {letterhead.join(" · ")}
+                </span>
+              )}
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">

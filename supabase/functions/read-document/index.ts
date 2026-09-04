@@ -52,6 +52,11 @@ const SCHEMA = {
     supplier_vat: { type: "string" },
     supplier_phone: { type: "string" },
     supplier_email: { type: "string" },
+    supplier_address: { type: "string" },
+    bank_name: { type: "string" },
+    bank_account_name: { type: "string" },
+    bank_account_number: { type: "string" },
+    bank_branch_code: { type: "string" },
     kind: { type: "string", enum: ["quote", "invoice", "delivery_note", "statement", "other"] },
     doc_number: { type: "string" },
     doc_date: { type: "string" },
@@ -79,7 +84,11 @@ const SCHEMA = {
 
 const PROMPT = `You are reading a document a hardware shop received from one of its SUPPLIERS: a quotation, invoice, delivery note or statement.
 
-Return the supplier's own details from the letterhead — NOT the customer's. The customer here is the hardware shop the document is addressed to; ignore its name, address and VAT number entirely. The supplier is the business that issued the document, usually at the top or in the letterhead.
+Return the supplier's own details from the letterhead — NOT the customer's. The customer here is the hardware shop the document is addressed to; ignore its name, address, VAT number and banking entirely. The supplier is the business that issued the document, usually at the top or in the letterhead.
+
+supplier_address is the supplier's street address as printed, on one line, comma separated: "25 Birmingham Road, Benoni South, 1502".
+
+The banking is usually at the foot of the page, under a heading like BANKING DETAILS. bank_name is the bank ("FNB", "Standard Bank"), bank_account_name the name the account is held in, bank_account_number the account number, bank_branch_code the branch or universal code. Give digits only for the account and branch numbers. If the page shows no banking, leave those fields out.
 
 For every priced or listed item row, return one line with:
 - supplier_code: the supplier's stock/product code for that row, if the row has one

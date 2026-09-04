@@ -80,11 +80,18 @@ export default function Suppliers({ pin }: { pin: string }) {
 
   /** After a scan: say what happened, and land where the document is. */
   const afterFiling = useCallback(
-    async (r: { documentId: string; supplierName: string; created: boolean; lines: number }) => {
+    async (r: {
+      documentId: string; supplierName: string; created: boolean;
+      filled: number; lines: number;
+    }) => {
       setScanning(false);
       setBanner(
         `Filed under ${r.supplierName}${r.created ? " (added as a new supplier)" : ""}` +
-        (r.lines ? ` with ${r.lines} ${r.lines === 1 ? "line" : "lines"}.` : ".")
+        (r.lines ? ` with ${r.lines} ${r.lines === 1 ? "line" : "lines"}.` : ".") +
+        // Said out loud, because a record changed that nobody asked to change.
+        (r.filled
+          ? ` Learnt ${r.filled} missing ${r.filled === 1 ? "detail" : "details"} about them from the letterhead.`
+          : "")
       );
       const all = await purchasingSuppliers(pin).catch(() => null);
       if (all) {
@@ -118,8 +125,12 @@ export default function Suppliers({ pin }: { pin: string }) {
           <div className="acc-head-who">
             <h2>{selected.name}</h2>
             <p className="acc-sub" style={{ fontSize: 13 }}>
-              {[selected.contact_name, selected.phone, selected.email,
-                selected.vat_number ? `VAT ${selected.vat_number}` : null]
+              {[selected.contact_name, selected.phone, selected.email, selected.address,
+                selected.vat_number ? `VAT ${selected.vat_number}` : null,
+                selected.bank_name
+                  ? [selected.bank_name, selected.bank_account_number, selected.bank_branch_code]
+                      .filter(Boolean).join(" ")
+                  : null]
                 .filter(Boolean).join(" · ") || "No details yet"}
               {selected.notes ? ` · ${selected.notes}` : ""}
             </p>
@@ -387,7 +398,14 @@ function SupplierPeek({
     ["Contact", supplier.contact_name],
     ["Phone", supplier.phone],
     ["Email", supplier.email],
+    ["Address", supplier.address],
     ["VAT number", supplier.vat_number],
+    // Where their invoice gets paid — read off the foot of their own
+    // letterhead, so nobody types an account number from a piece of paper.
+    ["Bank", supplier.bank_name],
+    ["Account name", supplier.bank_account_name],
+    ["Account number", supplier.bank_account_number],
+    ["Branch code", supplier.bank_branch_code],
     ["Notes", supplier.notes],
   ];
   return (
@@ -482,7 +500,12 @@ function SupplierForm({
     contact_name: supplier?.contact_name ?? "",
     phone: supplier?.phone ?? "",
     email: supplier?.email ?? "",
+    address: supplier?.address ?? "",
     vat_number: supplier?.vat_number ?? "",
+    bank_name: supplier?.bank_name ?? "",
+    bank_account_name: supplier?.bank_account_name ?? "",
+    bank_account_number: supplier?.bank_account_number ?? "",
+    bank_branch_code: supplier?.bank_branch_code ?? "",
     notes: supplier?.notes ?? "",
   });
   const [busy, setBusy] = useState(false);
@@ -506,7 +529,12 @@ function SupplierForm({
     ["contact_name", "Contact person"],
     ["phone", "Phone"],
     ["email", "Email"],
+    ["address", "Address"],
     ["vat_number", "VAT number"],
+    ["bank_name", "Bank"],
+    ["bank_account_name", "Account name"],
+    ["bank_account_number", "Account number"],
+    ["bank_branch_code", "Branch code"],
     ["notes", "Notes"],
   ];
 
