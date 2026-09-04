@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DOCUMENT_KIND_LABEL,
   purchasingAddDocument,
@@ -30,68 +30,191 @@ import { useOnline } from "../../lib/offline";
  */
 export default function Suppliers({ pin }: { pin: string }) {
   const online = useOnline();
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[] | null>(null);
+  const [selected, setSelected] = useState<Supplier | null>(null);
   const [docs, setDocs] = useState<SupplierDocument[] | null>(null);
-  const [filter, setFilter] = useState<string>("");
+  const [term, setTerm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [editing, setEditing] = useState<Supplier | "new" | null>(null);
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<SupplierDocument | null>(null);
+  // A row opens the supplier in a popup; Manage on it opens the page.
+  const [peek, setPeek] = useState<Supplier | null>(null);
 
-  const load = useCallback(async () => {
+  const loadSuppliers = useCallback(async () => {
     setError(null);
     try {
-      const [s, d] = await Promise.all([
-        purchasingSuppliers(pin),
-        purchasingDocuments(pin, filter || null),
-      ]);
+      const s = await purchasingSuppliers(pin);
       setSuppliers(s);
-      setDocs(d);
+      // Keep the open supplier's counts current after a filing.
+      setSelected((cur) => (cur ? s.find((x) => x.id === cur.id) ?? cur : cur));
     } catch (e) {
       setError(errorMessage(e, "Could not load the suppliers"));
     }
-  }, [pin, filter]);
+  }, [pin]);
+
+  const loadDocs = useCallback(async () => {
+    if (!selected) return;
+    setError(null);
+    try {
+      setDocs(await purchasingDocuments(pin, selected.id));
+    } catch (e) {
+      setError(errorMessage(e, "Could not load the documents"));
+    }
+  }, [pin, selected]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadSuppliers();
+  }, [loadSuppliers]);
 
-  const selected = suppliers.find((s) => s.id === filter) ?? null;
+  useEffect(() => {
+    setDocs(null);
+    void loadDocs();
+  }, [loadDocs]);
 
+  const shown = useMemo(() => {
+    const q = term.trim().toLowerCase();
+    if (!q || !suppliers) return suppliers ?? [];
+    return suppliers.filter((s) =>
+      [s.name, s.contact_name, s.phone, s.email, s.vat_number]
+        .some((v) => (v ?? "").toLowerCase().includes(q))
+    );
+  }, [suppliers, term]);
+
+  // ---- One supplier: its details and its paperwork. ----
+  if (selected) {
+    return (
+      <div className="acc">
+        <div className="acc-head">
+          <button className="btn-line" onClick={() => { setSelected(null); setBanner(null); }}>
+            ← Suppliers
+          </button>
+          <div className="acc-head-who">
+            <h2>{selected.name}</h2>
+            <p className="acc-sub" style={{ fontSize: 13 }}>
+              {[selected.contact_name, selected.phone, selected.email,
+                selected.vat_number ? `VAT ${selected.vat_number}` : null]
+                .filter(Boolean).join(" · ") || "No details yet"}
+              {selected.notes ? ` · ${selected.notes}` : ""}
+            </p>
+          </div>
+          <span className="acc-head-owed" style={{ display: "flex", gap: 8 }}>
+            <button className="btn-line" onClick={() => setEditing(selected)} disabled={!online}>
+              Edit supplier
+            </button>
+            <button className="btn-fill" onClick={() => setAdding(true)} disabled={!online}>
+              New document
+            </button>
+          </span>
+        </div>
+
+        {!online && <p className="acc-note">Supplier paperwork needs a connection.</p>}
+        {banner && <p className="acc-note is-good">{banner}</p>}
+        {error && <p className="acc-note is-bad">{error}</p>}
+
+        <div className="acc-scroll">
+          <table className="acc-table">
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Filed</th>
+                <th className="num">Pages</th>
+                <th className="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {docs === null && (
+                <tr><td colSpan={4} className="acc-empty">Looking…</td></tr>
+              )}
+              {docs !== null && docs.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="acc-empty">
+                    Nothing filed for {selected.name} yet. New document photographs the pages or takes the PDF.
+                  </td>
+                </tr>
+              )}
+              {docs?.map((d) => (
+                <tr key={d.id} className="acc-row" onClick={() => setViewing(d)}>
+                  <td>
+                    <span className="acc-name">
+                      {DOCUMENT_KIND_LABEL[d.kind]} {d.doc_number ?? ""}
+                    </span>
+                    <span className="acc-sub">
+                      {d.doc_date ? fmtDate(d.doc_date) : "no date"}
+                      {d.note ? ` · ${d.note}` : ""}
+                      {d.status !== "stored" ? ` · ${d.status}` : ""}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="acc-sub" style={{ fontSize: 13 }}>
+                      {fmtDate(d.created_at)}{d.created_by_name ? ` by ${d.created_by_name}` : ""}
+                    </span>
+                  </td>
+                  <td className="num">{d.pages} {d.pages === 1 ? "page" : "pages"}</td>
+                  <td className="num">{d.total != null ? money(d.total) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {editing && (
+          <SupplierForm
+            pin={pin}
+            supplier={editing === "new" ? null : editing}
+            onClose={() => setEditing(null)}
+            onSaved={async (s) => {
+              setEditing(null);
+              setBanner(`${s.name} saved.`);
+              await loadSuppliers();
+            }}
+          />
+        )}
+
+        {adding && (
+          <NewDocument
+            pin={pin}
+            suppliers={[selected]}
+            initialSupplier={selected.id}
+            onClose={() => setAdding(false)}
+            onDone={async (pages) => {
+              setAdding(false);
+              setBanner(`Filed with ${pages} ${pages === 1 ? "page" : "pages"}.`);
+              await Promise.all([loadDocs(), loadSuppliers()]);
+            }}
+          />
+        )}
+
+        {viewing && (
+          <DocumentView
+            pin={pin}
+            doc={viewing}
+            onClose={() => setViewing(null)}
+            onDeleted={async () => {
+              setViewing(null);
+              setBanner("Document removed.");
+              await Promise.all([loadDocs(), loadSuppliers()]);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ---- The suppliers, with enough of each to pick the right one. ----
   return (
     <div className="acc">
       <div className="acc-tools">
-        <select
+        <input
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder="Find a supplier by name, contact or phone…"
           className="modal-input"
-          style={{ marginBottom: 0, maxWidth: 320 }}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          aria-label="Supplier"
-        >
-          <option value="">All suppliers</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-              {s.document_count ? ` · ${s.document_count}` : ""}
-            </option>
-          ))}
-        </select>
-        {selected && (
-          <button className="btn-line" onClick={() => setEditing(selected)} disabled={!online}>
-            Edit supplier
-          </button>
-        )}
-        <button className="btn-line" onClick={() => setEditing("new")} disabled={!online}>
+          style={{ marginBottom: 0, maxWidth: 420 }}
+        />
+        <button className="btn-fill" onClick={() => setEditing("new")} disabled={!online}>
           Add supplier
-        </button>
-        <button
-          className="btn-fill"
-          onClick={() => setAdding(true)}
-          disabled={!online || suppliers.length === 0}
-          title={suppliers.length === 0 ? "Add a supplier first" : undefined}
-        >
-          New document
         </button>
       </div>
 
@@ -103,48 +226,54 @@ export default function Suppliers({ pin }: { pin: string }) {
         <table className="acc-table">
           <thead>
             <tr>
-              <th>Document</th>
               <th>Supplier</th>
-              <th className="num">Pages</th>
-              <th className="num">Total</th>
+              <th>Contact</th>
+              <th className="num">Documents</th>
             </tr>
           </thead>
           <tbody>
-            {docs === null && (
-              <tr><td colSpan={4} className="acc-empty">Looking…</td></tr>
+            {suppliers === null && (
+              <tr><td colSpan={3} className="acc-empty">Looking…</td></tr>
             )}
-            {docs !== null && docs.length === 0 && (
+            {suppliers !== null && shown.length === 0 && (
               <tr>
-                <td colSpan={4} className="acc-empty">
-                  {suppliers.length === 0
-                    ? "No suppliers yet. Add one, then file its first quote or invoice."
-                    : "Nothing filed yet. New document photographs the pages or takes the PDF."}
+                <td colSpan={3} className="acc-empty">
+                  {term
+                    ? `No supplier matches “${term}”.`
+                    : "No suppliers yet. Add one, then file its first quote or invoice."}
                 </td>
               </tr>
             )}
-            {docs?.map((d) => (
-              <tr key={d.id} className="acc-row" onClick={() => setViewing(d)}>
+            {shown.map((s) => (
+              <tr key={s.id} className="acc-row" onClick={() => setPeek(s)}>
                 <td>
-                  <span className="acc-name">
-                    {DOCUMENT_KIND_LABEL[d.kind]} {d.doc_number ?? ""}
-                  </span>
+                  <span className="acc-name">{s.name}</span>
+                  {s.vat_number && <span className="acc-sub">VAT {s.vat_number}</span>}
+                </td>
+                <td>
+                  <span className="acc-name">{s.contact_name ?? "—"}</span>
                   <span className="acc-sub">
-                    {d.doc_date ? fmtDate(d.doc_date) : "no date"} · filed {fmtDate(d.created_at)}
-                    {d.created_by_name ? ` by ${d.created_by_name}` : ""}
-                    {d.status !== "stored" ? ` · ${d.status}` : ""}
+                    {[s.phone, s.email].filter(Boolean).join(" · ")}
                   </span>
                 </td>
-                <td>
-                  <span className="acc-name">{d.supplier_name}</span>
-                  {d.note && <span className="acc-sub">{d.note}</span>}
-                </td>
-                <td className="num">{d.pages} {d.pages === 1 ? "page" : "pages"}</td>
-                <td className="num">{d.total != null ? money(d.total) : "—"}</td>
+                <td className="num">{s.document_count}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {peek && (
+        <SupplierPeek
+          supplier={peek}
+          onClose={() => setPeek(null)}
+          onManage={() => {
+            setSelected(peek);
+            setPeek(null);
+            setBanner(null);
+          }}
+        />
+      )}
 
       {editing && (
         <SupplierForm
@@ -154,37 +283,77 @@ export default function Suppliers({ pin }: { pin: string }) {
           onSaved={async (s) => {
             setEditing(null);
             setBanner(`${s.name} saved.`);
-            await load();
+            await loadSuppliers();
+            // Straight into the new supplier's page, where the paperwork goes.
+            const fresh = await purchasingSuppliers(pin).catch(() => null);
+            const row = fresh?.find((x) => x.id === s.id);
+            if (row) setSelected(row);
           }}
         />
       )}
+    </div>
+  );
+}
 
-      {adding && (
-        <NewDocument
-          pin={pin}
-          suppliers={suppliers}
-          initialSupplier={filter || suppliers[0]?.id || ""}
-          onClose={() => setAdding(false)}
-          onDone={async (pages) => {
-            setAdding(false);
-            setBanner(`Filed with ${pages} ${pages === 1 ? "page" : "pages"}.`);
-            await load();
-          }}
-        />
-      )}
-
-      {viewing && (
-        <DocumentView
-          pin={pin}
-          doc={viewing}
-          onClose={() => setViewing(null)}
-          onDeleted={async () => {
-            setViewing(null);
-            setBanner("Document removed.");
-            await load();
-          }}
-        />
-      )}
+/** The supplier at a glance, with the way into managing it. */
+function SupplierPeek({
+  supplier,
+  onClose,
+  onManage,
+}: {
+  supplier: Supplier;
+  onClose: () => void;
+  onManage: () => void;
+}) {
+  const rows: [string, string | null][] = [
+    ["Contact", supplier.contact_name],
+    ["Phone", supplier.phone],
+    ["Email", supplier.email],
+    ["VAT number", supplier.vat_number],
+    ["Notes", supplier.notes],
+  ];
+  return (
+    <div
+      className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-50"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Supplier ${supplier.name}`}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-stone-200 flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold">{supplier.name}</h2>
+            <p className="text-sm text-stone-500">
+              {supplier.document_count} {supplier.document_count === 1 ? "document" : "documents"} filed
+            </p>
+          </div>
+          <button onClick={onClose} className="text-stone-400 text-2xl leading-none" aria-label="Close supplier">
+            ×
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+            {rows.map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-stone-500">{label}</dt>
+                <dd className="min-w-0 break-words">{value ?? "—"}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <div className="p-4 border-t border-stone-200 flex gap-2">
+          <button className="py-2.5 px-4 rounded-xl bg-stone-100" onClick={onClose}>
+            Close
+          </button>
+          <button className="flex-1 py-2.5 rounded-xl bg-colophon text-paper" onClick={onManage}>
+            Manage
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
