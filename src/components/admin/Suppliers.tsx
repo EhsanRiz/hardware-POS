@@ -20,6 +20,7 @@ import { errorMessage } from "../../lib/errors";
 import { downscaleImage } from "../../lib/images";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
+import ReceiveDocument from "./ReceiveDocument";
 import ScanDocument from "./ScanDocument";
 
 /**
@@ -46,6 +47,8 @@ export default function Suppliers({ pin }: { pin: string }) {
   const [peek, setPeek] = useState<Supplier | null>(null);
   // The scanner: pages in, a checked reading out, filed in one step.
   const [scanning, setScanning] = useState(false);
+  // The delivery being booked in off its own paperwork.
+  const [receiving, setReceiving] = useState<SupplierDocument | null>(null);
 
   const loadSuppliers = useCallback(async () => {
     setError(null);
@@ -225,6 +228,19 @@ export default function Suppliers({ pin }: { pin: string }) {
           />
         )}
 
+        {receiving && (
+          <ReceiveDocument
+            pin={pin}
+            doc={receiving}
+            onClose={() => setReceiving(null)}
+            onDone={async (summary) => {
+              setReceiving(null);
+              setBanner(summary);
+              await Promise.all([loadSuppliers(), loadDocs()]);
+            }}
+          />
+        )}
+
         {viewing && (
           <DocumentView
             pin={pin}
@@ -235,6 +251,7 @@ export default function Suppliers({ pin }: { pin: string }) {
               setBanner("Document removed.");
               await Promise.all([loadDocs(), loadSuppliers()]);
             }}
+            onReceive={(d) => { setViewing(null); setReceiving(d); }}
           />
         )}
       </div>
@@ -307,6 +324,19 @@ export default function Suppliers({ pin }: { pin: string }) {
         </table>
       </div>
 
+      {receiving && (
+        <ReceiveDocument
+          pin={pin}
+          doc={receiving}
+          onClose={() => setReceiving(null)}
+          onDone={async (summary) => {
+            setReceiving(null);
+            setBanner(summary);
+            await Promise.all([loadSuppliers(), loadDocs()]);
+          }}
+        />
+      )}
+
       {scanning && (
         <ScanDocument
           pin={pin}
@@ -330,6 +360,7 @@ export default function Suppliers({ pin }: { pin: string }) {
             setBanner("Document removed.");
             await loadSuppliers();
           }}
+          onReceive={(d) => { setViewing(null); setReceiving(d); }}
         />
       )}
 
@@ -801,11 +832,14 @@ function DocumentView({
   doc,
   onClose,
   onDeleted,
+  onReceive,
 }: {
   pin: string;
   doc: SupplierDocument;
   onClose: () => void;
   onDeleted: () => Promise<void>;
+  /** Book what is on this document onto the shelves. */
+  onReceive?: (d: SupplierDocument) => void;
 }) {
   const [pages, setPages] = useState<SupplierPage[] | null>(null);
   const [lines, setLines] = useState<DocumentLine[] | null>(null);
@@ -931,7 +965,22 @@ function DocumentView({
             )
           )}
         </div>
-        <div className="p-4 border-t border-stone-200 flex gap-2 items-center">
+        <div className="p-4 border-t border-stone-200 flex gap-2 items-center flex-wrap">
+          {/* The step that turns paper into stock. Only for a document with
+              lines to receive, and only once: a delivery booked in twice is
+              stock the shop does not have. A quote is a promise, so it is not
+              offered here — nothing has been bought yet. */}
+          {onReceive && doc.lines > 0 && doc.status !== "received" && doc.kind !== "quote" && (
+            <button
+              className="py-2.5 px-4 rounded-xl bg-colophon text-paper"
+              onClick={() => onReceive(doc)}
+            >
+              Receive this delivery
+            </button>
+          )}
+          {doc.status === "received" && (
+            <span className="text-sm text-stone-500">Booked in.</span>
+          )}
           {doc.status === "stored" && !confirm && (
             <button className="py-2.5 px-4 rounded-xl border border-red-200 text-red-700" onClick={() => setConfirm(true)} disabled={busy}>
               Remove

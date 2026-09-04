@@ -983,3 +983,77 @@ export async function purchasingDocumentLines(
   if (error) throw error;
   return (data as DocumentLine[]) ?? [];
 }
+
+// --- Receiving a delivery from its own paperwork (0058) ----------------------
+
+/** A line as the receiving screen shows it: what it is, and what it costs. */
+export interface ReceiveLine {
+  line_no: number;
+  supplier_code: string | null;
+  description: string;
+  qty: number | null;
+  unit_price: number | null;
+  line_total: number | null;
+  /** The product it is already known to be, or null for a person to decide. */
+  product_id: string | null;
+  product_name: string | null;
+  product_sku: string | null;
+  stock_qty: number | null;
+  /** What it costs the shop today, before this delivery. */
+  current_cost: number | null;
+  retail: number | null;
+  /** True when a person confirmed this pairing before, rather than a guess. */
+  remembered: boolean;
+}
+
+export async function purchasingReceiveLines(
+  pin: string,
+  documentId: string
+): Promise<ReceiveLine[]> {
+  const { data, error } = await supabase.rpc("pos_purchasing_receive_lines", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+  });
+  if (error) throw error;
+  return (data as ReceiveLine[]) ?? [];
+}
+
+export interface ReceivedLine {
+  product_id: string;
+  name: string;
+  received: number;
+  stock_qty: number;
+  old_cost: number | null;
+  new_cost: number | null;
+  created: boolean;
+}
+
+/**
+ * Book the delivery in. All of it or none of it.
+ *
+ * A line with no quantity was not received; a line with `create` becomes a new
+ * product, born inactive and unpriced like a shelf capture, so the till cannot
+ * sell something nobody has priced.
+ */
+export async function purchasingReceiveDocument(
+  pin: string,
+  documentId: string,
+  lines: {
+    line_no: number;
+    product_id: string | null;
+    create?: boolean;
+    qty: number;
+    unit_cost: number | null;
+    remember?: boolean;
+  }[]
+): Promise<ReceivedLine[]> {
+  const { data, error } = await supabase.rpc("pos_purchasing_receive_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+    p_lines: lines,
+  });
+  if (error) throw error;
+  return (data as ReceivedLine[]) ?? [];
+}
