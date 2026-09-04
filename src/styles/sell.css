@@ -855,7 +855,11 @@
 .modal-card {
   width: 100%;
   max-width: 460px;
-  max-height: 80vh;
+  /* Of the VISIBLE screen: with a phone keyboard up the backdrop is half the
+     height it was, and a card sized to the layout viewport put its lower
+     fields and its buttons under the keys with no way to reach them. */
+  max-height: min(80vh, 100%);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 22px;

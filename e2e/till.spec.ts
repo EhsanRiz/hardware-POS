@@ -3984,9 +3984,11 @@ test("a supplier's quote is filed from its pages and opens again", async ({ page
   await form.getByLabel("Supplier name").fill("Jasbro Plumbing");
   await form.getByLabel("Phone").fill("010 442 0625");
   await form.getByRole("button", { name: "Save supplier" }).click();
-  await expect(page.getByText("Jasbro Plumbing saved.")).toBeVisible();
   expect(be.suppliers[0].name).toBe("Jasbro Plumbing");
   expect(be.suppliers[0].phone).toBe("010 442 0625");
+  // Saved, and straight onto the supplier's own page, where the paper goes.
+  await expect(page.getByRole("heading", { name: "Jasbro Plumbing" })).toBeVisible();
+  await expect(page.getByText(/Nothing filed for Jasbro Plumbing yet/)).toBeVisible();
 
   // Then the quote: two photographed pages, the number, date and total off it.
   await page.getByRole("button", { name: "New document" }).click();
@@ -4012,7 +4014,7 @@ test("a supplier's quote is filed from its pages and opens again", async ({ page
 
   // Listed, and open again with both pages showing.
   const row = page.locator("tr.acc-row", { hasText: "Quote 27181" });
-  await expect(row).toContainText("Jasbro Plumbing");
+  await expect(row).toContainText("13 Aug 2026");
   await expect(row).toContainText("2 pages");
   await expect(row).toContainText("5 300.35");
   await row.click();
@@ -4021,8 +4023,22 @@ test("a supplier's quote is filed from its pages and opens again", async ({ page
   await expect(view).toContainText("13 Aug 2026");
   await view.getByLabel("Close document").click();
 
-  // The supplier's own count, for the filter.
-  await expect(page.getByLabel("Supplier")).toContainText("Jasbro Plumbing · 1");
+  // Back on the list the supplier shows its details and its count, and a tap
+  // opens it in a popup with the cross and Manage the owner asked for.
+  await page.getByRole("button", { name: "← Suppliers" }).click();
+  const srow = page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" });
+  await expect(srow).toContainText("010 442 0625");
+  await expect(srow.locator("td").nth(2)).toHaveText("1");
+  await srow.click();
+  const peek = page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" });
+  await expect(peek).toContainText("1 document filed");
+  await expect(peek).toContainText("010 442 0625");
+  await peek.getByLabel("Close supplier").click();
+  await expect(peek).toHaveCount(0);
+  await srow.click();
+  await peek.getByRole("button", { name: "Manage" }).click();
+  await expect(page.getByRole("heading", { name: "Jasbro Plumbing" })).toBeVisible();
+  await expect(page.locator("tr.acc-row", { hasText: "Quote 27181" })).toBeVisible();
 });
 
 test("a PDF the supplier emailed is filed whole, and a wrong filing can be removed", async ({ page }) => {
@@ -4030,6 +4046,9 @@ test("a PDF the supplier emailed is filed whole, and a wrong filing can be remov
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: "Manage" }).click();
   await page.getByRole("button", { name: "New document" }).click();
   const doc = page.getByRole("dialog", { name: "New supplier document" });
   await doc.getByLabel("Document kind").selectOption("invoice");
@@ -4056,4 +4075,25 @@ test("without the purchasing right there is no Suppliers tab", async ({ page }) 
   await openManage(page, USERS.shelf.pin);
   await expect(page.getByRole("button", { name: /^Shelf$/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Suppliers$/ })).toHaveCount(0);
+});
+
+test("on a phone the supplier form scrolls, so its buttons are never under the keys", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: /^Suppliers/ }).click();
+  await page.getByRole("button", { name: "Add supplier" }).click();
+  const form = page.getByRole("dialog", { name: "Add supplier" });
+  await form.getByLabel("Supplier name").fill("Focus Suppliers");
+  // The last field and the buttons sit below a 500px screen. A finger (here
+  // the wheel — scrollIntoView would move even an overflow:hidden box and
+  // prove nothing) scrolls the card down to them.
+  await expect(form.getByRole("button", { name: "Save supplier" })).not.toBeInViewport();
+  await form.getByLabel("Supplier name").hover();
+  await page.mouse.wheel(0, 1200);
+  await expect(form.getByLabel("Notes")).toBeInViewport();
+  await expect(form.getByRole("button", { name: "Save supplier" })).toBeInViewport();
+  await form.getByRole("button", { name: "Save supplier" }).click();
+  await expect(page.getByRole("heading", { name: "Focus Suppliers" })).toBeVisible();
 });
