@@ -4292,3 +4292,75 @@ test("on a phone the scan dialog keeps all its buttons on the screen", async ({ 
   }
   await expect(scan.getByLabel("Document number")).toBeInViewport({ ratio: 1 });
 });
+
+test("the letterhead's address and banking are kept, and fill a known supplier's blanks", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  // Shown before it is kept: an account number should not appear in the
+  // shop's record without a person having seen it go in.
+  await expect(scan).toContainText("25 Birmingham Road, Benoni South, 1502");
+  await expect(scan).toContainText("FNB 62399227258 250655");
+  await scan.getByRole("button", { name: "File it" }).click();
+  await expect(page.getByText(/Filed under Jasbro Plumbing/)).toBeVisible();
+  expect(be.suppliers[0]).toMatchObject({
+    address: "25 Birmingham Road, Benoni South, 1502",
+    bank_name: "FNB",
+    bank_account_name: "JASBRO PLUMBING",
+    bank_account_number: "62399227258",
+    bank_branch_code: "250655",
+  });
+
+  // On the popup, where somebody about to pay them will look for it.
+  await page.getByRole("dialog", { name: "Quote 27181" }).getByLabel("Close document").click();
+  await page.getByRole("button", { name: "← Suppliers" }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  const peek = page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" });
+  await expect(peek).toContainText("25 Birmingham Road");
+  await expect(peek).toContainText("62399227258");
+  await expect(peek).toContainText("250655");
+});
+
+test("a scan fills what the shop was missing, and never overwrites what it knew", async ({ page }) => {
+  // Jasbro is already on file from an earlier scan that read no banking, and
+  // with an account number somebody typed differently on purpose.
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null,
+    phone: "010 442 0625", email: null, address: null,
+    vat_number: "4370229645", notes: null,
+    bank_name: null, bank_account_name: null,
+    bank_account_number: "9999999999", bank_branch_code: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+  await expect(scan).toContainText("Matched Jasbro Plumbing by its VAT number");
+  await scan.getByRole("button", { name: "File it" }).click();
+
+  // The blanks are filled — address, email, bank, account name, branch code —
+  // and said out loud, because a record changed that nobody asked to change.
+  await expect(page.getByText(/Learnt 5 missing details about them/)).toBeVisible();
+  expect(be.suppliers[0]).toMatchObject({
+    address: "25 Birmingham Road, Benoni South, 1502",
+    email: "info@jasbro.co.za",
+    bank_name: "FNB",
+    bank_branch_code: "250655",
+  });
+  // What a person put there stands. A changed account number is a phone call
+  // to make, not a field to update from a photograph.
+  expect(be.suppliers[0].bank_account_number).toBe("9999999999");
+  expect(be.suppliers).toHaveLength(1);
+});

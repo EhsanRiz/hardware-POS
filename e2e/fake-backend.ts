@@ -249,7 +249,9 @@ export class Backend {
   }[] = [];
   /** 0055: suppliers and the paper they send. Pages keep the data URL sent. */
   suppliers: { id: string; name: string; contact_name: string | null; phone: string | null;
-    email: string | null; vat_number: string | null; notes: string | null }[] = [];
+    email: string | null; address?: string | null; vat_number: string | null; notes: string | null;
+    bank_name?: string | null; bank_account_name?: string | null;
+    bank_account_number?: string | null; bank_branch_code?: string | null }[] = [];
   supplierDocs: { id: string; supplier_id: string; kind: string; doc_number: string | null;
     doc_date: string | null; total: number | null; note: string | null; status: string;
     created_at: string }[] = [];
@@ -267,6 +269,11 @@ export class Backend {
     supplier_vat: "4370229645",
     supplier_phone: "010 442 0625",
     supplier_email: "info@jasbro.co.za",
+    supplier_address: "25 Birmingham Road, Benoni South, 1502",
+    bank_name: "FNB",
+    bank_account_name: "JASBRO PLUMBING",
+    bank_account_number: "62399227258",
+    bank_branch_code: "250655",
     kind: "quote",
     doc_number: "27181",
     doc_date: "2026-08-13",
@@ -1309,6 +1316,8 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
         return json(be.suppliers.map((s) => ({
+          address: null, bank_name: null, bank_account_name: null,
+          bank_account_number: null, bank_branch_code: null,
           ...s, code: null, active: true,
           document_count: be.supplierDocs.filter((d) => d.supplier_id === s.id).length,
         })));
@@ -1321,7 +1330,11 @@ export async function installBackend(page: Page): Promise<Backend> {
         const clean = (v: unknown) => (String(v ?? "").trim() || null);
         const fields = {
           name, contact_name: clean(body.p_contact_name), phone: clean(body.p_phone),
-          email: clean(body.p_email), vat_number: clean(body.p_vat_number), notes: clean(body.p_notes),
+          email: clean(body.p_email), address: clean(body.p_address),
+          vat_number: clean(body.p_vat_number), notes: clean(body.p_notes),
+          bank_name: clean(body.p_bank_name), bank_account_name: clean(body.p_bank_account_name),
+          bank_account_number: clean(body.p_bank_account_number),
+          bank_branch_code: clean(body.p_bank_branch_code),
         };
         if (body.p_id) {
           const s = be.suppliers.find((x) => x.id === body.p_id);
@@ -1354,16 +1367,45 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!sup) {
           const name = String(body.p_supplier_name ?? "").trim();
           if (!name) return fail("A supplier needs a name");
+          const off = (v: unknown) => (String(v ?? "").trim() || null);
           sup = {
             id: "sup" + (be.suppliers.length + 1), name,
             contact_name: null,
-            phone: (String(body.p_supplier_phone ?? "").trim() || null),
-            email: (String(body.p_supplier_email ?? "").trim() || null),
-            vat_number: (String(body.p_supplier_vat ?? "").trim() || null),
+            phone: off(body.p_supplier_phone),
+            email: off(body.p_supplier_email),
+            address: off(body.p_supplier_address),
+            vat_number: off(body.p_supplier_vat),
             notes: null,
+            bank_name: off(body.p_bank_name),
+            bank_account_name: off(body.p_bank_account_name),
+            bank_account_number: off(body.p_bank_account_number),
+            bank_branch_code: off(body.p_bank_branch_code),
           };
           be.suppliers.push(sup);
           created = true;
+        }
+        // 0057: fill the blanks on a supplier we already had, never overwrite.
+        let filled = 0;
+        if (!created) {
+          const learn = (
+            key: "phone" | "email" | "address" | "vat_number" | "bank_name" |
+                 "bank_account_name" | "bank_account_number" | "bank_branch_code",
+            from: unknown
+          ) => {
+            const v = String(from ?? "").trim();
+            if (v && !sup![key]) {
+              sup![key] = v;
+              filled += 1;
+            }
+          };
+          learn("phone", body.p_supplier_phone);
+          learn("email", body.p_supplier_email);
+          learn("address", body.p_supplier_address);
+          learn("vat_number", body.p_supplier_vat);
+          learn("bank_name", body.p_bank_name);
+          learn("bank_account_name", body.p_bank_account_name);
+          learn("bank_account_number", body.p_bank_account_number);
+          learn("bank_branch_code", body.p_bank_branch_code);
         }
         const lines = (body.p_lines as Record<string, unknown>[]) ?? [];
         const doc = {
@@ -1391,7 +1433,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           });
         }
         return json([{ document_id: doc.id, supplier_id: sup.id, supplier_name: sup.name,
-          supplier_created: created }]);
+          supplier_created: created, details_filled: filled }]);
       }
       case "rpc/pos_purchasing_document_lines": {
         if (!tokenOk) return fail("Register not paired or revoked");

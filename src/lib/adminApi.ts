@@ -641,8 +641,14 @@ export interface Supplier {
   contact_name: string | null;
   phone: string | null;
   email: string | null;
+  address: string | null;
   vat_number: string | null;
   notes: string | null;
+  /** Where the money goes when their invoice falls due. */
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_account_number: string | null;
+  bank_branch_code: string | null;
   active: boolean;
   document_count: number;
 }
@@ -698,8 +704,13 @@ export async function purchasingSaveSupplier(
     contact_name?: string | null;
     phone?: string | null;
     email?: string | null;
+    address?: string | null;
     vat_number?: string | null;
     notes?: string | null;
+    bank_name?: string | null;
+    bank_account_name?: string | null;
+    bank_account_number?: string | null;
+    bank_branch_code?: string | null;
   }
 ): Promise<{ id: string; name: string }> {
   const { data, error } = await supabase.rpc("pos_purchasing_save_supplier", {
@@ -710,8 +721,13 @@ export async function purchasingSaveSupplier(
     p_contact_name: s.contact_name ?? null,
     p_phone: s.phone ?? null,
     p_email: s.email ?? null,
+    p_address: s.address ?? null,
     p_vat_number: s.vat_number ?? null,
     p_notes: s.notes ?? null,
+    p_bank_name: s.bank_name ?? null,
+    p_bank_account_name: s.bank_account_name ?? null,
+    p_bank_account_number: s.bank_account_number ?? null,
+    p_bank_branch_code: s.bank_branch_code ?? null,
   });
   if (error) throw error;
   return data as { id: string; name: string };
@@ -820,6 +836,12 @@ export interface ReadDocument {
   supplier_vat?: string | null;
   supplier_phone?: string | null;
   supplier_email?: string | null;
+  supplier_address?: string | null;
+  /** Off the foot of the page: where their invoice gets paid. */
+  bank_name?: string | null;
+  bank_account_name?: string | null;
+  bank_account_number?: string | null;
+  bank_branch_code?: string | null;
   kind?: SupplierDocumentKind | null;
   doc_number?: string | null;
   doc_date?: string | null;
@@ -882,6 +904,8 @@ export interface FiledDocument {
   supplier_id: string;
   supplier_name: string;
   supplier_created: boolean;
+  /** Blanks on a supplier we already had, learnt from this letterhead. */
+  details_filled: number;
 }
 
 /** File a confirmed reading: the supplier, the header and every line, at once. */
@@ -893,6 +917,11 @@ export async function fileSupplierDocument(
     supplier_vat: string | null;
     supplier_phone: string | null;
     supplier_email: string | null;
+    supplier_address: string | null;
+    bank_name: string | null;
+    bank_account_name: string | null;
+    bank_account_number: string | null;
+    bank_branch_code: string | null;
     kind: SupplierDocumentKind;
     doc_number: string | null;
     doc_date: string | null;
@@ -912,6 +941,11 @@ export async function fileSupplierDocument(
     p_supplier_vat: d.supplier_vat,
     p_supplier_phone: d.supplier_phone,
     p_supplier_email: d.supplier_email,
+    p_supplier_address: d.supplier_address,
+    p_bank_name: d.bank_name,
+    p_bank_account_name: d.bank_account_name,
+    p_bank_account_number: d.bank_account_number,
+    p_bank_branch_code: d.bank_branch_code,
     p_kind: d.kind,
     p_doc_number: d.doc_number,
     p_doc_date: d.doc_date,
