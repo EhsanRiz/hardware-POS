@@ -61,6 +61,21 @@ export default function Quotes({
     );
   }, [quotes, term]);
 
+  // A row is a door: the quote's lines, without loading it onto the till.
+  const [viewing, setViewing] = useState<QuoteSummary | null>(null);
+  const [viewLines, setViewLines] = useState<QuoteLine[] | null>(null);
+  useEffect(() => {
+    if (!viewing) return;
+    let cancelled = false;
+    setViewLines(null);
+    quoteItems(viewing.id)
+      .then((l) => !cancelled && setViewLines(l))
+      .catch((e) => !cancelled && setError(errorMessage(e, "Could not open that quote")));
+    return () => {
+      cancelled = true;
+    };
+  }, [viewing]);
+
   async function recall(q: QuoteSummary) {
     setBusy(true);
     setError(null);
@@ -134,7 +149,7 @@ export default function Quotes({
               </tr>
             )}
             {shown.map((q) => (
-              <tr key={q.id}>
+              <tr key={q.id} className="acc-row" onClick={() => setViewing(q)}>
                 <td>
                   <span className="acc-name">{q.doc_number}</span>
                   <span className="acc-sub">
@@ -155,14 +170,14 @@ export default function Quotes({
                   <span className="quote-actions">
                     <button
                       className="btn-line"
-                      onClick={() => void recall(q)}
+                      onClick={(e) => { e.stopPropagation(); void recall(q); }}
                       disabled={busy || !online}
                     >
                       Open on the till
                     </button>
                     <button
                       className="btn-line quiet"
-                      onClick={() => setCancelling(q)}
+                      onClick={(e) => { e.stopPropagation(); setCancelling(q); }}
                       disabled={busy || !online}
                     >
                       Cancel
@@ -174,6 +189,79 @@ export default function Quotes({
           </tbody>
         </table>
       </div>
+
+      {viewing && (
+        <div
+          className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Quote ${viewing.doc_number ?? ""}`.trim()}
+          onClick={() => setViewing(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-stone-200 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-semibold">{viewing.doc_number}</h2>
+                <p className="text-sm text-stone-500">
+                  {quoteDate(viewing.created_at)} · {viewing.customer_name ?? "Walk-in"} · by {viewing.cashier_name}
+                  {" · "}
+                  <span className={viewing.expired ? "is-bad" : ""}>
+                    valid until {quoteDate(viewing.valid_until)}{viewing.expired ? " (expired)" : ""}
+                  </span>
+                </p>
+                {viewing.note && <p className="text-sm text-stone-600 mt-1">{viewing.note}</p>}
+              </div>
+              <button
+                onClick={() => setViewing(null)}
+                className="text-stone-400 text-2xl leading-none"
+                aria-label="Close quote"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {!viewLines ? (
+                <p className="text-sm text-stone-500">Loading…</p>
+              ) : (
+                <ul className="divide-y divide-stone-100">
+                  {viewLines.map((l, n) => (
+                    <li key={n} className="py-2 px-1 flex items-baseline gap-3 text-sm even:bg-stone-50/70">
+                      <span className="flex-1 min-w-0">
+                        <span className="block">{l.name}</span>
+                        <span className="block text-xs text-stone-500">
+                          {l.qty} {l.unit_code} × {money(l.unit_price)}
+                          {!l.still_sold && <span className="is-bad"> · no longer sold</span>}
+                        </span>
+                      </span>
+                      <span className="tabular-nums whitespace-nowrap">{money(l.line_total)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex justify-between items-baseline border-t-2 border-stone-800 pt-2 mt-2">
+                <span className="text-sm text-stone-600">Quoted</span>
+                <span className="text-lg tabular-nums">{money(viewing.total)}</span>
+              </div>
+            </div>
+            <div className="p-4 border-t border-stone-200 flex gap-2">
+              <button
+                className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
+                disabled={busy || !online}
+                onClick={() => {
+                  const q = viewing;
+                  setViewing(null);
+                  void recall(q);
+                }}
+              >
+                Open on the till
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {cancelling && (
         <div className="modal-backdrop" onClick={() => setCancelling(null)}>

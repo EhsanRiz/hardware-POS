@@ -4,6 +4,8 @@ import { setPrintPreviewHandler } from "../lib/printPreview";
 // Turn the receipt's emphasis markers (0x01/0x02 bold, 0x03/0x04 underline)
 // into styled spans so the preview (and the browser print-out) matches what the
 // thermal printer produces.
+import { code128Svg } from "../lib/code128";
+
 function renderMarkup(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let buf = "";
@@ -23,9 +25,30 @@ function renderMarkup(text: string): ReactNode[] {
     );
     buf = "";
   };
+  let bar: string | null = null;
   for (const ch of text) {
     const code = ch.charCodeAt(0);
-    if (code === 1) {
+    if (bar !== null) {
+      // Inside a barcode marker: collect the number, draw it at the close.
+      if (code === 6) {
+        flush();
+        nodes.push(
+          <span
+            key={key++}
+            className="block text-center py-1"
+            data-barcode={bar}
+            dangerouslySetInnerHTML={{ __html: code128Svg(bar) + `<div style="font-size:11px">${bar}</div>` }}
+          />
+        );
+        bar = null;
+      } else {
+        bar += ch;
+      }
+      continue;
+    }
+    if (code === 5) {
+      bar = "";
+    } else if (code === 1) {
       flush();
       boldOn = true;
     } else if (code === 2) {

@@ -61,7 +61,25 @@ function textToBytes(s: string): number[] {
   const out: number[] = [];
   for (let i = 0; i < norm.length; i++) {
     const c = norm.charCodeAt(i);
-    if (c === 0x01) {
+    if (c === 0x05) {
+      // A barcode: the text up to the closing marker, as Code 128 set B,
+      // centred, human-readable number beneath. Character size is reset
+      // around it so the enlarged font does not stretch the bars.
+      const end = norm.indexOf("\x06", i + 1);
+      const data = norm.slice(i + 1, end < 0 ? norm.length : end);
+      out.push(GS, 0x21, 0x00); // size normal
+      out.push(ESC, 0x61, 0x01); // centre
+      out.push(GS, 0x48, 0x02); // HRI below the bars
+      out.push(GS, 0x66, 0x00); // HRI font A
+      out.push(GS, 0x68, 0x50); // height 80 dots
+      out.push(GS, 0x77, 0x02); // module width 2
+      const payload = "{B" + data;
+      out.push(GS, 0x6b, 0x49, payload.length);
+      for (let j = 0; j < payload.length; j++) out.push(payload.charCodeAt(j) & 0xff);
+      out.push(ESC, 0x61, 0x00); // left
+      out.push(GS, 0x21, SIZE_BYTE); // size back
+      i = end < 0 ? norm.length : end;
+    } else if (c === 0x01) {
       out.push(ESC, 0x45, 0x01); // bold marker -> emphasis on
     } else if (c === 0x02) {
       out.push(ESC, 0x45, 0x00); // bold marker -> emphasis off

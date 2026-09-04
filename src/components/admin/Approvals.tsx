@@ -171,7 +171,7 @@ export default function Approvals({ pin }: { pin: string }) {
               const spent = r.used_at != null;
               const dead = !spent && new Date(r.expires_at) < new Date();
               return (
-                <li key={r.id} className="py-2 text-sm flex items-baseline gap-3">
+                <li key={r.id} className="py-2 px-1 text-sm flex items-baseline gap-3 even:bg-stone-50/70">
                   <span className="flex-1 min-w-0">
                     <span className="block">
                       {r.issued_by_name}

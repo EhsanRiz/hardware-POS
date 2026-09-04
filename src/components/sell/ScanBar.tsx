@@ -34,6 +34,7 @@ export default function ScanBar({
   onAdd,
   onInspect,
   onPickCustomer,
+  onDocument,
   inputRef,
 }: {
   term: string;
@@ -46,6 +47,8 @@ export default function ScanBar({
   /** Open the closer look, where the quantity is decided and the sale is made. */
   onInspect: (p: Product) => void;
   onPickCustomer: () => void;
+  /** A slip's own barcode — INV-, QUO- or CRN- and a number — opens the document. */
+  onDocument: (docNumber: string) => void;
   inputRef: React.RefObject<HTMLInputElement>;
 }) {
   const [remote, setRemote] = useState<Product[] | null>(null);
@@ -98,6 +101,15 @@ export default function ScanBar({
     e.preventDefault();
     const q = term.trim();
     if (!q) return;
+    // A slip brought back to the counter: its barcode is its number, and
+    // scanning it opens the document rather than searching the shelf for it.
+    const doc = q.match(/^(INV|QUO|CRN)-?(\d{1,9})$/i);
+    if (doc) {
+      onDocument(`${doc[1].toUpperCase()}-${doc[2].padStart(6, "0")}`);
+      onTermChange("");
+      inputRef.current?.focus();
+      return;
+    }
     // An exact barcode or SKU is unambiguous — treat it as a scan, whatever
     // else the fuzzy search turned up. The gun types a code and presses Enter;
     // putting a dialog in front of that would halve the speed of the counter.

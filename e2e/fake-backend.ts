@@ -811,6 +811,45 @@ export async function installBackend(page: Page): Promise<Backend> {
         return json([{ quote_id: q.id, doc_number: q.doc_number,
           valid_until: "2099-01-01", total }]);
       }
+      // ---- 0051: a slip scanned back in. Register token only. ----
+      case "rpc/pos_sale_by_number": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const want = String(body.p_doc_number ?? "").trim().toUpperCase();
+        const idx = be.sales.findIndex((_, i) => "INV-" + String(i + 1).padStart(6, "0") === want);
+        if (idx < 0) return json(null);
+        const x = be.sales[idx];
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        // The same row the Sales screen lists, so a reprint has every figure.
+        return json({
+          id: "s" + idx, doc_number: want,
+          created_at: x.created_at ?? new Date().toISOString(),
+          cashier_name: Object.values(USERS).find((u) => u.row.id === x.cashier_id)?.row.name ?? "",
+          customer_name: be.customers.find((c) => c.id === x.customer_id)?.name ?? null,
+          customer_phone: null, customer_address: null, trade_pricing: false,
+          subtotal: r2(x.total + x.discount_amount), total: x.total,
+          tax_amount: r2(x.total - x.total / 1.15),
+          discount_amount: x.discount_amount, discount_reason: x.discount_reason,
+          paid_cash: null, paid_card: null, status: "completed",
+          payment_method: x.payment_method, amount_tendered: x.amount_tendered,
+          change_due: x.change_due, rounding: x.rounding, po_number: x.po_number,
+          customer_vat_number: x.customer_vat_number,
+          approved_by_name: x.approved_by ? "Manager" : null, approved_by_code: false,
+          item_count: x.items.length,
+        });
+      }
+      case "rpc/pos_quote_by_number": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const want = String(body.p_doc_number ?? "").trim().toUpperCase();
+        const q = be.quotes.find((x) => x.doc_number.toUpperCase() === want);
+        if (!q) return json([]);
+        return json([{
+          id: q.id, doc_number: q.doc_number, created_at: "2026-01-01T08:00:00Z",
+          cashier_name: "Sam", customer_id: q.customer_id, customer_name: null,
+          total: q.items.reduce((t, i) => t + i.unit_price * i.qty, 0),
+          valid_until: "2099-01-01", expired: false,
+          item_count: q.items.length, note: null, status: q.status,
+        }]);
+      }
       case "rpc/pos_list_quotes":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(be.quotes.filter((q) => q.status === "open").map((q) => ({
