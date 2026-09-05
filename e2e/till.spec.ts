@@ -4742,3 +4742,34 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
   await expect(sheet.locator(".doc-page-foot")).toBeVisible();
   await page.emulateMedia({ media: "screen" });
 });
+
+test("the foot of the page sits at the foot of the page", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "A4 quote" }).click();
+  const doc = page.getByRole("dialog", { name: "Quotation QUO-000001" });
+
+  // One line on a whole A4 sheet is the common case at a hardware counter, and
+  // the colophon used to sit wherever that one line happened to end — halfway
+  // up an empty page. It belongs at the bottom edge, above nothing.
+  const sheet = (await doc.locator("#doc-sheet").boundingBox())!;
+  const foot = (await doc.locator(".doc-page-foot").boundingBox())!;
+  const signed = (await doc.locator(".doc-accept").boundingBox())!;
+  // The gap below it is the sheet's own 14mm bottom padding (≈53px) and
+  // nothing else.
+  const below = sheet.y + sheet.height - (foot.y + foot.height);
+  expect(below).toBeGreaterThan(45);
+  expect(below).toBeLessThan(62);
+  // And it was pushed down there, rather than merely following a long
+  // document: there is clear paper between the signature block and the foot.
+  expect(foot.y - (signed.y + signed.height)).toBeGreaterThan(200);
+});
