@@ -3681,9 +3681,10 @@ test("a quote is saved for somebody by name, printed and emailed", async ({ page
   await expect(slip).toContainText("Prices are subject to stock availability");
   await page.getByLabel("Close", { exact: true }).click();
 
-  // One tap to email: the device's mail app opens with the quote in the body.
+  // One tap to email. What goes is the A4 quotation — named as one in the
+  // subject, and set out as one in the body — not the till slip that used to.
   const href = await dialog.getByRole("link", { name: "Email" }).getAttribute("href");
-  expect(href).toMatch(/^mailto:\?subject=Quote%20QUO-000001%20from%20Ladybrand%20Hardware/);
+  expect(href).toMatch(/^mailto:\?subject=Quotation%20QUO-000001%20from%20Ladybrand%20Hardware/);
   const body = decodeURIComponent(href!.split("&body=")[1]);
   expect(body).toContain("For: Mokoena Builders");
   expect(body).toContain("Cement 42.5N 50kg");
