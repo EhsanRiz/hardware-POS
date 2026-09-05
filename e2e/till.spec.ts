@@ -5569,3 +5569,58 @@ test("a statement opens on what was owed before it, and adds up to what is owed 
   await expect(ageing.locator("tr", { hasText: "60 days" })).toContainText("460.00");
   await expect(ageing.locator("tr", { hasText: "Current" })).toContainText("230.00");
 });
+
+test("the back office and the calculator open from the stock room, not only from the counter", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+
+  // Accounts, Quotes, Deliveries and Stock return early — above the point in
+  // the tree where every modal was written. Pressing these set the state and
+  // rendered nothing at all, so the header's buttons looked broken from the
+  // four screens somebody spends the most time on.
+  await page.getByRole("button", { name: "Calculator" }).click();
+  const calc = page.getByRole("dialog", { name: /Calculator/i });
+  await expect(calc).toBeVisible();
+  await calc.getByRole("button", { name: "Close calculator" }).click();
+  await expect(calc).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  await expect(gate).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByRole("button", { name: /^Buying$/ })).toBeVisible();
+});
+
+test("tapping Count by mistake can be undone without touching the shelf", async ({ page }) => {
+  const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
+  const before = cable.stock_qty!;
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+
+  const row = page.locator("tr", { hasText: "Twin & Earth 2.5mm 100m" }).first();
+  await row.getByRole("button", { name: "Count" }).click();
+  const box = row.getByLabel(/Counted quantity of Twin & Earth/i);
+  await expect(box).toBeVisible();
+  await box.fill("99");
+
+  // Escape was the only way out, which is no way out at all on a tablet.
+  await row.getByRole("button", { name: /Stop counting Twin & Earth/i }).click();
+  await expect(box).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Count" })).toBeVisible();
+  // Nothing was written: a mistaken tap must not move stock.
+  expect(cable.stock_qty).toBe(before);
+  expect(be.stockMoves).toHaveLength(0);
+});

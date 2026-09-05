@@ -403,6 +403,17 @@ export default function Stock({ pin }: { pin: string }) {
                             >
                               Save
                             </button>
+                            {/* Escape got you out of here, which is no use at
+                                all on the tablet this is used on. Tapping
+                                Count by mistake had no way back. */}
+                            <button
+                              className="btn-line quiet"
+                              onClick={() => { setCounting(null); setCounted(""); }}
+                              disabled={busy}
+                              aria-label={`Stop counting ${p.name}`}
+                            >
+                              Cancel
+                            </button>
                           </span>
                         ) : (
                           <button

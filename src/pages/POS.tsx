@@ -879,6 +879,72 @@ export default function POS() {
     />
   );
 
+  /**
+   * Everything the header can open.
+   *
+   * It lives beside `header` for the same reason: the screen below changes,
+   * the frame does not. Kept in the main return alone, every one of these was
+   * unreachable from Accounts, Quotes, Deliveries and Stock — those screens
+   * return early, above the point where the modals were written, so pressing
+   * Manage set the state and rendered nothing. The button looked broken
+   * because it was.
+   */
+  const overlays = (
+    <>
+      {askStockPin && (
+        <ManagerPinModal
+          title="Stock"
+          subtitle="Enter your PIN to open the stock room"
+          onApprove={async (entered) => {
+            // Proved against the server by the cheapest inventory call; fails
+            // loudly on a wrong PIN or a missing permission.
+            await stockMovements(entered, 1);
+            setStockPin(entered);
+            setAskStockPin(false);
+            setSection("stock");
+          }}
+          onCancel={() => setAskStockPin(false)}
+        />
+      )}
+
+      {askAdminPin && (
+        <ManagerPinModal
+          title="Manage"
+          subtitle="Enter your PIN to open the back office"
+          onApprove={async (entered) => {
+            // Proved against the server by a first call this signer is
+            // actually entitled to make — the catalogue for catalogue
+            // rights, a shelf lookup for the shelf grant. Proving with the
+            // catalogue alone locked shelf-only staff out of the one screen
+            // their permission exists to open. Either call fails loudly on a
+            // wrong PIN.
+            if (can(user, "manage_catalogue")) await adminListProducts(entered);
+            else await shelfLookup(entered, "0");
+            setAdminPin(entered);
+            setAskAdminPin(false);
+          }}
+          onCancel={() => setAskAdminPin(false)}
+        />
+      )}
+
+      {adminPin && (
+        <Admin
+          user={user}
+          pin={adminPin}
+          initialTab={adminTab}
+          onClose={() => {
+            setAdminPin(null);
+            setAdminTab(undefined);
+            void refresh();
+          }}
+        />
+      )}
+
+      {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
+      {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
+    </>
+  );
+
   // Accounts and Stock replace the counter, not the frame: the header keeps
   // the sync state and the way back, and a parked sale stays parked underneath.
   if ((section === "accounts" || section === "quotes" || section === "deliveries" ||
@@ -895,6 +961,7 @@ export default function POS() {
         ) : (
           <Stock pin={stockPin!} />
         )}
+        {overlays}
         <footer className="sell-foot">
           <InnovaMark size={16} />
           <span>InnovaPOS · a product of InnovaEarth</span>
@@ -902,9 +969,6 @@ export default function POS() {
             © {new Date().getFullYear()} InnovaEarth · All rights reserved
           </span>
         </footer>
-        {/* The calculator follows the header, so a quick sum works from
-            Accounts or a quote as well as from the counter. */}
-        {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
       </div>
     );
   }
@@ -1342,55 +1406,6 @@ export default function POS() {
         />
       )}
 
-      {askStockPin && (
-        <ManagerPinModal
-          title="Stock"
-          subtitle="Enter your PIN to open the stock room"
-          onApprove={async (entered) => {
-            // Proved against the server by the cheapest inventory call; fails
-            // loudly on a wrong PIN or a missing permission.
-            await stockMovements(entered, 1);
-            setStockPin(entered);
-            setAskStockPin(false);
-            setSection("stock");
-          }}
-          onCancel={() => setAskStockPin(false)}
-        />
-      )}
-
-      {askAdminPin && (
-        <ManagerPinModal
-          title="Manage"
-          subtitle="Enter your PIN to open the back office"
-          onApprove={async (entered) => {
-            // Proved against the server by a first call this signer is
-            // actually entitled to make — the catalogue for catalogue
-            // rights, a shelf lookup for the shelf grant. Proving with the
-            // catalogue alone locked shelf-only staff out of the one screen
-            // their permission exists to open. Either call fails loudly on a
-            // wrong PIN.
-            if (can(user, "manage_catalogue")) await adminListProducts(entered);
-            else await shelfLookup(entered, "0");
-            setAdminPin(entered);
-            setAskAdminPin(false);
-          }}
-          onCancel={() => setAskAdminPin(false)}
-        />
-      )}
-
-      {adminPin && (
-        <Admin
-          user={user}
-          pin={adminPin}
-          initialTab={adminTab}
-          onClose={() => {
-            setAdminPin(null);
-            setAdminTab(undefined);
-            void refresh();
-          }}
-        />
-      )}
-
       {cancelSale && user && (
         <CancelSale
           sale={cancelSale}
@@ -1420,8 +1435,7 @@ export default function POS() {
         />
       )}
 
-      {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
-      {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
+      {overlays}
     </div>
   );
 }
