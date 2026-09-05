@@ -35,7 +35,10 @@ import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
 import { buildQuoteText, buildReceiptText, cartQuoteLines } from "../lib/receipt";
-import { refreshSettings } from "../lib/settings";
+import { refreshSettings, shopSettings, vatRate } from "../lib/settings";
+import { fmtDate } from "../lib/dates";
+import { quoteSheet } from "../lib/quoteSheet";
+import { archiveSheet } from "../lib/sendSheet";
 import { submitSale, usePendingSync } from "../lib/sync";
 import type {
   CartLine,
@@ -556,6 +559,36 @@ export default function POS() {
           customerName,
         }),
         "Quote"
+      );
+      // Keep the document as it goes out, before the shop's address or terms
+      // can move under it. Deliberately not awaited and never allowed to fail
+      // loudly: the quote is saved either way, and the Quotes screen rebuilds
+      // one from its figures if this never lands.
+      void archiveSheet(
+        q.quote_id,
+        quoteSheet({
+          number: q.doc_number,
+          date: fmtDate(new Date().toISOString()),
+          validUntil: fmtDate(q.valid_until),
+          customerName: customer?.name ?? customerName ?? null,
+          servedBy: user.name,
+          // Through cartQuoteLines, so the document quotes the same price the
+          // till slip does — that is the one place that decides whether a
+          // line is at trade or retail.
+          lines: cartQuoteLines(lines, trade).map((l, i) => ({
+            code: lines[i].product.sku,
+            description: l.name,
+            qty: l.qty,
+            unit: l.unit_code,
+            unitPrice: l.unit,
+            discount: l.off || undefined,
+            lineTotal: Math.round((l.qty * l.unit - (l.off ?? 0)) * 100) / 100,
+          })),
+          discount: allDiscount,
+          total: q.total,
+          rate: vatRate(),
+        }),
+        shopSettings()
       );
       setBanner(`${q.doc_number} saved — bring it back by number.`);
       clearSale();

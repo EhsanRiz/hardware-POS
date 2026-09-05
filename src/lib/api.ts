@@ -10,7 +10,7 @@
 //     manager physically stands at the counter to do — approving a discount,
 //     voiding a sale, pairing a till.
 import { registerToken } from "./device";
-import { supabase } from "./supabase";
+import { API_BASE, supabase } from "./supabase";
 import type { SaleRow } from "./sales";
 import type {
   LoginCandidate,
@@ -510,6 +510,12 @@ export interface QuoteSummary {
   expired: boolean;
   item_count: number;
   note: string | null;
+  /**
+   * The archived document, if one was kept. Null means nobody managed to
+   * store it — the line was down when the quote was saved — and the till
+   * builds one from the quote's own figures instead.
+   */
+  pdf_path: string | null;
 }
 
 export interface QuoteLine {
@@ -660,4 +666,65 @@ export async function saleItems(saleId: string): Promise<SaleItem[]> {
   });
   if (error) throw error;
   return data as SaleItem[];
+}
+
+// --- The archived quotation (0060) -------------------------------------------
+
+/**
+ * Keep a quote's document, or fetch the one already kept.
+ *
+ * WHY KEEP IT AT ALL. The quote's figures are frozen in quote_items, so
+ * rebuilding gives the same prices forever — but not the same page. The
+ * shop's address, telephone, terms and logo all live in settings, and the day
+ * the shop moves, every old quotation redownloads with the new address on it.
+ * That is not the document the customer is holding.
+ *
+ * Storing is best-effort by design: a quote that could not be archived is
+ * still a quote, and the till rebuilds it. Nothing here may throw into the
+ * path that saves a sale.
+ */
+export async function archiveQuotePdf(
+  quoteId: string,
+  dataUrl: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/functions/v1/quote-pdf`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        action: "put",
+        register_token: requireToken(),
+        quote_id: quoteId,
+        file: dataUrl,
+      }),
+    });
+    const out = (await res.json()) as { ok?: boolean; path?: string };
+    return out.ok ? out.path ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A short-lived URL for the kept document, or null if there is not one. */
+export async function archivedQuotePdfUrl(quoteId: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/functions/v1/quote-pdf`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({
+      action: "get",
+      register_token: requireToken(),
+      quote_id: quoteId,
+    }),
+  });
+  const out = (await res.json()) as { ok?: boolean; url?: string | null };
+  if (!out.ok) throw new Error("That document could not be opened.");
+  return out.url ?? null;
 }

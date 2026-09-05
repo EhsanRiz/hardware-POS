@@ -18,6 +18,7 @@
  */
 import { imageSrc } from "./images";
 import { ensureLogo, logoImage } from "./logoBytes";
+import { archiveQuotePdf } from "./api";
 import { sheetAsPdf, sheetFileName } from "./pdf";
 import { SHEET_TITLE, sheetAsText, type Sheet } from "./sheet";
 import type { ShopSettings } from "./types";
@@ -99,9 +100,16 @@ export type SendOutcome = "shared" | "saved";
 export function emailSheet(
   sheet: Sheet,
   s: ShopSettings,
-  onDone: (how: SendOutcome) => void
+  onDone: (how: SendOutcome) => void,
+  /**
+   * The archived copy, when the screen has already fetched it. What goes to
+   * the customer should be the page that was sent, not today's rendering of
+   * it — but it has to be in hand before the click, because navigator.share
+   * cannot be called after an await.
+   */
+  kept?: File | null
 ): { attached: boolean } {
-  const file = sheetPdfFile(sheet, s);
+  const file = kept ?? sheetPdfFile(sheet, s);
   if (canShareFile(file)) {
     void navigator
       .share({ files: [file], title: sheetSubject(sheet, s) })
@@ -113,4 +121,38 @@ export function emailSheet(
   saveFile(file);
   onDone("saved");
   return { attached: false };
+}
+
+/** Bytes as a data URL, which is how the edge functions take a file. */
+function asDataUrl(bytes: Uint8Array): string {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return `data:application/pdf;base64,${btoa(binary)}`;
+}
+
+/**
+ * Keep the quotation exactly as it went out.
+ *
+ * Called the moment a quote is saved, and never allowed to throw: a quote that
+ * could not be archived is still a quote, and the till rebuilds the document
+ * from its figures instead. What is lost in that case is only the letterhead
+ * of the day, which is why this is also retried the first time somebody asks
+ * for the document again.
+ */
+export async function archiveSheet(
+  quoteId: string,
+  sheet: Sheet,
+  s: ShopSettings
+): Promise<string | null> {
+  try {
+    const logo = await ensureLogo(imageSrc(s.logo_url));
+    return await archiveQuotePdf(quoteId, asDataUrl(sheetAsPdf(sheet, s, logo)));
+  } catch {
+    return null;
+  }
+}
+
+/** What a fetched archive is called when it lands in someone's downloads. */
+export function archivedFileName(sheet: Sheet): string {
+  return sheetFileName(sheet);
 }

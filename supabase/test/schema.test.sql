@@ -2675,4 +2675,63 @@ begin
   perform assert_eq(v_n, 1, 'pos_org_settings has exactly one signature');
 end $$;
 
+-- 0060: the quotation as it was sent, kept once and never rewritten.
+do $$
+declare
+  v_tok text; v_mgr uuid; v_cem uuid; v_q record; v_row record;
+  v_path text; v_n int;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id into v_cem from public.products where sku = 'CEM-425-50' limit 1;
+
+  select * into v_q from public.pos_save_quote(v_tok, v_mgr,
+    jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 3)));
+
+  -- A fresh quote has no document yet: the till uploads it a moment later,
+  -- and may never manage it at all if the line is down.
+  select * into v_row from public.pos_list_quotes(v_tok)
+   where id = v_q.quote_id;
+  perform assert(v_row.pdf_path is null, 'a new quote has no archived document');
+  perform assert(public.pos_quote_pdf(v_tok, v_q.quote_id) is null,
+    'and nothing to sign');
+
+  v_path := public.pos_quote_set_pdf(v_tok, v_q.quote_id, 'org/quotes/one.pdf');
+  perform assert_eq(v_path, 'org/quotes/one.pdf', 'the path comes back');
+  select * into v_row from public.pos_list_quotes(v_tok) where id = v_q.quote_id;
+  perform assert_eq(v_row.pdf_path, 'org/quotes/one.pdf',
+    'and the list carries it, so the till knows to fetch rather than rebuild');
+  perform assert_eq(public.pos_quote_pdf(v_tok, v_q.quote_id), 'org/quotes/one.pdf',
+    'as does the lookup the signing function uses');
+
+  -- WRITE ONCE. This is the whole point: a second upload must not replace the
+  -- document the customer is holding. It answers with the one already kept.
+  v_path := public.pos_quote_set_pdf(v_tok, v_q.quote_id, 'org/quotes/two.pdf');
+  perform assert_eq(v_path, 'org/quotes/one.pdf',
+    'a second document does not replace the first');
+  select * into v_row from public.pos_list_quotes(v_tok) where id = v_q.quote_id;
+  perform assert_eq(v_row.pdf_path, 'org/quotes/one.pdf',
+    'and the quote still points at the one that was sent');
+
+  -- The path is a real path or it is nothing.
+  perform assert_refuses(
+    format('select public.pos_quote_set_pdf(%L, %L, %L)', v_tok, gen_random_uuid(), 'x.pdf'),
+    'a quote that is not this shop''s cannot be given a document');
+  perform assert_refuses(
+    format('select public.pos_quote_pdf(%L, %L)', 'not-a-token', v_q.quote_id),
+    'and a stranger cannot ask where one is');
+
+  -- The list was dropped and recreated to gain the column; exactly one of it
+  -- must remain, or every existing caller that names no limit is ambiguous.
+  select count(*) into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_list_quotes';
+  perform assert_eq(v_n, 1, 'pos_list_quotes has exactly one signature');
+
+  select count(*) into v_n from storage.buckets where id = 'sale-documents';
+  perform assert_eq(v_n, 1, 'the archive has somewhere private to live');
+  perform assert((select not public from storage.buckets where id = 'sale-documents'),
+    'and it is not a public bucket: a quotation names a customer');
+end $$;
+
 select 'all database tests passed' as result;
