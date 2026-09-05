@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   abandonStockCount,
   openStockCount,
@@ -11,6 +11,7 @@ import {
 } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { fmtDayMonthTime } from "../../lib/dates";
+import { money } from "../../lib/money";
 import { fmtQty } from "../../lib/receipt";
 
 /**
@@ -47,6 +48,10 @@ export default function StockTake({
   const [term, setTerm] = useState("");
   const [onlyLeft, setOnlyLeft] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The boxes a scan has to land in, by product, so a scanned code can put the
+  // cursor where the number goes.
+  const boxes = useRef(new Map<string, HTMLInputElement | null>());
+  const finder = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [newDept, setNewDept] = useState("");
@@ -95,10 +100,50 @@ export default function StockTake({
     });
   }, [lines, term, onlyLeft]);
 
+  /**
+   * A scanned code goes straight to its line.
+   *
+   * The motion in an aisle is scan, type, scan, type — not "type part of a
+   * name, find the row, tap the box". A hardware scanner is a keyboard that
+   * types fast and presses Enter, so it works through the same box that
+   * filters by name, with no hardware integration: an exact barcode or SKU
+   * rings straight through, and anything else goes on filtering.
+   *
+   * Focus then returns here from the quantity box, because otherwise the next
+   * scan lands in the last item's quantity and silently miscounts it.
+   */
+  function jumpTo(raw: string): boolean {
+    const code = raw.trim().toLowerCase();
+    if (!code || !lines) return false;
+    const hit = lines.find(
+      (l) => (l.barcode ?? "").toLowerCase() === code
+          || (l.sku ?? "").toLowerCase() === code
+    );
+    if (!hit) return false;
+    // Clear whatever was filtering, or the row we just found may be hidden.
+    setTerm("");
+    setOnlyLeft(false);
+    setError(null);
+    // After the filter has been dropped and the row is on screen again.
+    window.setTimeout(() => {
+      const box = boxes.current.get(hit.product_id);
+      box?.scrollIntoView({ block: "center" });
+      box?.focus();
+      box?.select();
+    }, 0);
+    return true;
+  }
+
   const counted = lines?.filter((l) => l.counted_qty != null).length ?? 0;
   const variances = lines?.filter(
     (l) => l.counted_qty != null && l.counted_qty !== l.expected_qty
   ) ?? [];
+  // What the differences are worth, before anything is posted. A person
+  // deciding whether to walk the aisle again wants the money, not the count.
+  const shortValue = variances.reduce(
+    (t, l) => t + (l.variance_value != null && l.variance_value < 0 ? -l.variance_value : 0), 0);
+  const overValue = variances.reduce(
+    (t, l) => t + (l.variance_value != null && l.variance_value > 0 ? l.variance_value : 0), 0);
 
   /** Record what is on the shelf. Blank clears the line back to uncounted. */
   async function record(l: StockCountLine, raw: string) {
@@ -114,6 +159,12 @@ export default function StockTake({
                 ...x,
                 counted_qty: qty,
                 variance: qty == null ? null : qty - x.expected_qty,
+                // The money as well as the quantity. Updating one and not the
+                // other left the sheet showing "-3" against no figure at all
+                // until somebody reloaded it.
+                variance_value: qty == null || x.unit_cost == null
+                  ? null
+                  : Math.round((qty - x.expected_qty) * x.unit_cost * 100) / 100,
                 counted_at: qty == null ? null : new Date().toISOString(),
               }
             : x
@@ -135,7 +186,8 @@ export default function StockTake({
           ? `${open.doc_number} posted — every line counted agreed with the shelf.`
           : `${open.doc_number} posted — ${r.lines_moved} ${
               r.lines_moved === 1 ? "line" : "lines"
-            } corrected, ${fmtQty(r.units_down)} short and ${fmtQty(r.units_up)} over.`
+            } corrected, ${fmtQty(r.units_down)} short and ${fmtQty(r.units_up)} over`
+            + (r.value_down > 0 ? `. ${money(r.value_down)} off the books.` : ".")
       );
       setOpen(null);
       setLines(null);
@@ -156,11 +208,25 @@ export default function StockTake({
             Back
           </button>
           <input
+            ref={finder}
             className="acc-search"
             value={term}
             onChange={(e) => setTerm(e.target.value)}
-            placeholder="Find a line by name, code or bin"
-            aria-label="Find a line on this sheet"
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const typed = term;
+              if (jumpTo(typed)) return;
+              // Not a code we know. Say so rather than leaving somebody
+              // staring at an empty list wondering which of the two it is.
+              if (typed.trim() && (lines ?? []).every((l) =>
+                    !l.name.toLowerCase().includes(typed.trim().toLowerCase()) &&
+                    !(l.sku ?? "").toLowerCase().includes(typed.trim().toLowerCase()))) {
+                setError(`${typed.trim()} is not on this sheet.`);
+              }
+            }}
+            placeholder="Scan a barcode, or find a line by name, code or bin"
+            aria-label="Scan or find a line on this sheet"
           />
           <label className="btn-line" style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
@@ -174,7 +240,11 @@ export default function StockTake({
 
         <p className="acc-note">
           {open.doc_number} · {counted} of {lines.length} counted ·{" "}
-          {variances.length} {variances.length === 1 ? "difference" : "differences"}.
+          {variances.length} {variances.length === 1 ? "difference" : "differences"}
+          {shortValue > 0 && (
+            <> · <span className="is-bad">{money(shortValue)} short</span></>
+          )}
+          {overValue > 0 && <> · {money(overValue)} over</>}.
           Nothing moves until this is posted, and only the lines you counted.
         </p>
 
@@ -216,14 +286,26 @@ export default function StockTake({
                         next.set(l.product_id, e.target.value);
                         setTyped(next);
                       }}
+                      ref={(el) => { boxes.current.set(l.product_id, el); }}
                       onBlur={(e) => void record(l, e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        if (e.key !== "Enter") return;
+                        (e.target as HTMLInputElement).blur();
+                        // Back to the scan box, or the next scan lands here
+                        // and silently miscounts the item just entered.
+                        finder.current?.focus();
                       }}
                     />
                   </td>
                   <td className={`num${v ? " is-bad" : ""}`}>
                     {v == null ? "—" : v === 0 ? "agrees" : `${v > 0 ? "+" : ""}${fmtQty(v)}`}
+                    {v != null && v !== 0 && l.variance_value != null && (
+                      <span className="acc-sub">
+                        {l.variance_value < 0
+                          ? `${money(-l.variance_value)} gone`
+                          : `${money(l.variance_value)} found`}
+                      </span>
+                    )}
                   </td>
                 </tr>
               );
@@ -248,7 +330,10 @@ export default function StockTake({
             Abandon
           </button>
           <button className="btn-fill" disabled={busy || counted === 0 || !online} onClick={() => void post()}>
-            {busy ? "Posting…" : `Post ${variances.length} ${variances.length === 1 ? "correction" : "corrections"}`}
+            {busy
+              ? "Posting…"
+              : `Post ${variances.length} ${variances.length === 1 ? "correction" : "corrections"}`
+                + (shortValue > 0 ? ` · ${money(shortValue)} off the books` : "")}
           </button>
         </div>
       </div>
@@ -335,7 +420,14 @@ export default function StockTake({
                 )}
               </td>
               <td className="num quiet">{c.counted} of {c.lines}</td>
-              <td className={`num${c.variances > 0 ? " is-bad" : ""}`}>{c.variances}</td>
+              <td className={`num${c.variances > 0 ? " is-bad" : ""}`}>
+                {c.variances}
+                {/* What the sheet cost the shop. A count that only ever said
+                    "12 differences" gave an owner nothing to act on. */}
+                {c.short_value > 0 && (
+                  <span className="acc-sub">{money(c.short_value)} short</span>
+                )}
+              </td>
               <td className="num">
                 {c.status === "open" && (
                   <button className="btn-line" onClick={() => void loadLines(c)}>

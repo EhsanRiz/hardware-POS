@@ -368,3 +368,47 @@ export async function purchasesBySupplier(
   if (error) throw error;
   return (data as SupplierSpendRow[]) ?? [];
 }
+
+export interface ShrinkageRow {
+  department: string;
+  item: string;
+  sku: string | null;
+  /** 'stocktake' — a count found it missing. 'adjustment' — written off. */
+  reason: "stocktake" | "adjustment";
+  qty: number;
+  at_cost: number;
+  /** True where this is today's cost, not the cost on the day it was lost. */
+  estimated: boolean;
+}
+
+export interface Shrinkage {
+  rows: ShrinkageRow[];
+  totals: {
+    at_cost: number;
+    counted_short: number;
+    written_off: number;
+    lines: number;
+    any_estimated: boolean;
+  };
+  from: string;
+  to: string;
+}
+
+/**
+ * What walked out of the door without being sold, over a window.
+ *
+ * Dates rather than timestamps: a loss is discovered on a day, not at a
+ * moment, and a stock take that ran over lunch belongs to that day whole.
+ */
+export async function shrinkage(
+  pin: string, from: Date, to: Date
+): Promise<Shrinkage> {
+  const day = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const { data, error } = await supabase.rpc("pos_shrinkage", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: day(from), p_to: day(to),
+  });
+  if (error) throw error;
+  return data as Shrinkage;
+}

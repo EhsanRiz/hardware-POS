@@ -5624,3 +5624,113 @@ test("tapping Count by mistake can be undone without touching the shelf", async 
   expect(cable.stock_qty).toBe(before);
   expect(be.stockMoves).toHaveLength(0);
 });
+
+test("a scanned code goes straight to its line, and the sheet says what the shortage cost", async ({ page }) => {
+  const cement = PRODUCTS.find((p) => p.sku === "CEM-425-50")!;
+  const chain = PRODUCTS.find((p) => p.sku === "CHN-06")!;
+  const before = cement.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: "Stock take" }).click();
+  await page.getByRole("button", { name: "Start a count" }).click();
+  await page.locator("tr.acc-row", { hasText: "CNT-000001" })
+    .getByRole("button", { name: "Continue" }).click();
+
+  // SCANNING IS THE MOTION IN AN AISLE. A scanner is a keyboard that types
+  // fast and presses Enter, so the code goes through the same box that
+  // filters by name and lands the cursor where the number goes.
+  const finder = page.getByLabel("Scan or find a line on this sheet");
+  await finder.fill(cement.barcode!);
+  await finder.press("Enter");
+  const box = page.getByLabel(`Counted ${cement.name}`);
+  await expect(box).toBeFocused();
+  // The code is not left filtering the sheet behind the row it just found.
+  await expect(finder).toHaveValue("");
+
+  // Three short. Enter sends focus back to the scan box, or the next scan
+  // lands in this quantity and silently miscounts the item just entered.
+  await box.fill(String(before - 3));
+  await box.press("Enter");
+  await expect(finder).toBeFocused();
+
+  // WHAT IT COST, BEFORE ANYTHING IS POSTED. Cement is 50 in the fake, so
+  // three of them is 150 — the number an owner reacts to, not "3 short".
+  const row = page.locator("tr.acc-row", { hasText: cement.name });
+  await expect(row).toContainText(/150\.00 gone/);
+  await expect(page.locator(".acc-note").first()).toContainText(/150\.00 short/);
+  await expect(page.getByRole("button", { name: /Post 1 correction/ }))
+    .toContainText(/150\.00 off the books/);
+
+  // A SKU works as well as a barcode: not everything on a shelf has one.
+  await finder.fill(chain.sku);
+  await finder.press("Enter");
+  await expect(page.getByLabel(`Counted ${chain.name}`)).toBeFocused();
+
+  // Something not on this sheet says so, rather than showing an empty list.
+  await finder.fill("NOT-A-THING");
+  await finder.press("Enter");
+  await expect(page.locator(".acc-note.is-bad"))
+    .toContainText("NOT-A-THING is not on this sheet.");
+
+  await page.getByRole("button", { name: /Post 1 correction/ }).click();
+  await expect(page.getByText(/150\.00 off the books/)).toBeVisible();
+  expect(cement.stock_qty).toBe(before - 3);
+  // The cost is on the movement, or the loss can be counted but never added up.
+  expect(be.stockMoves.at(-1)).toMatchObject({
+    product_id: cement.id, qty_delta: -3, reason: "stocktake", unit_cost: 50,
+  });
+});
+
+test("what walked out of the door without being sold is a number the owner can see", async ({ page }) => {
+  // A count found three cement short; somebody wrote a chain off by hand.
+  be.stockMoves.push({
+    product_id: "p1", qty_delta: -3, reason: "stocktake",
+    note: "Counted 237, expected 240", unit_cost: 50,
+  });
+  be.stockMoves.push({
+    product_id: "p2", qty_delta: -2, reason: "adjustment",
+    note: "Kinked, thrown away", unit_cost: 20,
+  });
+  // A sale is not a loss. It is the whole distinction the report exists for.
+  be.stockMoves.push({
+    product_id: "p1", qty_delta: -8, reason: "sale", note: null, unit_cost: 50,
+  });
+  // And an old movement with no cost against it is valued at today's and said
+  // to be an estimate, rather than being quietly left out of the total.
+  be.stockMoves.push({
+    product_id: "p5", qty_delta: -1, reason: "adjustment",
+    note: "Old movement", unit_cost: null,
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await page.getByRole("tab", { name: "Losses" }).click();
+
+  const view = page.getByRole("region", { name: "Losses" });
+  await expect(view).toBeVisible();
+  // 3 × 50 counted short, plus 2 × 20 and 1 × 50 written off = 240.
+  // Scoped to the summary: "Counted short" is also a value in the table below,
+  // and an assertion that matches either proves neither.
+  const glance = view.getByRole("group", { name: "Losses at a glance" });
+  await expect(glance).toContainText(/Lost, at costR\s?240\.00/);
+  await expect(glance).toContainText(/Counted shortR\s?150\.00/);
+  await expect(glance).toContainText(/Written offR\s?90\.00/);
+
+  const short = view.locator("tr", { hasText: "Cement 42.5N 50kg" });
+  await expect(short).toContainText("Counted short");
+  await expect(short).toContainText("150.00");
+  const off = view.locator("tr", { hasText: "Chain 6mm Galvanised" });
+  await expect(off).toContainText("Written off");
+
+  // The estimate is marked where it is one.
+  await expect(view.locator("tr", { hasText: "Padlock 50mm Brass" }))
+    .toContainText("estimated");
+  await expect(view).toContainText(/valued at today/i);
+});

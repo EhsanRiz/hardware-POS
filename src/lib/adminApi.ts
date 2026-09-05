@@ -1125,18 +1125,26 @@ export interface StockCount {
   lines: number;
   counted: number;
   variances: number;
+  /** What the sheet is short, at cost. Positive means money gone. */
+  short_value: number;
 }
 
 export interface StockCountLine {
   id: string;
   product_id: string;
   sku: string | null;
+  /** So a scanner can find the line. Read live, not copied onto the sheet. */
+  barcode: string | null;
   name: string;
   unit_code: string;
   bin: string | null;
   expected_qty: number;
   counted_qty: number | null;
   variance: number | null;
+  /** What one costs, snapshotted when the sheet was opened. */
+  unit_cost: number | null;
+  /** The difference at cost. Negative when the shelf is short. */
+  variance_value: number | null;
   counted_at: string | null;
 }
 
@@ -1181,12 +1189,21 @@ export async function setCountedQty(
 
 export async function postStockCount(
   pin: string, countId: string
-): Promise<{ lines_moved: number; units_up: number; units_down: number }> {
+): Promise<PostedCount> {
   const { data, error } = await supabase.rpc("pos_stock_count_post", {
     p_register_token: requireToken(), p_pin: pin, p_count_id: countId,
   });
   if (error) throw error;
-  return data as { lines_moved: number; units_up: number; units_down: number };
+  return data as PostedCount;
+}
+
+export interface PostedCount {
+  lines_moved: number;
+  units_up: number;
+  units_down: number;
+  /** What was found, and what walked out of the door, both at cost. */
+  value_up: number;
+  value_down: number;
 }
 
 export async function abandonStockCount(pin: string, countId: string): Promise<void> {
