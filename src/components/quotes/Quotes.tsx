@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  archivedQuotePdfUrl,
   closeQuote,
   listQuotes,
   quoteItems,
@@ -14,7 +15,10 @@ import { buildQuoteText } from "../../lib/receipt";
 import { shopSettings, vatRate } from "../../lib/settings";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
-import { emailSheet, saveSheetPdf, sheetMailto, type SendOutcome } from "../../lib/sendSheet";
+import {
+  archiveSheet, emailSheet, saveFile, saveSheetPdf, sheetMailto, type SendOutcome,
+} from "../../lib/sendSheet";
+import { quoteSheet } from "../../lib/quoteSheet";
 import { primeLogo } from "../../lib/logoBytes";
 import { imageSrc } from "../../lib/images";
 import type { User } from "../../lib/types";
@@ -45,6 +49,12 @@ export default function Quotes({
   const [sent, setSent] = useState<SendOutcome | null>(null);
   /** The quote whose PDF is being fetched and built, if any. */
   const [pdfFor, setPdfFor] = useState<string | null>(null);
+  /**
+   * The archived document for the open quote, fetched while the popup is
+   * being read. Emailing cannot wait for it at the moment of the click, so it
+   * is here or it is not used.
+   */
+  const [kept, setKept] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,6 +101,17 @@ export default function Quotes({
     };
   }, [viewing]);
 
+  // The copy that was sent, fetched while somebody reads the quote.
+  useEffect(() => {
+    setKept(null);
+    if (!viewing) return;
+    let cancelled = false;
+    void archivedFile(viewing).then((f) => !cancelled && setKept(f));
+    return () => {
+      cancelled = true;
+    };
+  }, [viewing]);
+
   /** The saved quote, laid out exactly as it was when first printed. */
   function quoteText(q: QuoteSummary, lines: QuoteLine[]): string {
     return buildQuoteText(
@@ -121,14 +142,13 @@ export default function Quotes({
    * till prices include it, which is what the customer is comparing.
    */
   function asSheet(q: QuoteSummary, lines: QuoteLine[]): Sheet {
-    const rate = vatRate();
-    const vat = Math.round((q.total - q.total / (1 + rate)) * 100) / 100;
-    return {
-      kind: "quote",
+    return quoteSheet({
       number: q.doc_number ?? "",
       date: fmtDate(q.created_at),
       validUntil: fmtDate(q.valid_until),
-      customer: { name: q.customer_name },
+      customerName: q.customer_name,
+      servedBy: q.cashier_name,
+      note: q.note,
       lines: lines.map((l) => ({
         code: l.sku,
         description: l.name,
@@ -137,33 +157,61 @@ export default function Quotes({
         unitPrice: l.unit_price,
         lineTotal: l.line_total,
       })),
-      subtotal: Math.round((q.total - vat) * 100) / 100,
-      discount: 0,
-      vat,
       total: q.total,
-      note: q.note,
-      servedBy: q.cashier_name,
-    };
+      rate: vatRate(),
+    });
   }
 
 
   /**
    * The quotation as a file, from the list, without opening anything.
    *
-   * Built on the spot rather than stored: the lines and prices are already
-   * frozen in the database, so the same quote gives the same document every
-   * time, and there is no upload to fail and no file to go missing.
+   * The copy that was SENT comes first. The figures would rebuild identically
+   * either way, but the letterhead around them would not: the shop's address,
+   * telephone, terms and logo all live in settings, and rebuilding an old
+   * quote after the shop moves puts an address on it that was never on the
+   * customer's copy.
+   *
+   * Rebuilding stays the fallback for a quote saved while the line was down —
+   * and that is also the moment to keep it, so it is only ever wrong once.
    */
   async function downloadPdf(q: QuoteSummary) {
     setPdfFor(q.id);
     setError(null);
     try {
+      const kept = await archivedFile(q);
+      if (kept) {
+        saveFile(kept);
+        return;
+      }
       const lines = await quoteItems(q.id);
-      await saveSheetPdf(asSheet(q, lines), shopSettings());
+      const sheet = asSheet(q, lines);
+      await saveSheetPdf(sheet, shopSettings());
+      void archiveSheet(q.id, sheet, shopSettings()).then((path) => {
+        if (path) void load();
+      });
     } catch (e) {
       setError(errorMessage(e, "Could not build that PDF"));
     } finally {
       setPdfFor(null);
+    }
+  }
+
+  /** The archived document as a file, or null if none was ever kept. */
+  async function archivedFile(q: QuoteSummary): Promise<File | null> {
+    if (!q.pdf_path) return null;
+    try {
+      const url = await archivedQuotePdfUrl(q.id);
+      if (!url) return null;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return new File([await res.blob()], `Quotation-${q.doc_number ?? q.id}.pdf`, {
+        type: "application/pdf",
+      });
+    } catch {
+      // A signed URL that will not fetch is not worth failing a download over:
+      // the caller rebuilds, which is the same figures on today's letterhead.
+      return null;
     }
   }
 
@@ -364,10 +412,7 @@ export default function Quotes({
               <button
                 className="px-4 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
                 disabled={!viewLines}
-                onClick={() =>
-                  viewLines &&
-                  void saveSheetPdf(asSheet(viewing, viewLines), shopSettings())
-                }
+                onClick={() => viewLines && void downloadPdf(viewing)}
               >
                 PDF
               </button>
@@ -386,7 +431,7 @@ export default function Quotes({
                 onClick={(e) => {
                   if (!viewLines) return;
                   const done = emailSheet(
-                    asSheet(viewing, viewLines), shopSettings(), setSent
+                    asSheet(viewing, viewLines), shopSettings(), setSent, kept
                   );
                   if (done.attached) e.preventDefault();
                 }}

@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { Backend, installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
@@ -4884,4 +4884,93 @@ test("the shop's uploaded logo is inside the PDF, not just on the screen", async
   expect(pdf).toMatch(/\/Im1 Do/);
   // And the shop's name is still set: a mark is not a name.
   expect(pdf).toContain("(Ladybrand Hardware) Tj");
+});
+
+/*
+ * 0060: the quotation as it was sent, kept.
+ */
+test("a quote's document is kept as it went out, and survives the shop moving", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  const ask = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await ask.getByLabel("Quote for").fill("Morija Exp");
+  await ask.getByRole("button", { name: "Save quote" }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  await page.getByLabel("Close").click();
+
+  // Kept at the moment it was saved, not the first time somebody asks for it.
+  await expect.poll(() => Object.keys(be.archivedQuotes).length).toBe(1);
+  const stored = Object.values(be.archivedQuotes)[0];
+  expect(stored.startsWith("data:application/pdf;base64,")).toBe(true);
+  const asSent = Buffer.from(stored.split(",")[1], "base64").toString("latin1");
+  expect(asSent).toContain("(12 Church St, Ladybrand, Free State) Tj");
+  expect(asSent).toContain("(Morija Exp) Tj");
+
+  // THE SHOP MOVES. Everything the document says about the shop lives in
+  // settings, and rebuilding an old quote would put the new address on a page
+  // the customer never received.
+  Object.assign(be.orgSettings, {
+    address_line1: "9 Market St", address_line2: "Bloemfontein, Free State",
+  });
+  // A reload, because the shop's details are cached on the device and read
+  // fresh when the till starts. The register stays paired and the operator
+  // stays signed in.
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  const row = page.locator("tr.acc-row", { hasText: "QUO-000001" });
+
+  const download = page.waitForEvent("download");
+  await row.getByRole("button", { name: "PDF" }).click();
+  const got = readFileSync((await (await download).path())!).toString("latin1");
+  expect(got.startsWith("%PDF-")).toBe(true);
+  // The old address, because that is the page that was sent.
+  expect(got).toContain("(12 Church St, Ladybrand, Free State) Tj");
+  expect(got).not.toContain("9 Market St");
+  // And a fresh quote saved today does carry the new address, so this is the
+  // archive doing its job rather than a stale cache somewhere.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Sell" }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await expect.poll(() => Object.keys(be.archivedQuotes).length).toBe(2);
+  const second = Object.entries(be.archivedQuotes).find(([id]) => id !== Object.keys(be.archivedQuotes)[0]);
+  const newer = Buffer.from(second![1].split(",")[1], "base64").toString("latin1");
+  expect(newer).toContain("(9 Market St, Bloemfontein, Free State) Tj");
+});
+
+test("a quote saved while the line was down is archived the first time it is asked for", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  // The quote saves; the upload that follows it does not. That has to leave a
+  // quote, not an error — the archive is a nicety and the quote is the job.
+  // Only this handler is removed later: unroute with a bare pattern takes the
+  // fake's own handler for that URL with it, and the retry then has nothing to
+  // talk to.
+  const blockArchive = (r: Route) => r.abort("failed");
+  await page.route("**/functions/v1/quote-pdf", blockArchive);
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await expect(banner(page)).toContainText(/QUO-000001 saved/);
+  await page.getByLabel("Close").click();
+  expect(Object.keys(be.archivedQuotes)).toHaveLength(0);
+
+  // Asking for the document rebuilds it — and keeps it, so the letterhead is
+  // only ever wrong once.
+  await page.unroute("**/functions/v1/quote-pdf", blockArchive);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  const download = page.waitForEvent("download");
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" })
+    .getByRole("button", { name: "PDF" }).click();
+  expect(readFileSync((await (await download).path())!).toString("latin1")).toContain("%PDF-");
+  await expect.poll(() => Object.keys(be.archivedQuotes).length).toBe(1);
 });

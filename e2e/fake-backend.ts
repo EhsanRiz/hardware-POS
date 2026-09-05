@@ -326,6 +326,13 @@ export class Backend {
     // name in type instead.
     logo_url: "",
   };
+  /**
+   * The archived quotation PDFs, by quote id. Write once: the fake refuses a
+   * second copy exactly as pos_quote_set_pdf does, because "the document the
+   * customer is holding cannot be replaced" is the whole feature and a fake
+   * that quietly allows it would make a green test out of a broken one.
+   */
+  archivedQuotes: Record<string, string> = {};
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
     customer_name: string | null;
             customer_id: string | null;
@@ -343,6 +350,7 @@ export class Backend {
     this.quotes = [];
     this.offline = false;
     this.seq = 0;
+    this.archivedQuotes = {};
   }
 
   /** Balance the way the real customer_balance() computes it. */
@@ -822,6 +830,38 @@ export async function installBackend(page: Page): Promise<Backend> {
     });
   });
 
+  // 0060: the archived quotation. put keeps it once; get hands back a URL.
+  // The bytes come back as the data URL they arrived as, which is a thing a
+  // browser test can actually fetch.
+  await page.route("**/functions/v1/quote-pdf", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, string> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    const id = String(b.quote_id ?? "");
+    if (!be.quotes.some((q) => q.id === id)) {
+      return respond(404, { ok: false, message: "Unknown quote" });
+    }
+    if (b.action === "get") {
+      const kept = be.archivedQuotes[id];
+      return respond(200, { ok: true, url: kept ?? null });
+    }
+    if (be.archivedQuotes[id]) {
+      return respond(200, { ok: true, path: `org1/quotes/${id}.pdf`, stored: false });
+    }
+    if (!/^data:application\/pdf;base64,./.test(String(b.file ?? ""))) {
+      return respond(400, { ok: false, message: "Unreadable document" });
+    }
+    be.archivedQuotes[id] = String(b.file);
+    return respond(200, { ok: true, path: `org1/quotes/${id}.pdf`, stored: true });
+  });
+
   // 0055: the supplier-document function. Pages in, signed URLs out; the fake
   // hands back the very data URL it was given, which is what a browser test
   // can look at.
@@ -1106,6 +1146,9 @@ export async function installBackend(page: Page): Promise<Backend> {
           total: q.items.reduce((t, i) => t + i.unit_price * i.qty, 0),
           valid_until: "2099-01-01", expired: false,
           item_count: q.items.length, note: null,
+          // 0060: whether the document that went out was kept. Null means the
+          // till rebuilds one.
+          pdf_path: be.archivedQuotes[q.id] ? `org1/quotes/${q.id}.pdf` : null,
         })));
       case "rpc/pos_quote_items": {
         if (!tokenOk) return fail("Register not paired or revoked");
