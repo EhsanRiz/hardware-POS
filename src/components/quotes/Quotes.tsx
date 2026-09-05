@@ -10,10 +10,11 @@ import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
 import { printReceipt } from "../../lib/print";
-import { buildQuoteText, stripMarkup } from "../../lib/receipt";
+import { buildQuoteText } from "../../lib/receipt";
 import { shopSettings, vatRate } from "../../lib/settings";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
+import { emailSheet, sheetMailto, type SendOutcome } from "../../lib/sendSheet";
 import type { User } from "../../lib/types";
 import { fmtDate } from "../../lib/dates";
 
@@ -38,6 +39,8 @@ export default function Quotes({
 }) {
   const online = useOnline();
   const [quotes, setQuotes] = useState<QuoteSummary[] | null>(null);
+  /** How the last emailed quote went out, when it needed saying. */
+  const [sent, setSent] = useState<SendOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -139,20 +142,6 @@ export default function Quotes({
     };
   }
 
-  /**
-   * One tap to email it. The device's own mail app opens with the quote in
-   * the body and the shop's address to reply to — no mail server to run, no
-   * address book to keep, and it works from the phone in the yard as well as
-   * the desk.
-   */
-  function mailtoHref(q: QuoteSummary, lines: QuoteLine[]): string {
-    const s = shopSettings();
-    const subject = `Quote ${q.doc_number ?? ""} from ${s.shop_name}`.trim();
-    const body =
-      stripMarkup(quoteText(q, lines)) +
-      (s.email ? `\n\nReplies: ${s.email}` : "");
-    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  }
 
   async function recall(q: QuoteSummary) {
     setBusy(true);
@@ -227,7 +216,7 @@ export default function Quotes({
               </tr>
             )}
             {shown.map((q) => (
-              <tr key={q.id} className="acc-row" onClick={() => setViewing(q)}>
+              <tr key={q.id} className="acc-row" onClick={() => { setSent(null); setViewing(q); }}>
                 <td>
                   <span className="acc-name">{q.doc_number}</span>
                   <span className="acc-sub">
@@ -341,13 +330,35 @@ export default function Quotes({
               >
                 A4 quote
               </button>
+              {/* What leaves here is the A4 quotation as a PDF. It used to be
+                  the till slip — a 48-column thermal receipt pasted into the
+                  body of the message, ruled lines and all, sent to a builder
+                  deciding on forty thousand rand of materials. */}
               <a
                 className={`px-4 py-2.5 rounded-xl border border-stone-300 ${viewLines ? "" : "opacity-40 pointer-events-none"}`}
-                href={viewLines ? mailtoHref(viewing, viewLines) : undefined}
+                href={
+                  viewLines
+                    ? sheetMailto(asSheet(viewing, viewLines), shopSettings())
+                    : undefined
+                }
                 aria-disabled={!viewLines}
+                onClick={(e) => {
+                  if (!viewLines) return;
+                  const done = emailSheet(
+                    asSheet(viewing, viewLines), shopSettings(), setSent
+                  );
+                  if (done.attached) e.preventDefault();
+                }}
               >
                 Email
               </a>
+              {/* Said out loud, because a browser that cannot attach a file
+                  leaves the person a step to do themselves. */}
+              {sent === "saved" && (
+                <span className="w-full text-sm text-stone-600">
+                  PDF saved — attach it to the message that just opened.
+                </span>
+              )}
               <button
                 className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
                 disabled={busy || !online}

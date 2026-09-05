@@ -166,6 +166,11 @@ button {
   font-size: 10.5pt;
   line-height: 1.45;
   box-sizing: border-box;
+  /* A column, so the foot can be pushed to the foot of the page. A two-line
+     quotation is the common case and it used to leave the colophon floating
+     in the middle of an otherwise empty sheet. */
+  display: flex;
+  flex-direction: column;
 }
 /* House colours, and the house rule about them: amber is a STROKE, never a
    fill and never paragraph text. It carries the rules under the letterhead
@@ -260,9 +265,12 @@ button {
   font-size: 8pt;
   color: var(--color-neutral-700, #55625b);
   text-align: center;
-  padding-top: 4mm;
+  padding-top: 6mm;
   border-top: 0.4pt solid var(--divider, rgba(27, 42, 36, 0.16));
-  margin-top: 8mm;
+  /* Down to the bottom of the sheet, however short the document is — the one
+     declaration that puts the colophon on the paper's edge instead of
+     halfway up an empty page. */
+  margin-top: auto;
 }
 .doc-disclaim { margin-top: 1mm; }
 /* Whose software printed it, and who owns the software. The handoff's
@@ -293,7 +301,10 @@ button {
      held at 4mm for the thermal slip, and dropping the padding as well put
      the letterhead and the totals hard against the paper's edge. 12mm of
      padding on top of that 4mm is the 16mm the screen shows. */
-  .doc-a4 { width: auto; min-height: 0; padding: 10mm 12mm; }
+  /* One page tall, so the foot lands at the foot of the paper as it does on
+     screen — but a page, not a fixed 297mm: 297mm inside a 4mm page margin
+     spills 8mm onto a second, blank sheet. In print vh is the page box. */
+  .doc-a4 { width: auto; min-height: 100vh; padding: 10mm 12mm; }
   /* A line item should not be split down the middle by a page break. */
   .doc-lines tr { break-inside: avoid; }
   .doc-accept, .doc-totals, .doc-page-foot { break-inside: avoid; }
