@@ -314,6 +314,12 @@ export interface ShopSettings {
   receipt_terms?: string | null;
   quote_terms?: string | null;
   /**
+   * What one delivery costs the shop: fuel there and back, plus what the
+   * driver's hour is worth. Kept on the delivery product so every report
+   * reads it through cost_at_sale; null until a shop has said (0064).
+   */
+  delivery_cost?: number | null;
+  /**
    * The shop's mark, as a storage path. Printed at the head of an A4 quote or
    * tax invoice; run it through imageSrc() to display it. Empty until a shop
    * uploads one, and the documents simply set the name in type instead.

@@ -690,6 +690,12 @@ function DeliveriesView({ report }: { report: DeliveriesReport }) {
           />
           <Stat label="Carriage charged" value={money(t.carriage)} />
           <Stat label="Carriage earned" value={money(t.carriage_net)} />
+          <Stat label="Cost of the trips" value={money(t.carriage_cost)} />
+          <Stat
+            label="Worth"
+            value={money(t.carriage_margin)}
+            tone={t.carriage_margin < 0 ? "bad" : "good"}
+          />
         </div>
         <p className="text-xs text-stone-500">
           Charged is what was agreed on the notes in this range; earned is what
@@ -698,6 +704,13 @@ function DeliveriesView({ report }: { report: DeliveriesReport }) {
           promised three weeks ago is exactly the one nobody is looking at.
           {t.carriage_free > 0 && ` ${t.carriage_free} went out free of charge.`}
         </p>
+        {t.carriage_cost === 0 && t.count > 0 && (
+          <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg" role="status">
+            No cost is recorded against a delivery, so “worth” above is the
+            whole charge and every trip reports as pure profit. Set what one
+            costs under Manage → Shop.
+          </p>
+        )}
       </div>
 
       <Card

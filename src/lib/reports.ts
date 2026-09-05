@@ -169,6 +169,8 @@ export interface DeliveryReportTotals {
   carriage: number;
   carriage_free: number;
   carriage_net: number;
+  carriage_cost: number;
+  carriage_margin: number;
 }
 
 export interface OutstandingDelivery {

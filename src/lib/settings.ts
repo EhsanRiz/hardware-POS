@@ -28,6 +28,7 @@ const FALLBACK: ShopSettings = {
   bank_branch_code: "",
   receipt_terms: "",
   quote_terms: "",
+  delivery_cost: null,
   logo_url: "",
   vat_rate: null,
   // A till that has never reached the server prints a full quote. Withholding

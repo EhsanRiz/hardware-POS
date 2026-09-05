@@ -5211,3 +5211,43 @@ test("a report tab a cashier cannot open is not there at all", async ({ page }) 
   await pairAndSignIn(page, USERS.employee.pin);
   await expect(page.getByRole("button", { name: /Manage/i })).toHaveCount(0);
 });
+
+test("a delivery costs the shop, and a free one costs it just the same", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await page.getByLabel("Cost per delivery").fill("60");
+  await page.getByRole("button", { name: "Save cost" }).click();
+  await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+
+  // A trip given away. It is the case that matters most: the shop still paid
+  // for the fuel and the hour, and before this there was no line at all on a
+  // free delivery, so it cost nothing as far as any report could tell.
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Someone Local");
+  await form.getByLabel("Address").fill("Round the corner");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+  // The line goes on even at nothing, so the customer sees they were not
+  // charged and the shop records what it cost to do.
+  await expect(page.locator(".line-row", { hasText: "Delivery" })).toBeVisible();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  // The sale is the goods alone: a free delivery adds nothing to the total.
+  expect(be.storedSales[0].total).toBe(115);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await page.getByRole("tab", { name: "Deliveries" }).click();
+  const del = page.getByRole("region", { name: "Deliveries" });
+  await expect(del).toContainText("Cost of the trips");
+  // R60 out, nothing in: delivering cost the shop sixty rand today.
+  await expect(del).toContainText("60.00");
+  await expect(del).toContainText("-R 60.00");
+  // And it does not tell the shop to go and set a cost it has already set.
+  await expect(del).not.toContainText("No cost is recorded against a delivery");
+});
