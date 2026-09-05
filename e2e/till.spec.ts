@@ -4539,7 +4539,7 @@ test("a quote prints as an A4 quotation with a line for the builder to sign", as
   await expect(doc).toContainText("VAT No 4001234567");
   await expect(doc.locator("img")).toHaveCount(0);
   // The address sits under the name, centred, rather than off to one side.
-  await expect(doc.locator(".doc-shop-details")).toContainText("12 Church St");
+  await expect(doc.locator(".doc-shop-where")).toContainText("12 Church St");
   // Whose it is, what is on it, and what it comes to.
   await expect(doc).toContainText("Mokoena Builders");
   await expect(doc).toContainText("Cement 42.5N 50kg");
@@ -4676,4 +4676,69 @@ test("the A4 document's table is not zebra-striped by the till's own styling", a
   const first = await rows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
   const second = await rows.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(second).toBe(first);
+});
+
+test("the letterhead breaks into two lines and InnovaPOS signs the foot", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "A4 quote" }).click();
+  const doc = page.getByRole("dialog", { name: "Quotation QUO-000001" });
+
+  // Where the shop is on one line; how to reach it and who it is on the next.
+  // Run together they were a wall: a street, a suburb, a telephone number and
+  // a VAT number in one 9pt paragraph, and nobody finds the number they came
+  // for. The point of the split is that neither line carries the other's job.
+  const whereLine = doc.locator(".doc-shop-where");
+  const reachLine = doc.locator(".doc-shop-reach");
+  await expect(whereLine).toHaveText("12 Church St, Ladybrand, Free State");
+  await expect(reachLine).toContainText("Tel 051 924 0000");
+  await expect(reachLine).toContainText("VAT No 4001234567");
+  await expect(whereLine).not.toContainText("Tel");
+  await expect(whereLine).not.toContainText("VAT");
+  await expect(reachLine).not.toContainText("Church St");
+
+  // The house colours, so the document looks like it came from the same place
+  // as the till: green for the names, amber for the rules. Both dark enough to
+  // survive the mono printer most shops actually own.
+  await expect(doc.locator(".doc-shop")).toHaveCSS("color", "rgb(14, 58, 45)");
+  await expect(doc.locator(".doc-title")).toHaveCSS("color", "rgb(14, 58, 45)");
+  await expect(doc.locator(".doc-head"))
+    .toHaveCSS("border-bottom-color", "rgb(200, 145, 47)");
+
+  // The foot, on screen as well as on paper — it used to print only, and a
+  // preview that leaves a block out is not a preview of anything.
+  const foot = doc.locator(".doc-page-foot");
+  await expect(foot).toBeVisible();
+  await expect(foot).toContainText("Ladybrand Hardware · Quotation QUO-000001");
+  await expect(foot).toContainText("E&OE");
+  await expect(foot).toContainText("InnovaPOS · a product of InnovaEarth");
+  await expect(foot).toContainText("All rights reserved");
+  // The mark itself, not just the words.
+  await expect(doc.locator(".doc-colophon svg")).toHaveCount(1);
+
+  // And on paper it keeps a margin. @page is held at 4mm for the thermal
+  // slip, so the sheet carries its own; with the padding dropped to nothing
+  // the letterhead sat 4mm from the edge of the page.
+  await page.emulateMedia({ media: "print" });
+  // Addressed off the page, not through the dialog: print hides everything but
+  // the sheet, and a hidden wrapper takes its role with it.
+  const sheet = page.locator("#doc-sheet");
+  const pad = await sheet.evaluate((el) => ({
+    left: parseFloat(getComputedStyle(el).paddingLeft),
+    top: parseFloat(getComputedStyle(el).paddingTop),
+  }));
+  expect(pad.left).toBeGreaterThan(20);
+  expect(pad.top).toBeGreaterThan(20);
+  // The foot survives print too.
+  await expect(sheet.locator(".doc-page-foot")).toBeVisible();
+  await page.emulateMedia({ media: "screen" });
 });

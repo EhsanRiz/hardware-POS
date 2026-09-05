@@ -158,29 +158,46 @@ button {
   margin: 0 auto;
   padding: 14mm 16mm;
   background: #fff;
-  color: #12100e;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--color-text, #1b2a24);
+  /* The app's own face, self-hosted — a document that leaves the shop should
+     look like it came from the same place as the till slip. */
+  font-family: var(--font-body, ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif);
   font-size: 10.5pt;
   line-height: 1.45;
   box-sizing: border-box;
 }
+/* House colours, and the house rule about them: amber is a STROKE, never a
+   fill and never paragraph text. It carries the rules under the letterhead
+   and above the total; the green carries the names. Both are dark enough to
+   survive a mono print, which is how most of these will actually come out. */
 .doc-head {
   text-align: center;
   padding-bottom: 5mm;
-  border-bottom: 1.5pt solid #12100e;
+  border-bottom: 1pt solid var(--color-accent, #c8912f);
 }
 .doc-logo { max-height: 20mm; max-width: 80mm; object-fit: contain; margin: 0 auto 3mm; display: block; }
-.doc-shop { font-size: 19pt; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.doc-shop {
+  font-size: 19pt; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15;
+  color: var(--color-colophon, #0e3a2d);
+}
 /* Under the name, not off to one side: an address belongs to the name above
    it, and a reader looking for "who is this" should not have to cross the
-   page to finish the answer. */
-.doc-shop-details { font-size: 9pt; color: #4a453f; margin-top: 1.5mm; }
+   page to finish the answer. Two lines, because an address run together with
+   a telephone number and two registration numbers is a wall to search. */
+.doc-shop-where,
+.doc-shop-reach { font-size: 9pt; color: var(--color-neutral-700, #55625b); }
+.doc-shop-where { margin-top: 1.5mm; }
+.doc-shop-reach { margin-top: 0.8mm; }
 
 .doc-title-row { display: flex; align-items: flex-start; gap: 12mm; margin-top: 7mm; }
-.doc-title { font-size: 17pt; font-weight: 700; letter-spacing: 0.02em; }
+.doc-title {
+  font-size: 17pt; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--color-colophon, #0e3a2d);
+}
 .doc-meta { margin-left: auto; border-collapse: collapse; font-size: 9.5pt; }
 .doc-meta th {
-  text-align: left; font-weight: 500; color: #4a453f;
+  text-align: left; font-weight: 500; color: var(--color-neutral-700, #55625b);
   padding: 0.6mm 5mm 0.6mm 0;
 }
 .doc-meta td { text-align: right; font-variant-numeric: tabular-nums; }
@@ -188,10 +205,11 @@ button {
 .doc-to { margin-top: 6mm; }
 .doc-label {
   display: block; font-size: 8pt; letter-spacing: 0.09em;
-  text-transform: uppercase; color: #6b645c; margin-bottom: 1mm;
+  text-transform: uppercase; color: var(--color-neutral-700, #55625b);
+  margin-bottom: 1mm;
 }
 .doc-to-name { font-weight: 700; font-size: 11.5pt; }
-.doc-trade { font-size: 9pt; color: #4a453f; }
+.doc-trade { font-size: 9pt; color: var(--color-neutral-700, #55625b); }
 
 /* The till's screens zebra-stripe every table under .sell, and this document
    is rendered inside one. Beaten on specificity rather than with !important:
@@ -201,49 +219,60 @@ button {
 .doc-lines { width: 100%; border-collapse: collapse; margin-top: 7mm; }
 .doc-lines th {
   font-size: 8pt; letter-spacing: 0.07em; text-transform: uppercase;
-  color: #6b645c; text-align: left; font-weight: 600;
-  border-bottom: 0.8pt solid #12100e; padding: 0 3mm 1.5mm 0;
+  color: var(--color-colophon, #0e3a2d); text-align: left; font-weight: 600;
+  border-bottom: 0.8pt solid var(--color-colophon, #0e3a2d);
+  padding: 0 3mm 1.5mm 0;
 }
 .doc-lines td {
   padding: 1.8mm 3mm 1.8mm 0; vertical-align: top;
-  border-bottom: 0.4pt solid #ddd8d1;
+  border-bottom: 0.4pt solid var(--divider-row, rgba(27, 42, 36, 0.09));
 }
 .doc-lines .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .doc-lines th.num { text-align: right; }
-.doc-col-code { width: 26mm; color: #4a453f; font-size: 9pt; }
-.doc-off { display: block; font-size: 8.5pt; color: #6b645c; }
+.doc-col-code { width: 26mm; color: var(--color-neutral-700, #55625b); font-size: 9pt; }
+.doc-off { display: block; font-size: 8.5pt; color: var(--color-neutral-700, #55625b); }
 
 .doc-foot { display: flex; gap: 12mm; margin-top: 6mm; align-items: flex-start; }
-.doc-foot-left { flex: 1; min-width: 0; font-size: 9pt; color: #4a453f; }
+.doc-foot-left { flex: 1; min-width: 0; font-size: 9pt; color: var(--color-neutral-800, #3d4b44); }
 .doc-note { margin-bottom: 3mm; }
 .doc-terms { margin-bottom: 4mm; max-width: 105mm; }
 .doc-bank { border-collapse: collapse; font-size: 9pt; margin-bottom: 4mm; }
-.doc-bank th { text-align: left; font-weight: 500; color: #6b645c; padding: 0.4mm 5mm 0.4mm 0; }
+.doc-bank th { text-align: left; font-weight: 500; color: var(--color-neutral-700, #55625b); padding: 0.4mm 5mm 0.4mm 0; }
 
 .doc-accept { margin-top: 6mm; }
 .doc-sign-row {
   display: grid; grid-template-columns: 1fr 1fr 26mm; gap: 6mm;
-  margin-top: 9mm; font-size: 8.5pt; color: #6b645c;
+  margin-top: 9mm; font-size: 8.5pt; color: var(--color-neutral-700, #55625b);
 }
-.doc-sign-row span { border-top: 0.6pt solid #8a837a; padding-top: 1mm; }
+.doc-sign-row span { border-top: 0.6pt solid var(--color-neutral-700, #55625b); padding-top: 1mm; }
 
 .doc-totals { border-collapse: collapse; min-width: 62mm; font-variant-numeric: tabular-nums; }
-.doc-totals th { text-align: left; font-weight: 500; color: #4a453f; padding: 1mm 8mm 1mm 0; }
+.doc-totals th { text-align: left; font-weight: 500; color: var(--color-neutral-700, #55625b); padding: 1mm 8mm 1mm 0; }
 .doc-totals td { text-align: right; white-space: nowrap; }
 .doc-total th, .doc-total td {
-  font-weight: 700; font-size: 12pt; color: #12100e;
-  border-top: 1pt solid #12100e; padding-top: 2mm;
+  font-weight: 700; font-size: 12pt; color: var(--color-colophon, #0e3a2d);
+  border-top: 1pt solid var(--color-accent, #c8912f); padding-top: 2mm;
 }
 
-/* Repeated on every printed page, so page two still says whose it is. */
+/* The foot of the page. On screen as well as on paper: this block was printed
+   and not shown, and a preview that leaves things out is not a preview. */
 .doc-page-foot {
-  display: none;
   font-size: 8pt;
-  color: #6b645c;
+  color: var(--color-neutral-700, #55625b);
   text-align: center;
   padding-top: 4mm;
-  border-top: 0.4pt solid #ddd8d1;
+  border-top: 0.4pt solid var(--divider, rgba(27, 42, 36, 0.16));
   margin-top: 8mm;
+}
+.doc-disclaim { margin-top: 1mm; }
+/* Whose software printed it, and who owns the software. The handoff's
+   architecture rule 3 keeps the house name out of the app-chrome lockup and
+   puts it here instead — the colophon is where InnovaEarth signs its work. */
+.doc-colophon {
+  display: flex; align-items: center; justify-content: center;
+  flex-wrap: wrap; gap: 0 2mm;
+  margin-top: 3mm; font-size: 7.5pt;
+  color: var(--color-neutral-700, #55625b);
 }
 
 @media print {
@@ -260,12 +289,14 @@ button {
     print-color-adjust: exact;
   }
   /* The sheet is the page: no shadow, no rounding, and it may break across
-     pages if a delivery ran long. */
-  .doc-a4 { width: auto; min-height: 0; padding: 0; }
-  .doc-page-foot { display: block; }
+     pages if a delivery ran long. It keeps its own margin, though — @page is
+     held at 4mm for the thermal slip, and dropping the padding as well put
+     the letterhead and the totals hard against the paper's edge. 12mm of
+     padding on top of that 4mm is the 16mm the screen shows. */
+  .doc-a4 { width: auto; min-height: 0; padding: 10mm 12mm; }
   /* A line item should not be split down the middle by a page break. */
   .doc-lines tr { break-inside: avoid; }
-  .doc-accept, .doc-totals { break-inside: avoid; }
+  .doc-accept, .doc-totals, .doc-page-foot { break-inside: avoid; }
 }
 
 @media (max-width: 899px) {

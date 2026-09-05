@@ -2,7 +2,8 @@ import { money } from "../lib/money";
 import { fmtDate } from "../lib/dates";
 import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
-import { SHEET_TITLE, shopBlock, sheetAsText, type Sheet } from "../lib/sheet";
+import { SHEET_TITLE, shopReach, shopWhere, sheetAsText, type Sheet } from "../lib/sheet";
+import InnovaMark from "./InnovaMark";
 
 /**
  * An A4 quotation or tax invoice, on screen and on paper.
@@ -26,6 +27,8 @@ export default function DocumentSheet({
 }) {
   const s = shopSettings();
   const logo = imageSrc(s.logo_url);
+  const where = shopWhere(s);
+  const reach = shopReach(s);
   const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
   const owed = sheet.kind === "invoice" && !sheet.paidWith;
   const banking = [
@@ -89,7 +92,15 @@ export default function DocumentSheet({
               {/* With a logo the name still prints: a mark is not a name, and
                   a tax invoice must carry the supplier's name. */}
               <div className="doc-shop">{s.shop_name}</div>
-              <div className="doc-shop-details">{shopBlock(s).join(" · ")}</div>
+              {/* Two lines, not one run: where the shop is, then how to reach
+                  it and who it is in law. A telephone number wedged between a
+                  street and a VAT number is a number nobody finds. */}
+              {where.length > 0 && (
+                <div className="doc-shop-where">{where.join(", ")}</div>
+              )}
+              {reach.length > 0 && (
+                <div className="doc-shop-reach">{reach.join(" · ")}</div>
+              )}
             </header>
 
             <div className="doc-title-row">
@@ -195,8 +206,26 @@ export default function DocumentSheet({
               </table>
             </div>
 
+            {/* The foot of the page, on screen as well as on paper. It used
+                to print only, which is exactly the kind of divergence that
+                makes a preview worth nothing: what the shop sees is what the
+                customer gets. */}
             <footer className="doc-page-foot">
-              {s.shop_name} · {SHEET_TITLE[sheet.kind]} {sheet.number}
+              <div className="doc-ident">
+                {s.shop_name} · {SHEET_TITLE[sheet.kind]} {sheet.number}
+              </div>
+              <div className="doc-disclaim">
+                E&amp;OE. This document is computer generated and is valid
+                without a signature.
+              </div>
+              <div className="doc-colophon">
+                <InnovaMark size={16} />
+                <span>InnovaPOS · a product of InnovaEarth</span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  © {new Date().getFullYear()} InnovaEarth · All rights reserved
+                </span>
+              </div>
             </footer>
           </div>
         </div>
