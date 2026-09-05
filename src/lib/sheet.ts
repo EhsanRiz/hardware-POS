@@ -55,16 +55,32 @@ export const SHEET_TITLE: Record<SheetKind, string> = {
   invoice: "Tax Invoice",
 };
 
-/** The shop's block, as the head of the document sets it. */
-export function shopBlock(s: ShopSettings): string[] {
+/**
+ * Where the shop is — the first line under its name.
+ *
+ * Kept apart from how to reach it because one run of address, telephone, email
+ * and two registration numbers is a wall a reader has to search. Two short
+ * lines answer two different questions: where do I go, and who am I dealing
+ * with.
+ */
+export function shopWhere(s: ShopSettings): string[] {
+  return [s.address_line1, s.address_line2]
+    .filter((v) => (v ?? "").trim() !== "") as string[];
+}
+
+/** How to reach the shop, and who it is in law — the second line. */
+export function shopReach(s: ShopSettings): string[] {
   return [
-    s.address_line1,
-    s.address_line2,
     s.phone ? `Tel ${s.phone}` : "",
     s.email ?? "",
     s.vat_number ? `VAT No ${s.vat_number}` : "",
     s.registration_number ? `Reg No ${s.registration_number}` : "",
   ].filter((v) => (v ?? "").trim() !== "") as string[];
+}
+
+/** Both, one per line — how the plain-text email body sets the letterhead. */
+export function shopBlock(s: ShopSettings): string[] {
+  return [...shopWhere(s), ...shopReach(s)];
 }
 
 /** The document as plain text, for the body of an email. */
