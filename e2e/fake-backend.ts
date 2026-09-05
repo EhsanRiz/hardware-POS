@@ -236,7 +236,8 @@ export class Backend {
   calls: string[] = [];
   customers: FakeCustomer[] = [];
   accountPayments: RecordedAccountPayment[] = [];
-  stockMoves: { product_id: string; qty_delta: number; reason: string; note: string | null }[] = [];
+  stockMoves: { product_id: string; qty_delta: number; reason: string;
+    note: string | null; unit_cost?: number | null }[] = [];
   /** The staff roster the back office edits, seeded from the two sign-in users. */
   staff: {
     id: string; name: string; phone: string; role: string;
@@ -409,7 +410,9 @@ export class Backend {
     id: string; doc_number: string; status: "open" | "posted" | "abandoned";
     category_id: string | null; note: string | null;
     lines: { product_id: string; sku: string; name: string; unit_code: string;
-             bin: string | null; expected_qty: number; counted_qty: number | null }[];
+             bin: string | null; expected_qty: number; counted_qty: number | null;
+             /** 0068: what it cost, snapshotted at open. */
+             unit_cost: number | null }[];
   }[] = [];
   /** 0061: the delivery notes, newest last. */
   deliveries: {
@@ -1298,6 +1301,9 @@ export async function installBackend(page: Page): Promise<Backend> {
               product_id: p.id, sku: p.sku, name: p.name,
               unit_code: p.unit_code, bin: p.bin,
               expected_qty: p.stock_qty!, counted_qty: null as number | null,
+              // 0068: what it cost, snapshotted at open exactly as the
+              // expected quantity is.
+              unit_cost: p.cost ?? null,
             })),
         };
         be.stockCounts.push(row);
@@ -1316,6 +1322,10 @@ export async function installBackend(page: Page): Promise<Backend> {
           counted: c.lines.filter((l) => l.counted_qty != null).length,
           variances: c.lines.filter(
             (l) => l.counted_qty != null && l.counted_qty !== l.expected_qty).length,
+          short_value: Math.round(c.lines.reduce((t, l) =>
+            l.counted_qty != null && l.counted_qty < l.expected_qty
+              ? t + (l.expected_qty - l.counted_qty) * (l.unit_cost ?? 0)
+              : t, 0) * 100) / 100,
         })));
       }
       case "rpc/pos_stock_count_lines": {
@@ -1323,11 +1333,19 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
         const c = be.stockCounts.find((x) => x.id === body.p_count_id);
         if (!c) return fail("Unknown stock count");
-        return json(c.lines.map((l, n) => ({
-          id: `${c.id}-l${n}`, ...l,
-          variance: l.counted_qty == null ? null : l.counted_qty - l.expected_qty,
-          counted_at: l.counted_qty == null ? null : "2026-01-01T08:30:00Z",
-        })));
+        return json(c.lines.map((l, n) => {
+          const v = l.counted_qty == null ? null : l.counted_qty - l.expected_qty;
+          return {
+            id: `${c.id}-l${n}`, ...l,
+            // Read live, not copied onto the sheet: scanning is about finding
+            // the row now.
+            barcode: fakeProduct(l.product_id)?.barcode ?? null,
+            variance: v,
+            variance_value: v == null || l.unit_cost == null
+              ? null : Math.round(v * l.unit_cost * 100) / 100,
+            counted_at: l.counted_qty == null ? null : "2026-01-01T08:30:00Z",
+          };
+        }));
       }
       case "rpc/pos_stock_count_set": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -1348,7 +1366,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         const c = be.stockCounts.find((x) => x.id === body.p_count_id);
         if (!c) return fail("Unknown stock count");
         if (c.status !== "open") return fail(`That count has already been ${c.status}`);
-        let moved = 0, up = 0, down = 0;
+        let moved = 0, up = 0, down = 0, valueUp = 0, valueDown = 0;
         for (const l of c.lines) {
           // Uncounted lines are left alone; counted ones move by the
           // DIFFERENCE against what was expected when the sheet opened, not
@@ -1357,11 +1375,21 @@ export async function installBackend(page: Page): Promise<Backend> {
           const delta = l.counted_qty - l.expected_qty;
           const p = PRODUCTS.find((x) => x.id === l.product_id);
           if (p && p.stock_qty != null) p.stock_qty += delta;
+          // 0068: the movement carries what the units cost, or the loss can
+          // be counted but never added up.
+          be.stockMoves.push({
+            product_id: l.product_id, qty_delta: delta, reason: "stocktake",
+            note: `Counted ${l.counted_qty}, expected ${l.expected_qty}`,
+            unit_cost: l.unit_cost ?? null,
+          });
           moved++;
-          if (delta > 0) up += delta; else down -= delta;
+          if (delta > 0) { up += delta; valueUp += delta * (l.unit_cost ?? 0); }
+          else { down -= delta; valueDown -= delta * (l.unit_cost ?? 0); }
         }
         c.status = "posted";
-        return json({ lines_moved: moved, units_up: up, units_down: down });
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        return json({ lines_moved: moved, units_up: up, units_down: down,
+                      value_up: r2(valueUp), value_down: r2(valueDown) });
       }
       case "rpc/pos_stock_count_abandon": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -1370,6 +1398,58 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!c || c.status !== "open") return fail("That count cannot be abandoned");
         c.status = "abandoned";
         return json(null);
+      }
+      // 0068: what walked out of the door without being sold.
+      case "rpc/pos_shrinkage": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: view_reports");
+        if (String(body.p_from) > String(body.p_to)) {
+          return fail("A report cannot end before it starts");
+        }
+        // A sale is not a loss: only what left the shelves any other way.
+        const lost = be.stockMoves.filter(
+          (m) => (m.reason === "stocktake" || m.reason === "adjustment")
+                 && m.qty_delta < 0);
+        const key = (m: typeof lost[number]) => `${m.product_id}|${m.reason}`;
+        const groups = new Map<string, { qty: number; at_cost: number;
+                                         estimated: boolean; reason: string;
+                                         product_id: string }>();
+        for (const m of lost) {
+          const p = fakeProduct(m.product_id);
+          // Valued at the cost on the movement where there is one, and at
+          // today's cost where there is not — marked, never dropped.
+          const cost = m.unit_cost ?? p?.cost ?? 0;
+          const g = groups.get(key(m)) ?? {
+            qty: 0, at_cost: 0, estimated: false,
+            reason: m.reason, product_id: m.product_id,
+          };
+          g.qty += -m.qty_delta;
+          g.at_cost += -m.qty_delta * cost;
+          g.estimated = g.estimated || m.unit_cost == null;
+          groups.set(key(m), g);
+        }
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const rows = [...groups.values()].map((g) => {
+          const p = fakeProduct(g.product_id);
+          return {
+            department: p?.category_name ?? "—", item: p?.name ?? "—",
+            sku: p?.sku ?? null, reason: g.reason, qty: g.qty,
+            at_cost: r2(g.at_cost), estimated: g.estimated,
+          };
+        }).sort((a, b) => b.at_cost - a.at_cost);
+        return json({
+          rows,
+          totals: {
+            at_cost: r2(rows.reduce((t, r) => t + r.at_cost, 0)),
+            counted_short: r2(rows.filter((r) => r.reason === "stocktake")
+              .reduce((t, r) => t + r.at_cost, 0)),
+            written_off: r2(rows.filter((r) => r.reason === "adjustment")
+              .reduce((t, r) => t + r.at_cost, 0)),
+            lines: rows.length,
+            any_estimated: rows.some((r) => r.estimated),
+          },
+          from: body.p_from, to: body.p_to,
+        });
       }
       case "rpc/pos_reorder_list": {
         if (!tokenOk) return fail("Register not paired or revoked");

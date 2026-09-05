@@ -6,6 +6,7 @@ import { buildDayCloseText } from "../../lib/receipt";
 import {
   dayClose,
   debtorsAgeing,
+  shrinkage,
   deliveriesReport,
   itemMovement,
   marginSlipped,
@@ -19,6 +20,7 @@ import {
   salesByDepartment,
   toCsv,
   vatByMonth,
+  type Shrinkage,
   type CashierRow,
   type DayClose,
   type DebtorsAgeing,
@@ -49,7 +51,7 @@ import { fmtDayMonth, fmtDayMonthTime, fmtTime } from "../../lib/dates";
  */
 type Section =
   | "day" | "departments" | "items" | "people" | "refunds" | "deliveries"
-  | "stock" | "debtors" | "suppliers" | "vat" | "export";
+  | "stock" | "losses" | "debtors" | "suppliers" | "vat" | "export";
 
 /**
  * The tabs, in the order an owner works through them: how did today go, what
@@ -65,6 +67,7 @@ const TABS: [Section, string][] = [
   ["refunds", "Refunds"],
   ["deliveries", "Deliveries"],
   ["stock", "Stock"],
+  ["losses", "Losses"],
   ["debtors", "Debtors"],
   ["suppliers", "Suppliers"],
   ["vat", "VAT"],
@@ -102,6 +105,7 @@ export default function Reports({ pin }: { pin: string }) {
   const [deliv, setDeliv] = useState<DeliveriesReport | null>(null);
   const [stock, setStock] = useState<StockValue | null>(null);
   const [slipped, setSlipped] = useState<MarginRow[] | null>(null);
+  const [losses, setLosses] = useState<Shrinkage | null>(null);
   const [debtors, setDebtors] = useState<DebtorsAgeing | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierSpendRow[] | null>(null);
 
@@ -125,6 +129,7 @@ export default function Reports({ pin }: { pin: string }) {
         setStock(await stockValue(pin));
         setSlipped(await marginSlipped(pin, 15));
       }
+      if (section === "losses") setLosses(await shrinkage(pin, b.from, b.to));
       if (section === "debtors") setDebtors(await debtorsAgeing(pin));
       if (section === "suppliers") setSuppliers(await purchasesBySupplier(pin, b.from, b.to));
     } catch (e) {
@@ -224,6 +229,9 @@ export default function Reports({ pin }: { pin: string }) {
           <section aria-label="Stock">
             <StockView value={stock} slipped={slipped ?? []} />
           </section>
+        )}
+        {section === "losses" && losses && (
+          <section aria-label="Losses"><LossesView report={losses} /></section>
         )}
         {section === "debtors" && debtors && (
           <section aria-label="Debtors"><DebtorsView report={debtors} /></section>
@@ -951,5 +959,85 @@ function SuppliersView({ rows }: { rows: SupplierSpendRow[] }) {
         </tbody>
       </table>
     </Card>
+  );
+}
+
+/**
+ * What walked out of the door without being sold.
+ *
+ * Stock leaving because somebody paid for it is business. Stock leaving any
+ * other way is not, and until now the till recorded it faithfully and never
+ * added it up. Counted short and written off are kept apart on purpose: they
+ * have different cures.
+ */
+function LossesView({ report }: { report: Shrinkage }) {
+  const t = report.totals;
+  return (
+    <div className="space-y-4">
+      <div
+        className="bg-white rounded-xl border border-stone-200 p-5 space-y-3"
+        role="group"
+        aria-label="Losses at a glance"
+      >
+        <div className="flex flex-wrap gap-x-8 gap-y-3 items-baseline">
+          <Stat label="Lost, at cost" value={money(t.at_cost)} />
+          <Stat label="Counted short" value={money(t.counted_short)} />
+          <Stat label="Written off" value={money(t.written_off)} />
+          <Stat label="Lines" value={String(t.lines)} />
+        </div>
+        <p className="text-xs text-stone-500">
+          Everything that left the shelves without a sale. Counted short is
+          what a stock take could not find; written off is what somebody
+          adjusted by hand — breakages, damage, a bag that split.
+        </p>
+        {t.any_estimated && (
+          <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg" role="status">
+            Some of these movements were recorded before the shop kept a cost
+            against them, so they are valued at today&rsquo;s cost and marked
+            as estimates below.
+          </p>
+        )}
+      </div>
+
+      <Card title="What went missing">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-100 text-stone-600 text-left">
+            <tr>
+              <th className={TH}>Item</th>
+              <th className={TH}>Department</th>
+              <th className={TH}>How</th>
+              <th className={THN}>Units</th>
+              <th className={THN}>At cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.length === 0 && (
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-stone-500">
+                Nothing has left the shelves except by being sold.
+              </td></tr>
+            )}
+            {report.rows.map((r, i) => (
+              <tr key={i} className="border-t border-stone-100">
+                <td className={TD}>
+                  <div className="font-medium">{r.item}</div>
+                  <div className="text-xs text-stone-500">{r.sku ?? "—"}</div>
+                </td>
+                <td className={TD}>{r.department}</td>
+                <td className={TD}>
+                  {r.reason === "stocktake" ? "Counted short" : "Written off"}
+                </td>
+                <td className={TDN}>{r.qty}</td>
+                <td className={TDN}>
+                  {money(r.at_cost)}
+                  {r.estimated && (
+                    <div className="text-xs text-stone-500">estimated</div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
   );
 }

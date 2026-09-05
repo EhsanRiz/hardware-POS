@@ -3665,4 +3665,188 @@ begin
   perform assert_eq(v_n, 1, 'pos_customer_statement has exactly one signature');
 end $$;
 
+-- 0068: what the shortage cost --------------------------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_prod uuid; v_count public.stock_counts;
+  v_line record; v_res jsonb; v_row record; v_rep jsonb; v_e jsonb;
+  v_from date; v_to date; v_before numeric; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id into v_org, v_mgr from fixture;
+  v_from := (current_date - 1); v_to := current_date;
+
+  -- A line of its own, so the figures below are about this and nothing else.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, active, tax_code, barcode)
+  values (v_org, 'SHRK-1', 'Copper Pipe 15mm 3m', 'ea', 180, 115, 20, true,
+          'standard', '6009900011111')
+  returning id into v_prod;
+
+  v_count := public.pos_stock_count_open(v_tok, '1234', null, 'Valuing the loss');
+
+  select * into v_line from public.pos_stock_count_lines(v_tok, '1234', v_count.id)
+   where product_id = v_prod;
+  -- SCANNING NEEDS THE CODE ON THE SHEET. Without it a person in an aisle has
+  -- to type a name to find the row, which is the wrong motion entirely.
+  perform assert_eq(v_line.barcode, '6009900011111', 'the sheet carries the barcode');
+  perform assert_eq(v_line.unit_cost, 115::numeric, 'and what the line cost');
+  perform assert(v_line.variance_value is null,
+    'with nothing to value until somebody counts it');
+
+  -- Three short.
+  perform public.pos_stock_count_set(v_tok, '1234', v_count.id, v_prod, 17);
+  select * into v_line from public.pos_stock_count_lines(v_tok, '1234', v_count.id)
+   where product_id = v_prod;
+  perform assert_eq(v_line.variance, -3::numeric, 'three are missing');
+  -- THE NUMBER AN OWNER REACTS TO, and it is on the sheet BEFORE anything is
+  -- posted: a person deciding whether to recount wants to know what it is worth.
+  perform assert_eq(v_line.variance_value, round(-3 * 115, 2)::numeric,
+    'and the sheet says what the three are worth, before anything is posted');
+
+  select * into v_row from public.pos_stock_counts(v_tok, '1234')
+   where id = v_count.id;
+  perform assert_eq(v_row.short_value, round(3 * 115, 2)::numeric,
+    'and the sheet totals what it is short, at cost');
+
+  v_res := public.pos_stock_count_post(v_tok, '1234', v_count.id);
+  perform assert_eq((v_res->>'value_down')::numeric, round(3 * 115, 2)::numeric,
+    'posting says what walked out of the door');
+  perform assert_eq((v_res->>'units_down')::numeric, 3::numeric,
+    'as well as how many');
+
+  -- THE COST GOES ON THE MOVEMENT. Without it the loss can be counted but
+  -- never added up: a movement that knows only a quantity is a fact with the
+  -- money taken out of it.
+  select unit_cost into v_before from public.stock_movements
+   where product_id = v_prod and reason = 'stocktake' and ref_id = v_count.id;
+  perform assert_eq(v_before, 115::numeric,
+    'and the movement records what the missing units cost');
+
+  -- WHAT WALKED OUT OF THE DOOR.
+  v_rep := public.pos_shrinkage(v_tok, '1234', v_from, v_to);
+  select e into v_e from jsonb_array_elements(v_rep->'rows') e
+   where e->>'sku' = 'SHRK-1';
+  perform assert(v_e is not null, 'the loss is on the shrinkage report');
+  perform assert_eq((v_e->>'qty')::numeric, 3::numeric, 'three of them');
+  perform assert_eq((v_e->>'at_cost')::numeric, round(3 * 115, 2)::numeric,
+    'valued at what they cost');
+  perform assert_eq(v_e->>'reason', 'stocktake', 'and says a count found it');
+  perform assert((v_e->>'estimated')::boolean = false,
+    'at the cost on the day, not a guess at today''s');
+
+  -- A SALE IS NOT A LOSS. It is the whole distinction the report exists to
+  -- make: stock leaving because somebody paid for it is business, and stock
+  -- leaving any other way is not.
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 2)),
+    p_payment_method => 'cash');
+  declare v_all numeric;
+  begin
+    v_all := (v_rep->'totals'->>'at_cost')::numeric;
+    v_rep := public.pos_shrinkage(v_tok, '1234', v_from, v_to);
+    perform assert(not exists (
+      select 1 from jsonb_array_elements(v_rep->'rows') e where e->>'reason' = 'sale'),
+      'selling two more does not put a sale on the losses report');
+    perform assert_eq((v_rep->'totals'->>'at_cost')::numeric, v_all,
+      'and does not add a cent to what the shop has lost');
+  end;
+
+  -- FINDING MORE THAN EXPECTED IS NOT A LOSS EITHER.
+  declare v_c2 public.stock_counts;
+  begin
+    v_c2 := public.pos_stock_count_open(v_tok, '1234', null, null);
+    perform public.pos_stock_count_set(v_tok, '1234', v_c2.id, v_prod,
+      (select stock_qty from public.products where id = v_prod) + 4);
+    v_res := public.pos_stock_count_post(v_tok, '1234', v_c2.id);
+    perform assert_eq((v_res->>'value_up')::numeric, round(4 * 115, 2)::numeric,
+      'four found is four found');
+    perform assert_eq((v_res->>'value_down')::numeric, 0::numeric,
+      'and nothing lost');
+    v_rep := public.pos_shrinkage(v_tok, '1234', v_from, v_to);
+    select e into v_e from jsonb_array_elements(v_rep->'rows') e
+     where e->>'sku' = 'SHRK-1';
+    perform assert_eq((v_e->>'qty')::numeric, 3::numeric,
+      'and a shelf that had more on it than expected is not shrinkage');
+  end;
+
+  -- WRITTEN OFF BY HAND is a loss too, and a different one: "counted short"
+  -- and "damaged, thrown away" have different cures.
+  declare v_user public.app_users; v_written numeric;
+  begin
+    v_written := (v_rep->'totals'->>'written_off')::numeric;
+    select * into v_user from public.app_users where id = v_mgr;
+    perform public.apply_stock(v_prod, -1, 'adjustment', 'test', null, v_user,
+                               'Dropped off the rack', 115);
+    v_rep := public.pos_shrinkage(v_tok, '1234', v_from, v_to);
+    perform assert_eq((v_rep->'totals'->>'written_off')::numeric, v_written + 115,
+      'a hand write-off lands under written off');
+    perform assert(exists (
+      select 1 from jsonb_array_elements(v_rep->'rows') e
+       where e->>'sku' = 'SHRK-1' and e->>'reason' = 'adjustment'),
+      'listed separately from what a count found');
+    -- THE TWO HALVES MUST STAY APART. Measuring the write-off as a delta was
+    -- satisfied by a version that reported EVERYTHING as written off, because
+    -- the total moved by the same delta. The parts have to add to the whole
+    -- and neither may swallow it.
+    perform assert((v_rep->'totals'->>'counted_short')::numeric > 0,
+      'a count found some of it');
+    perform assert((v_rep->'totals'->>'written_off')::numeric
+                   < (v_rep->'totals'->>'at_cost')::numeric,
+      'and what was written off by hand is not the whole of it');
+    perform assert_eq((v_rep->'totals'->>'counted_short')::numeric
+                      + (v_rep->'totals'->>'written_off')::numeric,
+                      (v_rep->'totals'->>'at_cost')::numeric,
+      'with the two halves adding up to the whole');
+  end;
+
+  -- A MOVEMENT WITH NO COST ON IT is still a loss, valued at today's price
+  -- and flagged as an estimate. Silently dropping it would understate the
+  -- figure, which is the one direction an owner must not be misled in.
+  declare v_user public.app_users; v_was numeric;
+  begin
+    select * into v_user from public.app_users where id = v_mgr;
+    v_was := (v_rep->'totals'->>'at_cost')::numeric;
+    perform public.apply_stock(v_prod, -2, 'adjustment', 'test', null, v_user,
+                               'Old movement, no cost recorded', null);
+    v_rep := public.pos_shrinkage(v_tok, '1234', v_from, v_to);
+    perform assert((v_rep->'totals'->>'any_estimated')::boolean,
+      'a movement with no cost on it is marked as an estimate');
+    -- AND IS STILL VALUED. Flagging it while quietly counting it as nothing
+    -- understates the loss, which is the one direction an owner must never be
+    -- misled in. The flag alone was satisfied by a version that did exactly
+    -- that.
+    perform assert_eq((v_rep->'totals'->>'at_cost')::numeric, v_was + 2 * 115,
+      'and is valued at today''s cost rather than counted as nothing');
+  end;
+
+  -- A window has ends.
+  v_rep := public.pos_shrinkage(v_tok, '1234', current_date - 30, current_date - 20);
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_rep->'rows') e where e->>'sku' = 'SHRK-1'),
+    'and a loss outside the window is not in it');
+
+  perform assert_refuses(
+    format('select public.pos_shrinkage(%L, %L, %L, %L)',
+           v_tok, '1234', current_date, current_date - 1),
+    'a report cannot end before it starts');
+  perform assert_refuses(
+    format('select public.pos_shrinkage(%L, %L, %L, %L)',
+           v_tok, '2222', v_from, v_to),
+    'and a counter hand cannot see what the shop has lost');
+
+  -- Return columns changed on two functions; each must still be alone.
+  for v_n in select 1 loop end loop;
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_stock_count_lines';
+  perform assert_eq(v_n, 1, 'pos_stock_count_lines has exactly one signature');
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_stock_counts';
+  perform assert_eq(v_n, 1, 'and so does pos_stock_counts');
+end $$;
+
 select 'all database tests passed' as result;
