@@ -76,26 +76,20 @@ export default function DocumentSheet({
           </div>
         </div>
 
-        {/* The document itself. #print-area is what the print stylesheet
-            leaves visible, so what is on screen is what comes out. */}
+        {/* Its own id, not #print-area: that one is parked 10 000px to the
+            left so the till slip can live off-screen until it prints, which
+            made this sheet invisible on screen and visible only in the print
+            dialog. The print stylesheet knows about both. */}
         <div className="overflow-x-auto p-4 bg-stone-100">
-          <div id="print-area" className="doc-a4">
+          <div id="doc-sheet" className="doc-a4">
+            {/* The shop, centred: mark, name, then where it is and how to
+                reach it — the way a letterhead reads. */}
             <header className="doc-head">
-              <div className="doc-mark">
-                {logo ? (
-                  <img src={logo} alt="" className="doc-logo" />
-                ) : (
-                  <span className="doc-shop">{s.shop_name}</span>
-                )}
-                {/* With a logo the name still prints: a mark is not a name,
-                    and a tax invoice must carry the supplier's name. */}
-                {logo && <span className="doc-shop-sm">{s.shop_name}</span>}
-              </div>
-              <div className="doc-shop-details">
-                {shopBlock(s).map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-              </div>
+              {logo && <img src={logo} alt="" className="doc-logo" />}
+              {/* With a logo the name still prints: a mark is not a name, and
+                  a tax invoice must carry the supplier's name. */}
+              <div className="doc-shop">{s.shop_name}</div>
+              <div className="doc-shop-details">{shopBlock(s).join(" · ")}</div>
             </header>
 
             <div className="doc-title-row">
@@ -121,7 +115,10 @@ export default function DocumentSheet({
               <span className="doc-label">
                 {sheet.kind === "quote" ? "Quotation for" : "Invoiced to"}
               </span>
-              <div className="doc-to-name">{sheet.customer.name ?? "Cash sale"}</div>
+              <div className="doc-to-name">
+                {sheet.customer.name ??
+                  (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale")}
+              </div>
               {sheet.customer.address && <div>{sheet.customer.address}</div>}
               {sheet.customer.phone && <div>{sheet.customer.phone}</div>}
               {sheet.customer.vatNumber && <div>VAT No {sheet.customer.vatNumber}</div>}
@@ -197,6 +194,10 @@ export default function DocumentSheet({
                 </tbody>
               </table>
             </div>
+
+            <footer className="doc-page-foot">
+              {s.shop_name} · {SHEET_TITLE[sheet.kind]} {sheet.number}
+            </footer>
           </div>
         </div>
       </div>

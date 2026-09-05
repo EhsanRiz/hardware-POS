@@ -4528,10 +4528,18 @@ test("a quote prints as an A4 quotation with a line for the builder to sign", as
     .getByRole("button", { name: "A4 quote" }).click();
 
   const doc = page.getByRole("dialog", { name: "Quotation QUO-000001" });
+  // ON SCREEN, not only in the print dialog. The sheet used to live inside
+  // #print-area, which is parked 10 000px to the left so the till slip can
+  // wait off-screen — so every toContainText below passed against a document
+  // nobody could see. Visibility is the assertion that catches that.
+  await expect(doc.locator("#doc-sheet")).toBeVisible();
+  await expect(doc.locator(".doc-shop")).toBeInViewport();
   // The shop's own letterhead, from settings — no logo yet, so the name.
   await expect(doc).toContainText("Ladybrand Hardware");
   await expect(doc).toContainText("VAT No 4001234567");
   await expect(doc.locator("img")).toHaveCount(0);
+  // The address sits under the name, centred, rather than off to one side.
+  await expect(doc.locator(".doc-shop-details")).toContainText("12 Church St");
   // Whose it is, what is on it, and what it comes to.
   await expect(doc).toContainText("Mokoena Builders");
   await expect(doc).toContainText("Cement 42.5N 50kg");
@@ -4644,4 +4652,28 @@ test("a logo uploaded in settings turns up on the documents", async ({ page }) =
   // The name still prints beside it: a mark is not a name, and a tax invoice
   // must carry the supplier's name.
   await expect(doc).toContainText("Ladybrand Hardware");
+});
+
+test("the A4 document's table is not zebra-striped by the till's own styling", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "A4 quote" }).click();
+
+  // Every screen under the till zebra-stripes its tables, and this document
+  // is rendered inside one — so the second line of a quotation came out with
+  // a grey band behind it on paper. The document sets its own rules.
+  const rows = page.locator("#doc-sheet .doc-lines tbody tr td:first-child");
+  const first = await rows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+  const second = await rows.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(second).toBe(first);
 });
