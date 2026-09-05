@@ -28,7 +28,7 @@
  * one the document sets the shop's name in type, which is a letterhead too.
  */
 import { money } from "./money";
-import { SHEET_TITLE, shopReach, shopWhere, type Sheet } from "./sheet";
+import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet } from "./sheet";
 import type { PdfImage } from "./logoBytes";
 import type { ShopSettings } from "./types";
 
@@ -259,6 +259,10 @@ export function sheetAsPdf(
   const title = SHEET_TITLE[sheet.kind];
   const centre = PAGE.w / 2;
   const owed = sheet.kind === "invoice" && !sheet.paidWith;
+  const priced = SHEET_PRICED[sheet.kind];
+  // A delivery note goes out twice: one copy is signed and comes back.
+  const copies: (string | null)[] =
+    sheet.kind === "delivery" ? ["CUSTOMER COPY", "SHOP COPY"] : [null];
 
   const letterhead = () => {
     if (logo) {
@@ -299,172 +303,230 @@ export function sheetAsPdf(
     p.text("CODE", CODE, 8, { bold: true, colour: GREEN });
     p.text("DESCRIPTION", DESC, 8, { bold: true, colour: GREEN });
     p.text("QTY", QTY, 8, { bold: true, colour: GREEN, align: "right" });
-    p.text("UNIT PRICE", PRICE, 8, { bold: true, colour: GREEN, align: "right" });
-    p.text("AMOUNT", AMOUNT, 8, { bold: true, colour: GREEN, align: "right" });
+    if (priced) {
+      p.text("UNIT PRICE", PRICE, 8, { bold: true, colour: GREEN, align: "right" });
+      p.text("AMOUNT", AMOUNT, 8, { bold: true, colour: GREEN, align: "right" });
+    }
     p.y += 11;
     p.rule(SIDE, RIGHT, 0.8, GREEN);
     p.y += 8;
   };
 
-  letterhead();
+  // Each copy is the whole document again, from its own letterhead: a second
+  // page that says "shop copy" under a first page's heading is not a second
+  // copy of anything.
+  for (const copy of copies) {
+    if (copy !== copies[0]) p.page();
+    letterhead();
 
-  // The title on the left, its details on the right, the way the screen sets
-  // them.
-  const titleTop = p.y;
-  p.text(title, SIDE, 17, { bold: true, colour: GREEN });
-  const meta: [string, string][] = [
-    ["Number", sheet.number],
-    ["Date", sheet.date],
-  ];
-  if (sheet.validUntil) meta.push(["Valid until", sheet.validUntil]);
-  if (sheet.poNumber) meta.push(["Your order", sheet.poNumber]);
-  if (sheet.servedBy) meta.push(["Served by", sheet.servedBy]);
-  for (const [k, v] of meta) {
-    p.text(k, RIGHT - 110, 9.5, { colour: GREY });
-    p.text(v, RIGHT, 9.5, { align: "right" });
-    p.y += 13;
-  }
-  p.y = Math.max(p.y, titleTop + 26) + 8;
-
-  p.text(sheet.kind === "quote" ? "QUOTATION FOR" : "INVOICED TO", SIDE, 8, { colour: GREY });
-  p.y += 12;
-  p.text(
-    sheet.customer.name ?? (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale"),
-    SIDE,
-    11.5,
-    { bold: true }
-  );
-  p.y += 14;
-  for (const line of [
-    sheet.customer.address,
-    sheet.customer.phone,
-    sheet.customer.vatNumber ? `VAT No ${sheet.customer.vatNumber}` : "",
-    sheet.trade ? "Trade pricing" : "",
-  ]) {
-    if (!line) continue;
-    p.text(line, SIDE, 9.5, { colour: GREY });
-    p.y += 12;
-  }
-  p.y += 10;
-
-  tableHead();
-  for (const l of sheet.lines) {
-    // A line that will not fit above the foot starts the next page, under a
-    // repeat of the head — a column of figures with no heading is a puzzle.
-    if (p.y > PAGE.h - FOOT - 30) {
-      p.page();
-      tableHead();
+    // The title on the left, its details on the right, the way the screen sets
+    // them.
+    const titleTop = p.y;
+    p.text(title, SIDE, 17, { bold: true, colour: GREEN });
+    if (copy) {
+      p.text(copy, SIDE, 8, { colour: AMBER, y: p.y + 21 });
     }
-    // Stop well short of the quantity column: PRICE - DESC is the space to
-    // the unit price, but the quantities sit between the two, and a long
-    // description set to that width ran straight through them.
-    const desc = wrap(l.description, 10, QTY - 62 - DESC);
-    if (l.code) p.text(l.code, CODE, 9, { colour: GREY });
-    p.text(desc[0] ?? "", DESC, 10);
-    p.text(`${l.qty} ${l.unit}`, QTY, 10, { align: "right" });
-    p.text(money(l.unitPrice), PRICE, 10, { align: "right" });
-    p.text(money(l.lineTotal), AMOUNT, 10, { align: "right" });
-    p.y += 13;
-    for (const extra of desc.slice(1)) {
-      p.text(extra, DESC, 10);
+    const meta: [string, string][] = [
+      ["Number", sheet.number],
+      ["Date", sheet.date],
+    ];
+    if (sheet.validUntil) meta.push(["Valid until", sheet.validUntil]);
+    if (sheet.deliverOn) meta.push(["Deliver on", sheet.deliverOn]);
+    if (sheet.deliverAt) meta.push(["Time", sheet.deliverAt]);
+    if (sheet.invoiceNumber) meta.push(["Invoice", sheet.invoiceNumber]);
+    if (sheet.poNumber) meta.push(["Your order", sheet.poNumber]);
+    if (sheet.servedBy) meta.push(["Served by", sheet.servedBy]);
+    for (const [k, v] of meta) {
+      p.text(k, RIGHT - 110, 9.5, { colour: GREY });
+      p.text(v, RIGHT, 9.5, { align: "right" });
+      p.y += 13;
+    }
+    p.y = Math.max(p.y, titleTop + 26) + 8;
+
+    p.text(
+      sheet.kind === "quote" ? "QUOTATION FOR"
+        : sheet.kind === "delivery" ? "DELIVER TO" : "INVOICED TO",
+      SIDE, 8, { colour: GREY }
+    );
+    p.y += 12;
+    p.text(
+      sheet.customer.name ?? (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale"),
+      SIDE,
+      11.5,
+      { bold: true }
+    );
+    p.y += 14;
+    for (const line of [
+      ...(sheet.deliverTo ?? "").split("\n"),
+      sheet.customer.address,
+      sheet.customer.phone,
+      sheet.customer.vatNumber ? `VAT No ${sheet.customer.vatNumber}` : "",
+      sheet.trade ? "Trade pricing" : "",
+    ]) {
+      if (!line) continue;
+      p.text(line, SIDE, 9.5, { colour: GREY });
       p.y += 12;
     }
-    if (l.discount) {
-      p.text(`less ${money(l.discount)}`, AMOUNT, 8.5, { colour: GREY, align: "right" });
-      p.y += 11;
-    }
-    p.y += 3;
-    p.rule(SIDE, RIGHT, 0.4, HAIR);
-    p.y += 6;
-  }
+    p.y += 10;
 
-  // The totals on the right; the small print and the signature on the left,
-  // both starting from the same line.
-  p.y += 8;
-  const splitTop = p.y;
-  const totals: [string, string, boolean][] = [
-    ["Subtotal", money(sheet.subtotal), false],
-  ];
-  if (sheet.discount > 0) totals.push(["Discount", `-${money(sheet.discount)}`, false]);
-  totals.push(["VAT", money(sheet.vat), false]);
-  totals.push(["Total", money(sheet.total), true]);
-  if (sheet.paidWith) totals.push(["Paid", sheet.paidWith, false]);
-  for (const [k, v, big] of totals) {
-    if (big) {
+    tableHead();
+    for (const l of sheet.lines) {
+      // A line that will not fit above the foot starts the next page, under a
+      // repeat of the head — a column of figures with no heading is a puzzle.
+      if (p.y > PAGE.h - FOOT - 30) {
+        p.page();
+        tableHead();
+      }
+      // Stop well short of the quantity column: PRICE - DESC is the space to
+      // the unit price, but the quantities sit between the two, and a long
+      // description set to that width ran straight through them.
+      const desc = wrap(l.description, 10, QTY - 62 - DESC);
+      if (l.code) p.text(l.code, CODE, 9, { colour: GREY });
+      p.text(desc[0] ?? "", DESC, 10);
+      p.text(`${l.qty} ${l.unit}`, QTY, 10, { align: "right" });
+      if (priced) {
+        p.text(money(l.unitPrice), PRICE, 10, { align: "right" });
+        p.text(money(l.lineTotal), AMOUNT, 10, { align: "right" });
+      }
+      p.y += 13;
+      for (const extra of desc.slice(1)) {
+        p.text(extra, DESC, 10);
+        p.y += 12;
+      }
+      if (l.discount && priced) {
+        p.text(`less ${money(l.discount)}`, AMOUNT, 8.5, { colour: GREY, align: "right" });
+        p.y += 11;
+      }
       p.y += 3;
-      p.rule(RIGHT - 160, RIGHT, 1, AMBER);
+      p.rule(SIDE, RIGHT, 0.4, HAIR);
       p.y += 6;
     }
-    p.text(k, RIGHT - 160, big ? 12 : 9.5, { bold: big, colour: big ? GREEN : GREY });
-    p.text(v, RIGHT, big ? 12 : 9.5, {
-      bold: big, colour: big ? GREEN : INK, align: "right",
-    });
-    p.y += big ? 17 : 13;
-  }
-  const afterTotals = p.y;
 
-  p.y = splitTop;
-  const leftWidth = RIGHT - 175 - SIDE;
-  const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
-  for (const block of [sheet.note ?? "", terms.trim()]) {
-    if (!block) continue;
-    for (const line of wrap(block, 9, leftWidth)) {
-      p.text(line, SIDE, 9, { colour: GREY });
-      p.y += 11;
+    // The totals on the right; the small print and the signature on the left,
+    // both starting from the same line.
+    p.y += 8;
+    const splitTop = p.y;
+    const totals: [string, string, boolean][] = priced ? [
+      ["Subtotal", money(sheet.subtotal), false],
+    ] : [];
+    if (priced) {
+      if (sheet.discount > 0) totals.push(["Discount", `-${money(sheet.discount)}`, false]);
+      totals.push(["VAT", money(sheet.vat), false]);
+      totals.push(["Total", money(sheet.total), true]);
+      if (sheet.paidWith) totals.push(["Paid", sheet.paidWith, false]);
     }
-    p.y += 6;
-  }
-  const banking: [string, string][] = (
-    [
-      ["Bank", s.bank_name],
-      ["Account name", s.bank_account_name],
-      ["Account no", s.bank_account_number],
-      ["Branch code", s.bank_branch_code],
-    ] as [string, string | null | undefined][]
-  ).filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
-  if (owed && banking.length) {
-    for (const [k, v] of banking) {
-      p.text(k, SIDE, 9, { colour: GREY });
-      p.text(v, SIDE + 80, 9);
+    for (const [k, v, big] of totals) {
+      if (big) {
+        p.y += 3;
+        p.rule(RIGHT - 160, RIGHT, 1, AMBER);
+        p.y += 6;
+      }
+      p.text(k, RIGHT - 160, big ? 12 : 9.5, { bold: big, colour: big ? GREEN : GREY });
+      p.text(v, RIGHT, big ? 12 : 9.5, {
+        bold: big, colour: big ? GREEN : INK, align: "right",
+      });
+      p.y += big ? 17 : 13;
+    }
+    const afterTotals = p.y;
+
+    p.y = splitTop;
+    const leftWidth = RIGHT - 175 - SIDE;
+    const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
+    for (const block of [sheet.note ?? "", terms.trim()]) {
+      if (!block) continue;
+      for (const line of wrap(block, 9, leftWidth)) {
+        p.text(line, SIDE, 9, { colour: GREY });
+        p.y += 11;
+      }
+      p.y += 6;
+    }
+    const banking: [string, string][] = (
+      [
+        ["Bank", s.bank_name],
+        ["Account name", s.bank_account_name],
+        ["Account no", s.bank_account_number],
+        ["Branch code", s.bank_branch_code],
+      ] as [string, string | null | undefined][]
+    ).filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
+    if (owed && banking.length) {
+      for (const [k, v] of banking) {
+        p.text(k, SIDE, 9, { colour: GREY });
+        p.text(v, SIDE + 80, 9);
+        p.y += 12;
+      }
+      p.y += 6;
+    }
+    if (sheet.kind === "delivery") {
+      // What the customer is actually signing: quantities and condition. The
+      // exceptions box is the useful half — a driver who writes "1 bag torn"
+      // there has settled an argument that would otherwise happen a week
+      // later with nothing written down.
+      p.text("GOODS RECEIVED", SIDE, 8, { colour: GREY });
       p.y += 12;
+      for (const line of wrap(
+        "I confirm that the goods listed above were received in the quantities " +
+        "shown and in good condition, and that any shortage, breakage or damage " +
+        "has been noted below.", 9, leftWidth
+      )) {
+        p.text(line, SIDE, 9, { colour: INK });
+        p.y += 11;
+      }
+      p.y += 4;
+      p.text("NOTES / EXCEPTIONS", SIDE, 8, { colour: GREY });
+      p.y += 14;
+      for (let i = 0; i < 3; i++) {
+        p.rule(SIDE, SIDE + leftWidth, 0.4, HAIR);
+        p.y += 14;
+      }
+      p.y += 4;
+      const cols: [string, number, number][] = [
+        ["Received by (print name)", SIDE, 130],
+        ["Signature", SIDE + 145, 110],
+        ["Date", SIDE + 270, 70],
+      ];
+      p.y += 22;
+      for (const [label, x, w] of cols) {
+        p.rule(x, x + w, 0.6, GREY);
+        p.text(label, x, 8.5, { colour: GREY, y: p.y + 3 });
+      }
+      p.y += 15;
     }
-    p.y += 6;
-  }
-  if (sheet.kind === "quote") {
-    p.text("ACCEPTED BY", SIDE, 8, { colour: GREY });
-    p.y += 30;
-    const cols: [string, number, number][] = [
-      ["Name", SIDE, 110],
-      ["Signature", SIDE + 125, 110],
-      ["Date", SIDE + 250, 70],
-    ];
-    for (const [label, x, w] of cols) {
-      p.rule(x, x + w, 0.6, GREY);
-      p.text(label, x, 8.5, { colour: GREY, y: p.y + 3 });
+    if (sheet.kind === "quote") {
+      p.text("ACCEPTED BY", SIDE, 8, { colour: GREY });
+      p.y += 30;
+      const cols: [string, number, number][] = [
+        ["Name", SIDE, 110],
+        ["Signature", SIDE + 125, 110],
+        ["Date", SIDE + 250, 70],
+      ];
+      for (const [label, x, w] of cols) {
+        p.rule(x, x + w, 0.6, GREY);
+        p.text(label, x, 8.5, { colour: GREY, y: p.y + 3 });
+      }
+      p.y += 15;
     }
-    p.y += 15;
-  }
 
-  // The foot goes at the foot of the page, as it does on screen.
-  p.y = Math.max(p.y, afterTotals);
-  const foot = PAGE.h - FOOT;
-  if (p.y > foot) p.page();
-  p.y = foot;
-  p.rule(SIDE, RIGHT, 0.4, HAIR);
-  p.y += 9;
-  p.text(`${s.shop_name} · ${title} ${sheet.number}`, centre, 8, {
-    colour: GREY, align: "centre",
-  });
-  p.y += 11;
-  p.text(
-    "E&OE. This document is computer generated and is valid without a signature.",
-    centre, 8, { colour: GREY, align: "centre" }
-  );
-  p.y += 13;
-  p.text(
-    `InnovaPOS · a product of InnovaEarth · © ${new Date().getFullYear()} InnovaEarth · All rights reserved`,
-    centre, 7.5, { colour: GREY, align: "centre" }
-  );
+    // The foot goes at the foot of the page, as it does on screen.
+    p.y = Math.max(p.y, afterTotals);
+    const foot = PAGE.h - FOOT;
+    if (p.y > foot) p.page();
+    p.y = foot;
+    p.rule(SIDE, RIGHT, 0.4, HAIR);
+    p.y += 9;
+    p.text(`${s.shop_name} · ${title} ${sheet.number}`, centre, 8, {
+      colour: GREY, align: "centre",
+    });
+    p.y += 11;
+    p.text(
+      "E&OE. This document is computer generated and is valid without a signature.",
+      centre, 8, { colour: GREY, align: "centre" }
+    );
+    p.y += 13;
+    p.text(
+      `InnovaPOS · a product of InnovaEarth · © ${new Date().getFullYear()} InnovaEarth · All rights reserved`,
+      centre, 7.5, { colour: GREY, align: "centre" }
+    );
+  }
 
   return assemble(p.done(), logo);
 }

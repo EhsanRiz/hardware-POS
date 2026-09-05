@@ -245,6 +245,22 @@ button {
 .doc-bank th { text-align: left; font-weight: 500; color: var(--color-neutral-700, #55625b); padding: 0.4mm 5mm 0.4mm 0; }
 
 .doc-accept { margin-top: 6mm; }
+/* Which of the two a page is. A delivery note prints twice: one is signed and
+   comes back, one stays with the customer, and neither is any use if you
+   cannot tell them apart. */
+.doc-copy {
+  font-size: 8pt; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--color-accent-700, #8a5f14); margin-top: 1mm;
+}
+.doc-address { white-space: pre-line; }
+.doc-received { max-width: 120mm; }
+.doc-declare { font-size: 9pt; margin: 2mm 0 4mm; }
+/* Lines to write on, because a driver writes on them with a pen. */
+.doc-ruled { margin: 2mm 0 6mm; }
+.doc-ruled span {
+  display: block; border-bottom: 0.4pt solid var(--color-neutral-300, #d6d0c0);
+  height: 6mm;
+}
 .doc-sign-row {
   display: grid; grid-template-columns: 1fr 1fr 26mm; gap: 6mm;
   margin-top: 9mm; font-size: 8.5pt; color: var(--color-neutral-700, #55625b);
@@ -283,7 +299,11 @@ button {
   color: var(--color-neutral-700, #55625b);
 }
 
+/* Two copies stack, and the second starts a new page. */
+#doc-sheet .doc-a4 + .doc-a4 { margin-top: 8mm; }
+
 @media print {
+  #doc-sheet .doc-a4 + .doc-a4 { break-before: page; margin-top: 0; }
   /* The A4 sheet prints the way the till slip does — everything else hidden —
      but from its own id, because #print-area is parked off-screen. */
   #doc-sheet,
@@ -316,3 +336,9 @@ button {
      itself is unaffected. */
   .doc-a4 { transform-origin: top left; }
 }
+
+/* Two short fields side by side in a modal — a date beside a time, a charge
+   beside a note. Stacks on a phone, where two columns of input are two
+   columns of nothing. */
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 599px) { .modal-grid { grid-template-columns: 1fr; } }

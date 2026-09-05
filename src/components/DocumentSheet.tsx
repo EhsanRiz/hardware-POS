@@ -2,7 +2,7 @@ import { money } from "../lib/money";
 import { fmtDate } from "../lib/dates";
 import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
-import { SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
+import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
 import InnovaMark from "./InnovaMark";
 import { emailSheet, saveSheetPdf, sheetMailto, type SendOutcome } from "../lib/sendSheet";
 import { primeLogo } from "../lib/logoBytes";
@@ -32,6 +32,15 @@ export default function DocumentSheet({
   const logo = imageSrc(s.logo_url);
   const where = shopWhere(s);
   const reach = shopReach(s);
+  const priced = SHEET_PRICED[sheet.kind];
+  /*
+   * A delivery note is printed twice: the customer keeps one and the driver
+   * brings the other back signed. Both are on the screen rather than appearing
+   * only in the print dialog — a preview that leaves out half of what prints
+   * is not a preview.
+   */
+  const copies: (string | null)[] =
+    sheet.kind === "delivery" ? ["Customer copy", "Shop copy"] : [null];
   const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
   const owed = sheet.kind === "invoice" && !sheet.paidWith;
   const banking = [
@@ -107,7 +116,9 @@ export default function DocumentSheet({
             made this sheet invisible on screen and visible only in the print
             dialog. The print stylesheet knows about both. */}
         <div className="overflow-x-auto p-4 bg-stone-100">
-          <div id="doc-sheet" className="doc-a4">
+          <div id="doc-sheet">
+            {copies.map((copy) => (
+          <div key={copy ?? "one"} className="doc-a4">
             {/* The shop, centred: mark, name, then where it is and how to
                 reach it — the way a letterhead reads. */}
             <header className="doc-head">
@@ -127,7 +138,10 @@ export default function DocumentSheet({
             </header>
 
             <div className="doc-title-row">
-              <h1 className="doc-title">{SHEET_TITLE[sheet.kind]}</h1>
+              <div>
+                <h1 className="doc-title">{SHEET_TITLE[sheet.kind]}</h1>
+                {copy && <div className="doc-copy">{copy}</div>}
+              </div>
               <table className="doc-meta">
                 <tbody>
                   <tr><th>Number</th><td>{sheet.number}</td></tr>
@@ -138,6 +152,15 @@ export default function DocumentSheet({
                   {sheet.poNumber && (
                     <tr><th>Your order</th><td>{sheet.poNumber}</td></tr>
                   )}
+                  {sheet.deliverOn && (
+                    <tr><th>Deliver on</th><td>{sheet.deliverOn}</td></tr>
+                  )}
+                  {sheet.deliverAt && (
+                    <tr><th>Time</th><td>{sheet.deliverAt}</td></tr>
+                  )}
+                  {sheet.invoiceNumber && (
+                    <tr><th>Invoice</th><td>{sheet.invoiceNumber}</td></tr>
+                  )}
                   {sheet.servedBy && (
                     <tr><th>Served by</th><td>{sheet.servedBy}</td></tr>
                   )}
@@ -147,12 +170,14 @@ export default function DocumentSheet({
 
             <section className="doc-to">
               <span className="doc-label">
-                {sheet.kind === "quote" ? "Quotation for" : "Invoiced to"}
+                {sheet.kind === "quote" ? "Quotation for"
+                  : sheet.kind === "delivery" ? "Deliver to" : "Invoiced to"}
               </span>
               <div className="doc-to-name">
                 {sheet.customer.name ??
                   (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale")}
               </div>
+              {sheet.deliverTo && <div className="doc-address">{sheet.deliverTo}</div>}
               {sheet.customer.address && <div>{sheet.customer.address}</div>}
               {sheet.customer.phone && <div>{sheet.customer.phone}</div>}
               {sheet.customer.vatNumber && <div>VAT No {sheet.customer.vatNumber}</div>}
@@ -165,8 +190,8 @@ export default function DocumentSheet({
                   <th className="doc-col-code">Code</th>
                   <th>Description</th>
                   <th className="num">Qty</th>
-                  <th className="num">Unit price</th>
-                  <th className="num">Amount</th>
+                  {priced && <th className="num">Unit price</th>}
+                  {priced && <th className="num">Amount</th>}
                 </tr>
               </thead>
               <tbody>
@@ -175,13 +200,15 @@ export default function DocumentSheet({
                     <td className="doc-col-code">{l.code ?? ""}</td>
                     <td>{l.description}</td>
                     <td className="num">{l.qty} {l.unit}</td>
-                    <td className="num">{money(l.unitPrice)}</td>
-                    <td className="num">
-                      {money(l.lineTotal)}
-                      {l.discount ? (
-                        <span className="doc-off"> less {money(l.discount)}</span>
-                      ) : null}
-                    </td>
+                    {priced && <td className="num">{money(l.unitPrice)}</td>}
+                    {priced && (
+                      <td className="num">
+                        {money(l.lineTotal)}
+                        {l.discount ? (
+                          <span className="doc-off"> less {money(l.discount)}</span>
+                        ) : null}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -214,6 +241,27 @@ export default function DocumentSheet({
                 )}
               </div>
 
+              {/* What the customer is actually signing. Quantities and
+                  condition — not money, which is the invoice's business. */}
+              {sheet.kind === "delivery" && (
+                <div className="doc-accept doc-received">
+                  <span className="doc-label">Goods received</span>
+                  <p className="doc-declare">
+                    I confirm that the goods listed above were received in the
+                    quantities shown and in good condition, and that any
+                    shortage, breakage or damage has been noted below.
+                  </p>
+                  <span className="doc-label">Notes / exceptions</span>
+                  <div className="doc-ruled"><span /><span /><span /></div>
+                  <div className="doc-sign-row">
+                    <span>Received by (print name)</span>
+                    <span>Signature</span>
+                    <span>Date</span>
+                  </div>
+                </div>
+              )}
+
+              {priced && (
               <table className="doc-totals">
                 <tbody>
                   <tr><th>Subtotal</th><td>{money(sheet.subtotal)}</td></tr>
@@ -227,6 +275,7 @@ export default function DocumentSheet({
                   )}
                 </tbody>
               </table>
+              )}
             </div>
 
             {/* The foot of the page, on screen as well as on paper. It used
@@ -250,6 +299,8 @@ export default function DocumentSheet({
                 </span>
               </div>
             </footer>
+          </div>
+            ))}
           </div>
         </div>
       </div>

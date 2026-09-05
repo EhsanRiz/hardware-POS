@@ -66,6 +66,12 @@ function itemsPayload(lines: CartLine[]) {
   return lines.map((l) => ({
     product_id: l.product.id,
     qty: l.qty,
+    // An open line — delivery, quoted per job — carries the price the counter
+    // named. The server honours it only for a product the shop has marked as
+    // open, so this cannot reprice a bag of cement.
+    ...(l.product.kind && l.product.kind !== "goods"
+      ? { unit_price: l.product.price_retail }
+      : {}),
     ...(l.discount ? { discount_amount: l.discount } : {}),
     ...(l.discountPercent ? { discount_percent: l.discountPercent } : {}),
     ...(l.discountReason ? { discount_reason: l.discountReason } : {}),

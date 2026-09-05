@@ -728,3 +728,103 @@ export async function archivedQuotePdfUrl(quoteId: string): Promise<string | nul
   if (!out.ok) throw new Error("That document could not be opened.");
   return out.url ?? null;
 }
+
+// --- Deliveries (0061) -------------------------------------------------------
+
+export interface DeliveryRow {
+  id: string;
+  doc_number: string;
+  sale_id: string;
+  sale_number: string | null;
+  customer_name: string;
+  address: string;
+  deliver_on: string;
+  deliver_at: string | null;
+  charge: number;
+  note: string | null;
+  status: "pending" | "delivered";
+  created_at: string;
+  cashier_name: string | null;
+  delivered_at: string | null;
+  delivered_by_name: string | null;
+  item_count: number;
+}
+
+export interface DeliveryLine {
+  sku: string | null;
+  name: string;
+  unit_code: string;
+  qty: number;
+}
+
+/** The shop's line for charging delivery. Made on first use, by the server. */
+export async function deliveryProduct(): Promise<{
+  id: string; sku: string; name: string; unit_code: string;
+}> {
+  const { data, error } = await supabase.rpc("pos_delivery_product", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  const rows = data as { id: string; sku: string; name: string; unit_code: string }[];
+  if (!rows?.length) throw new Error("The delivery line could not be set up.");
+  return rows[0];
+}
+
+/** Write the note, once the sale that carries the goods exists. */
+export async function createDelivery(args: {
+  cashierId: string;
+  saleId: string;
+  customerName: string;
+  address: string;
+  deliverOn: string;
+  deliverAt?: string | null;
+  charge?: number;
+  note?: string | null;
+}): Promise<DeliveryRow> {
+  const { data, error } = await supabase.rpc("pos_create_delivery", {
+    p_register_token: requireToken(),
+    p_cashier_id: args.cashierId,
+    p_sale_id: args.saleId,
+    p_customer_name: args.customerName,
+    p_address: args.address,
+    p_deliver_on: args.deliverOn,
+    p_deliver_at: args.deliverAt ?? null,
+    p_charge: args.charge ?? 0,
+    p_note: args.note ?? null,
+  });
+  if (error) throw error;
+  return data as DeliveryRow;
+}
+
+export async function listDeliveries(limit = 100): Promise<DeliveryRow[]> {
+  const { data, error } = await supabase.rpc("pos_list_deliveries", {
+    p_register_token: requireToken(),
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data as DeliveryRow[]) ?? [];
+}
+
+/** What is on the load: the goods, never the charge for carrying them. */
+export async function deliveryItems(deliveryId: string): Promise<DeliveryLine[]> {
+  const { data, error } = await supabase.rpc("pos_delivery_items", {
+    p_register_token: requireToken(),
+    p_delivery_id: deliveryId,
+  });
+  if (error) throw error;
+  return (data as DeliveryLine[]) ?? [];
+}
+
+/** The signed page came back. Anyone may say so; who said so is recorded. */
+export async function markDelivered(
+  userId: string, deliveryId: string, note?: string | null
+): Promise<DeliveryRow> {
+  const { data, error } = await supabase.rpc("pos_mark_delivered", {
+    p_register_token: requireToken(),
+    p_user_id: userId,
+    p_delivery_id: deliveryId,
+    p_note: note ?? null,
+  });
+  if (error) throw error;
+  return data as DeliveryRow;
+}
