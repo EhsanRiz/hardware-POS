@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { expect, test, type Page } from "@playwright/test";
 import { Backend, installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
 
@@ -4772,4 +4773,50 @@ test("the foot of the page sits at the foot of the page", async ({ page }) => {
   // And it was pushed down there, rather than merely following a long
   // document: there is clear paper between the signature block and the foot.
   expect(foot.y - (signed.y + signed.height)).toBeGreaterThan(200);
+});
+
+test("Email sends the A4 quotation as a PDF, not the till slip in the body", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  const ask = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await ask.getByLabel("Quote for").fill("Morija Exp");
+  await ask.getByRole("button", { name: "Save quote" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+  const popup = page.getByRole("dialog", { name: "Quote QUO-000001" });
+
+  // The body of the message. It used to be the 48-column thermal slip — ruled
+  // lines, a boxed TOTAL, "not a tax invoice" — sent to a builder pricing a
+  // job. Now it is the A4 document's own text.
+  const href = await popup.getByRole("link", { name: "Email" }).getAttribute("href");
+  expect(href).toMatch(/^mailto:\?subject=Quotation%20QUO-000001%20from%20Ladybrand%20Hardware/);
+  const body = decodeURIComponent(href!.split("&body=")[1]);
+  expect(body).toContain("Quotation QUO-000001");
+  expect(body).toContain("Cement 42.5N 50kg");
+  expect(body).not.toContain("+---");
+  expect(body).not.toContain("not a tax invoice");
+
+  // And the attachment itself. Headless Chromium cannot share files, so this
+  // is the second path: the PDF is saved for the person to attach.
+  const download = page.waitForEvent("download");
+  await popup.getByRole("link", { name: "Email" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001.pdf");
+  const path = await file.path();
+  const bytes = readFileSync(path!);
+  const pdf = bytes.toString("latin1");
+  expect(pdf.startsWith("%PDF-")).toBe(true);
+  // A real document, not an empty page: the shop, the customer, the line and
+  // the money are all set in it.
+  expect(pdf).toContain("(Ladybrand Hardware) Tj");
+  expect(pdf).toContain("(Morija Exp) Tj");
+  expect(pdf).toContain("(Cement 42.5N 50kg) Tj");
+  expect(pdf).toContain("(QUO-000001) Tj");
+  expect(pdf).toContain("MediaBox [0 0 595.28 841.89]");
+  // And the person is told they still have to attach it.
+  await expect(popup.getByText(/PDF saved/)).toBeVisible();
 });

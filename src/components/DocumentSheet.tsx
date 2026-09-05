@@ -2,8 +2,10 @@ import { money } from "../lib/money";
 import { fmtDate } from "../lib/dates";
 import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
-import { SHEET_TITLE, shopReach, shopWhere, sheetAsText, type Sheet } from "../lib/sheet";
+import { SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
 import InnovaMark from "./InnovaMark";
+import { emailSheet, sheetMailto, type SendOutcome } from "../lib/sendSheet";
+import { useState } from "react";
 
 /**
  * An A4 quotation or tax invoice, on screen and on paper.
@@ -38,10 +40,7 @@ export default function DocumentSheet({
     ["Branch code", s.bank_branch_code],
   ].filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
 
-  const subject = `${SHEET_TITLE[sheet.kind]} ${sheet.number} from ${s.shop_name}`;
-  const mailto =
-    `mailto:?subject=${encodeURIComponent(subject)}` +
-    `&body=${encodeURIComponent(sheetAsText(sheet, s))}`;
+  const [sent, setSent] = useState<SendOutcome | null>(null);
 
   return (
     <div
@@ -59,8 +58,22 @@ export default function DocumentSheet({
           <span className="font-semibold">
             {SHEET_TITLE[sheet.kind]} {sheet.number}
           </span>
+          {sent === "saved" && (
+            <span className="text-sm text-stone-600 hidden sm:inline">
+              PDF saved — attach it to the message
+            </span>
+          )}
           <div className="ml-auto flex gap-2">
-            <a className="px-4 py-2 rounded-xl border border-stone-300" href={mailto}>
+            {/* The document goes as a PDF, not as forty lines in the body.
+                When the device can attach it itself the mail draft is the
+                share sheet's business, so the link must not also fire. */}
+            <a
+              className="px-4 py-2 rounded-xl border border-stone-300"
+              href={sheetMailto(sheet, s)}
+              onClick={(e) => {
+                if (emailSheet(sheet, s, setSent).attached) e.preventDefault();
+              }}
+            >
               Email
             </a>
             <button
