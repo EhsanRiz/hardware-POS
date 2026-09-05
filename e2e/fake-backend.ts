@@ -187,6 +187,13 @@ export interface FakeCustomer {
   credit_limit: number | null;
   balance: number;
   available: number | null;
+  // 0067: a statement is about time and about what was owed before it. The
+  // fake had none of this, so every statement it could have served would
+  // have opened at zero.
+  address?: string | null;
+  vat_number?: string | null;
+  opening_balance?: number;
+  created_at?: string;
 }
 
 /**
@@ -217,6 +224,8 @@ export interface RecordedAccountPayment {
   reference: string | null;
   client_ref: string | null;
   voided: boolean;
+  /** When it was taken. Was not recorded, so a statement could not place it. */
+  created_at: string;
 }
 
 /** Everything the fake server saw, so tests can assert on it. */
@@ -1824,6 +1833,102 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
         return json(rows.reverse());
       }
+      // 0067: the statement a customer is sent.
+      case "rpc/pos_customer_statement": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const cust = be.customers.find((c) => c.id === body.p_customer_id);
+        if (!cust) return fail("Unknown customer");
+        const day = (iso: string) => iso.slice(0, 10);
+        const to = (body.p_to as string) ?? day(new Date().toISOString());
+        const from = (body.p_from as string)
+          ?? `${to.slice(0, 7)}-01`;
+        if (from > to) return fail("A statement cannot end before it starts");
+
+        type Entry = { at: string; kind: string; ref: string; detail: string;
+                       charge: number; payment: number; voided: boolean };
+        const all: Entry[] = [];
+        if (cust.opening_balance) {
+          all.push({
+            at: cust.created_at ?? new Date(0).toISOString(), kind: "opening",
+            ref: "", detail: "Opening balance", charge: cust.opening_balance,
+            payment: 0, voided: false,
+          });
+        }
+        be.sales.forEach((sale, i) => {
+          if (sale.customer_id !== cust.id) return;
+          // A sale paid at the counter is not on the account.
+          if (sale.payment_method !== "account") return;
+          all.push({
+            at: sale.created_at ?? new Date().toISOString(), kind: "charge",
+            ref: `INV-${String(i + 1).padStart(6, "0")}`, detail: "Invoice",
+            charge: sale.total, payment: 0, voided: false,
+          });
+        });
+        for (const p of be.accountPayments) {
+          if (p.customer_id !== cust.id) continue;
+          all.push({
+            at: p.created_at, kind: "payment", ref: p.reference ?? "",
+            // A reversed payment is shown, marked, and pays nothing.
+            detail: p.method.charAt(0).toUpperCase() + p.method.slice(1)
+                    + (p.voided ? " (reversed)" : ""),
+            charge: 0, payment: p.voided ? 0 : p.amount, voided: p.voided,
+          });
+        }
+        all.sort((a, b) => a.at.localeCompare(b.at));
+
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const opening = r2(all
+          .filter((e) => day(e.at) < from)
+          .reduce((t, e) => t + e.charge - e.payment, 0));
+        const inside = all.filter((e) => day(e.at) >= from && day(e.at) <= to);
+        let running = opening;
+        const lines = inside.map((e) => {
+          running = r2(running + e.charge - e.payment);
+          return { ...e, balance: running };
+        });
+        const charges = r2(inside.reduce((t, e) => t + e.charge, 0));
+        const payments = r2(inside.reduce((t, e) => t + e.payment, 0));
+        const closing = r2(opening + charges - payments);
+
+        // Ageing, oldest first, as customer_aging does it: payments are
+        // consumed against charges oldest first and what is left is bucketed
+        // by the age of the charge it belongs to.
+        const paid = all.reduce((t, e) => t + e.payment, 0);
+        const today = Math.floor(Date.now() / 86400000);
+        let cum = 0;
+        const bucket = { current: 0, days30: 0, days60: 0, days90: 0 };
+        for (const e of all) {
+          if (!e.charge) continue;
+          cum += e.charge;
+          const owing = Math.max(0, Math.min(e.charge, cum - paid));
+          if (!owing) continue;
+          const age = today - Math.floor(Date.parse(`${day(e.at)}T00:00:00Z`) / 86400000);
+          if (age < 30) bucket.current += owing;
+          else if (age < 60) bucket.days30 += owing;
+          else if (age < 90) bucket.days60 += owing;
+          else bucket.days90 += owing;
+        }
+        // A credit balance is money in hand, not an aged debt.
+        bucket.current = r2(bucket.current + Math.min(0, closing
+          - (bucket.current + bucket.days30 + bucket.days60 + bucket.days90)));
+
+        return json({
+          customer: {
+            id: cust.id, name: cust.name, phone: cust.phone,
+            address: cust.address ?? null, vat_number: cust.vat_number ?? null,
+            credit_limit: cust.credit_limit,
+          },
+          from, to,
+          reference: `STM-${to.replace(/-/g, "")}-${cust.id.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+          opening, lines, charges, payments, closing,
+          ageing: {
+            current: r2(bucket.current), days30: r2(bucket.days30),
+            days60: r2(bucket.days60), days90: r2(bucket.days90),
+            total: closing, oldest_unpaid: null,
+          },
+          as_at: new Date().toISOString(),
+        });
+      }
       case "rpc/pos_take_account_payment": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const cust = be.customers.find((c) => c.id === body.p_customer_id);
@@ -1842,6 +1947,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           method: String(body.p_method ?? "cash"),
           reference: (body.p_reference as string) ?? null,
           client_ref: cref,
+          created_at: new Date().toISOString(),
           voided: false,
         };
         if (!dup) be.accountPayments.push(pay);

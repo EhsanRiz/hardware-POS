@@ -5482,3 +5482,90 @@ test("a part payment leaves the balance where somebody can still see it", async 
   await expect(page.getByText("Nothing is owed to a supplier.")).toBeVisible();
   expect(be.supplierDocs[0].paid_amount).toBe(4300);
 });
+
+test("a statement opens on what was owed before it, and adds up to what is owed now", async ({ page }) => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 864e5).toISOString();
+  be.customers.push({
+    id: "k9", code: "TRD-009", name: "Molefe Builders",
+    phone: "082 444 7788", is_trade: true, credit_limit: 50000,
+    balance: 0, available: 50000,
+    address: "12 Kerk St, Ladybrand", vat_number: "4370229645",
+    // The account was opened owing money, three months ago.
+    opening_balance: 1500, created_at: daysAgo(100),
+  });
+  // One charge before the window and one inside it.
+  const sale = (at: string, total: number) => ({
+    client_ref: null, cashier_id: USERS.manager.row.id, customer_id: "k9",
+    items: [{ product_id: "p1", qty: 1 }], payment_method: "account",
+    discount_amount: 0, discount_reason: null, approved_by: null,
+    created_at: at, total, payments: [], po_number: null,
+    customer_vat_number: null, rounding: 0, within_limit: true,
+    amount_tendered: null, change_due: null,
+  });
+  be.sales.push(sale(daysAgo(75), 460));
+  be.sales.push(sale(daysAgo(10), 230));
+  // A cash sale to the same buyer, which never touched the account.
+  be.sales.push({ ...sale(daysAgo(9), 115), payment_method: "cash" });
+  be.accountPayments.push({
+    id: "ap9", customer_id: "k9", amount: 400, method: "cash",
+    reference: "receipt 1", client_ref: null, voided: false,
+    created_at: daysAgo(8),
+  });
+  // And one that was reversed. It stays on the statement and pays nothing.
+  be.accountPayments.push({
+    id: "ap10", customer_id: "k9", amount: 250, method: "eft",
+    reference: "wrong account", client_ref: null, voided: true,
+    created_at: daysAgo(5),
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Accounts" }).click();
+  await page.locator("tr.acc-row", { hasText: "Molefe Builders" }).click();
+
+  await page.getByLabel("Statement period").selectOption("3");
+  await page.getByRole("button", { name: /^Statement$/ }).click();
+
+  const doc = page.locator(".doc-a4");
+  await expect(doc).toBeVisible();
+  await expect(doc).toContainText("Statement for");
+  await expect(doc).toContainText("Molefe Builders");
+  await expect(doc).toContainText("VAT No 4370229645");
+
+  // THE OPENING BALANCE IS EVERYTHING BEFORE THE WINDOW. The account opened
+  // owing 1500 and the 75-day-old invoice was 460, and neither is a line
+  // inside a three-month window that starts after them.
+  const brought = doc.locator("tr.doc-brought");
+  await expect(brought).toContainText("Balance brought forward");
+  await expect(brought).toContainText(/1\s?960\.00/);
+
+  // The charge inside the window is listed; the cash sale is not on the
+  // account and must never appear on a statement.
+  await expect(doc.locator(".doc-statement tbody tr")).toHaveCount(4);
+  await expect(doc).toContainText("Invoice");
+  await expect(doc.locator(".doc-statement")).not.toContainText("115.00");
+
+  // A reversed payment is shown, marked, and pays nothing.
+  const reversed = doc.locator(".doc-statement tbody tr", { hasText: "wrong account" });
+  await expect(reversed).toContainText("(reversed)");
+  await expect(reversed).not.toContainText("250.00");
+
+  // IT HAS TO ADD UP: 1960 + 230 - 400 = 1790, and the last line lands there.
+  const totals = doc.locator(".doc-totals");
+  await expect(totals).toContainText(/Charged/);
+  await expect(totals.locator("tr.doc-total")).toContainText("Balance now due");
+  await expect(totals.locator("tr.doc-total")).toContainText(/1\s?790\.00/);
+  await expect(doc.locator(".doc-statement tbody tr").last())
+    .toContainText(/1\s?790\.00/);
+
+  // How old the money is, which is the half that gets a shop paid. Payments
+  // are consumed oldest first: the R400 comes off the 100-day-old opening
+  // balance, leaving R1 100 at 90+ days, the 75-day-old invoice whole at 60
+  // days, and only the recent R230 current. Calling any of that "current"
+  // would be the lie that lets a debt sit.
+  const ageing = doc.locator(".doc-ageing");
+  await expect(ageing.locator("tr", { hasText: "90+ days" }))
+    .toContainText(/1\s?100\.00/);
+  await expect(ageing.locator("tr", { hasText: "60 days" })).toContainText("460.00");
+  await expect(ageing.locator("tr", { hasText: "Current" })).toContainText("230.00");
+});

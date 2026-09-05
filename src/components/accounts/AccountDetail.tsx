@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   customerLedger,
+  customerStatement,
   takeAccountPayment,
   voidAccountPayment,
 } from "../../lib/api";
@@ -11,7 +12,10 @@ import { can } from "../../lib/permissions";
 import { formatPhone } from "../../lib/phone";
 import { printReceipt } from "../../lib/print";
 import { buildStatementText } from "../../lib/receipt";
+import { statementSheet } from "../../lib/statementSheet";
+import type { Sheet } from "../../lib/sheet";
 import type { AccountRow, LedgerEntry, User } from "../../lib/types";
+import DocumentSheet from "../DocumentSheet";
 import ManagerPinModal from "../ManagerPinModal";
 import { fmtDate } from "../../lib/dates";
 
@@ -49,6 +53,9 @@ export default function AccountDetail({
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiding, setVoiding] = useState<LedgerEntry | null>(null);
+  // The A4 statement, once it has been asked for.
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [monthsBack, setMonthsBack] = useState(1);
 
   const load = useCallback(async () => {
     try {
@@ -98,6 +105,27 @@ export default function AccountDetail({
       setError(errorMessage(e, "That payment could not be recorded"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * The A4 statement: the document that is posted or emailed, as opposed to
+   * the till-roll one below, which is the one handed over a counter.
+   *
+   * The window is whole months back from today rather than a date picker,
+   * because "the last three months" is how a shop asks for it and a pair of
+   * date boxes is three taps and a mistake.
+   */
+  async function openStatement() {
+    setError(null);
+    const to = new Date();
+    const from = new Date(to.getFullYear(), to.getMonth() - monthsBack + 1, 1);
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    try {
+      setSheet(statementSheet(await customerStatement(account.id, iso(from), iso(to))));
+    } catch (e) {
+      setError(errorMessage(e, "That statement could not be drawn up"));
     }
   }
 
@@ -223,6 +251,24 @@ export default function AccountDetail({
         <section className="acc-ledger">
           <div className="acc-ledger-head">
             <h3>Account history</h3>
+            <select
+              className="btn-line"
+              value={monthsBack}
+              onChange={(e) => setMonthsBack(Number(e.target.value))}
+              aria-label="Statement period"
+            >
+              <option value={1}>This month</option>
+              <option value={3}>Last 3 months</option>
+              <option value={6}>Last 6 months</option>
+              <option value={12}>Last 12 months</option>
+            </select>
+            <button
+              className="btn-line"
+              onClick={() => void openStatement()}
+              disabled={!online}
+            >
+              Statement
+            </button>
             <button
               className="btn-line"
               onClick={printStatement}
@@ -301,6 +347,8 @@ export default function AccountDetail({
           onCancel={() => setVoiding(null)}
         />
       )}
+
+      {sheet && <DocumentSheet sheet={sheet} onClose={() => setSheet(null)} />}
     </div>
   );
 }

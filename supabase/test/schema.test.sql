@@ -3512,4 +3512,157 @@ begin
   perform assert_eq(v_n, 1, 'next_doc_number still has exactly one signature');
 end $$;
 
+-- 0067: the statement a customer is sent ------------------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_cust uuid; v_prod uuid; v_price numeric;
+  v_sale public.sales; v_old uuid; v_recent uuid; v_pay uuid; v_st jsonb;
+  v_line jsonb; v_n int; v_from date; v_to date; v_bal numeric;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id into v_org, v_mgr from fixture;
+  select id, price_retail into v_prod, v_price
+    from public.products where sku = 'CEM-425-50';
+
+  -- An account opened with money already owed on it, three months ago.
+  insert into public.customers (org_id, name, phone, address, is_trade,
+                                credit_limit, opening_balance, active, created_at)
+  values (v_org, 'Molefe Builders', '0824447788', '12 Kerk St, Ladybrand',
+          true, 50000, 1500, true, now() - interval '100 days')
+  returning id into v_cust;
+
+  -- One charge before the window, one inside it. Backdated after the fact,
+  -- because pos_create_sale stamps now() and a statement is about time.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 4)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+  v_old := v_sale.id;
+  update public.sales set created_at = now() - interval '75 days' where id = v_old;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 2)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+  v_recent := v_sale.id;
+  update public.sales set created_at = now() - interval '10 days' where id = v_recent;
+
+  -- A cash sale to the same buyer. It is not on the account and must not be
+  -- on the statement: a customer sent a statement listing money they already
+  -- handed over at the counter will ring up and say so.
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash', p_customer_id => v_cust);
+
+  -- Two payments inside the window, one of them reversed afterwards.
+  select payment_id into v_pay from public.pos_take_account_payment(
+    v_tok, v_mgr, v_cust, 400, 'cash', 'receipt 1', null, null);
+  update public.customer_payments set created_at = now() - interval '8 days'
+   where id = v_pay;
+  select payment_id into v_pay from public.pos_take_account_payment(
+    v_tok, v_mgr, v_cust, 250, 'eft', 'wrong account', null, null);
+  update public.customer_payments set created_at = now() - interval '5 days'
+   where id = v_pay;
+  perform public.pos_void_account_payment(v_tok, '1234', v_pay, 'Paid by the wrong Molefe');
+
+  v_from := (now() - interval '30 days')::date;
+  v_to := current_date;
+  v_st := public.pos_customer_statement(v_tok, v_cust, v_from, v_to);
+
+  perform assert_eq(v_st->'customer'->>'name', 'Molefe Builders',
+    'the statement names who it is for');
+  perform assert(v_st->>'reference' like 'STM-%', 'and carries a reference');
+
+  -- RULE 1. Everything before the window is one figure at the top, whether or
+  -- not any of it appears below.
+  perform assert_eq((v_st->>'opening')::numeric,
+    round(1500 + (select total from public.sales where id = v_old), 2),
+    'the opening balance is the account before the window, not the first line');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_st->'lines') e
+     where e->>'ref' = (select doc_number from public.sales where id = v_old)),
+    'and the sale it came from is not listed again inside the window');
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_st->'lines') e
+     where e->>'ref' = (select doc_number from public.sales where id = v_recent)),
+    'while the one inside it is');
+
+  -- The cash sale never touched the account.
+  select count(*)::int into v_n from jsonb_array_elements(v_st->'lines') e
+   where e->>'kind' = 'charge';
+  perform assert_eq(v_n, 1, 'a sale paid at the counter is not on the account');
+
+  -- RULE 2. A reversed payment is shown, marked, and pays nothing.
+  select e into v_line from jsonb_array_elements(v_st->'lines') e
+   where e->>'ref' = 'wrong account';
+  perform assert(v_line is not null, 'a reversed payment stays on the statement');
+  perform assert_eq((v_line->>'payment')::numeric, 0::numeric, 'paying nothing');
+  perform assert((v_line->>'detail') like '%(reversed)%', 'and saying so');
+
+  perform assert_eq((v_st->>'payments')::numeric, 400::numeric,
+    'so only the payment that stood is counted');
+  perform assert_eq((v_st->>'charges')::numeric,
+    (select total from public.sales where id = v_recent),
+    'against the one charge inside the window');
+
+  -- IT HAS TO ADD UP. Opening plus charges less payments is the closing
+  -- figure, and the closing figure is what they actually owe today.
+  perform assert_eq((v_st->>'closing')::numeric,
+    round((v_st->>'opening')::numeric + (v_st->>'charges')::numeric
+          - (v_st->>'payments')::numeric, 2),
+    'the statement adds up from its own opening to its own closing');
+  perform assert_eq((v_st->>'closing')::numeric, public.customer_balance(v_cust),
+    'and the closing balance is what the account actually stands at');
+
+  -- The running balance on the last line is the closing balance, or the
+  -- customer is reading two different numbers on one page.
+  select e into v_line from jsonb_array_elements(v_st->'lines') e
+   order by (e->>'at') desc limit 1;
+  perform assert_eq((v_line->>'balance')::numeric, (v_st->>'closing')::numeric,
+    'the last line lands on the closing balance');
+
+  -- HOW OLD THE MONEY IS. The opening balance and the 75-day-old sale are
+  -- both older than 60 days, so telling the customer "current" would be a lie.
+  perform assert((v_st->'ageing'->>'days90')::numeric
+                 + (v_st->'ageing'->>'days60')::numeric > 0,
+    'the old money is shown as old');
+  perform assert_eq((v_st->'ageing'->>'total')::numeric, (v_st->>'closing')::numeric,
+    'and the ageing adds up to the same balance');
+
+  -- A window with nothing in it is still a statement: the opening carries.
+  v_st := public.pos_customer_statement(v_tok, v_cust,
+    (now() - interval '3 days')::date, current_date);
+  perform assert_eq(jsonb_array_length(v_st->'lines'), 0, 'a quiet month has no lines');
+  perform assert_eq((v_st->>'opening')::numeric, (v_st->>'closing')::numeric,
+    'and opens and closes on the same figure');
+  perform assert_eq((v_st->>'closing')::numeric, public.customer_balance(v_cust),
+    'which is still what they owe');
+
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L, %L, %L)',
+           v_tok, v_cust, current_date, current_date - 1),
+    'a statement cannot end before it starts');
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L)', v_tok, gen_random_uuid()),
+    'and needs a customer that exists');
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L)', 'not-a-token', v_cust),
+    'nor will it answer a stranger');
+
+end $$;
+
+do $$
+declare v_n int;
+begin
+  perform assert(not has_function_privilege('anon',
+    'public.customer_entries(uuid, uuid)', 'execute'),
+    'a device cannot read a whole account through the helper');
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_customer_statement';
+  perform assert_eq(v_n, 1, 'pos_customer_statement has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;

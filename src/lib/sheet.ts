@@ -7,7 +7,7 @@
 // details and a serial number on one page. Both exist, for different people.
 import type { ShopSettings } from "./types";
 
-export type SheetKind = "quote" | "invoice" | "delivery";
+export type SheetKind = "quote" | "invoice" | "delivery" | "statement";
 
 export interface SheetLine {
   /** The shop's own code, so a customer can quote it back. */
@@ -27,6 +27,36 @@ export interface SheetCustomer {
   phone?: string | null;
   /** Their VAT registration — what makes this a FULL tax invoice. */
   vatNumber?: string | null;
+}
+
+/**
+ * One movement on an account, as a statement shows it.
+ *
+ * Not a SheetLine: a statement has no quantities and no unit prices. Forcing
+ * it into the item table would put "1 ea" against a payment.
+ */
+export interface StatementEntry {
+  /** Already formatted, by lib/dates. */
+  date: string;
+  ref: string;
+  detail: string;
+  charge: number;
+  payment: number;
+  /** The balance after this entry — the column a customer actually reads. */
+  balance: number;
+}
+
+export interface StatementBody {
+  from: string;
+  to: string;
+  /** Everything before the window, in one figure. */
+  opening: number;
+  entries: StatementEntry[];
+  charges: number;
+  payments: number;
+  closing: number;
+  /** How old the money is, as at today. */
+  ageing: { current: number; days30: number; days60: number; days90: number };
 }
 
 export interface Sheet {
@@ -54,6 +84,8 @@ export interface Sheet {
   deliverAt?: string | null;
   /** The invoice these goods were sold on, so an office can match the two. */
   invoiceNumber?: string | null;
+  /** Set on a statement, and only on a statement. */
+  statement?: StatementBody;
 }
 
 export const SHEET_TITLE: Record<SheetKind, string> = {
@@ -61,6 +93,7 @@ export const SHEET_TITLE: Record<SheetKind, string> = {
   // The words matter: SARS asks for them on the document itself.
   invoice: "Tax Invoice",
   delivery: "Delivery Note",
+  statement: "Statement",
 };
 
 /**
@@ -74,6 +107,8 @@ export const SHEET_PRICED: Record<SheetKind, boolean> = {
   quote: true,
   invoice: true,
   delivery: false,
+  // A statement carries money, but not in the item table: see `statement`.
+  statement: true,
 };
 
 /**
@@ -122,6 +157,31 @@ export function sheetAsText(sheet: Sheet, s: ShopSettings): string {
   if (sheet.invoiceNumber) out.push(`Invoice: ${sheet.invoiceNumber}`);
   if (sheet.poNumber) out.push(`Your order: ${sheet.poNumber}`);
   out.push("");
+  if (sheet.statement) {
+    const st = sheet.statement;
+    out.push(`${st.from} to ${st.to}`);
+    out.push("");
+    out.push(`Balance brought forward ${money(st.opening)}`);
+    for (const e of st.entries) {
+      out.push(
+        `${e.date}  ${e.ref ? `${e.ref}  ` : ""}${e.detail}` +
+        (e.charge ? `  charge ${money(e.charge)}` : "") +
+        (e.payment ? `  paid ${money(e.payment)}` : "") +
+        `  balance ${money(e.balance)}`
+      );
+    }
+    out.push("");
+    out.push(`Charged ${money(st.charges)}`);
+    out.push(`Paid ${money(st.payments)}`);
+    out.push(`Balance now due ${money(st.closing)}`);
+    out.push(
+      `Current ${money(st.ageing.current)} · 30 days ${money(st.ageing.days30)}` +
+      ` · 60 days ${money(st.ageing.days60)} · 90+ days ${money(st.ageing.days90)}`
+    );
+    const t = (s.receipt_terms ?? "").trim();
+    if (t) { out.push(""); out.push(t); }
+    return out.join("\n");
+  }
   for (const l of sheet.lines) {
     out.push(
       `${l.qty} ${l.unit} × ${l.description}` +
