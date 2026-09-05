@@ -103,6 +103,10 @@ function mk(
     price_retail, price_trade, tax_code: "standard",
     stock_qty, reorder_level, image_url: null, sort_order: 0, bin: "A1",
     max_discount_percent: null, max_discount_amount: null,
+    // What the shop paid. Stated once, here, rather than hardcoded separately
+    // in the catalogue route and again on a sale line — booking a delivery in
+    // at a new price has to be visible in both.
+    cost: 50,
   };
 }
 
@@ -122,6 +126,7 @@ export const REGISTER_TOKEN = "test-register-token";
 // load, before any test has run, so installBackend can put them back.
 const SEED_RETAIL = new Map(PRODUCTS.map((p) => [p.id, p.price_retail]));
 const SEED_STOCK = new Map(PRODUCTS.map((p) => [p.id, p.stock_qty]));
+const SEED_COST = new Map(PRODUCTS.map((p) => [p.id, p.cost ?? null]));
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -294,11 +299,22 @@ export class Backend {
     bank_account_number?: string | null; bank_branch_code?: string | null }[] = [];
   supplierDocs: { id: string; supplier_id: string; kind: string; doc_number: string | null;
     doc_date: string | null; total: number | null; note: string | null; status: string;
-    created_at: string }[] = [];
+    created_at: string;
+    // 0066: what is owed on it and when. Filing a bill and paying it are two
+    // different days, and the fake modelled only the first one.
+    due_date?: string | null; paid_at?: string | null;
+    paid_amount?: number | null; paid_by_name?: string | null }[] = [];
   supplierPages: { document_id: string; page_no: number; mime: string; data: string; by_pin: string }[] = [];
   supplierLines: { document_id: string; line_no: number; supplier_code: string | null;
     description: string; qty: number | null; unit_price: number | null;
     line_total: number | null; product_id?: string | null }[] = [];
+  /** 0066: orders placed with a supplier, and the lines on them. */
+  purchaseOrders: { id: string; doc_number: string; supplier_id: string; status: string;
+    expected_on: string | null; note: string | null; created_at: string;
+    created_by_name: string | null; sent_at: string | null }[] = [];
+  poLines: { id: string; po_id: string; product_id: string; sku: string | null;
+    name: string; unit_code: string; qty: number; unit_cost: number | null;
+    received_qty: number }[] = [];
   /** 0058: what a supplier's own code is known to mean. */
   supplierCodes: { supplier_id: string; supplier_code: string; product_id: string }[] = [];
   /**
@@ -375,6 +391,17 @@ export class Backend {
    * that quietly allows it would make a green test out of a broken one.
    */
   archivedQuotes: Record<string, string> = {};
+  /**
+   * 0065: the stock take sheets. Lines carry the quantity expected WHEN THE
+   * SHEET WAS OPENED, because that is the whole rule: posting applies the
+   * difference, so a sale rung up while somebody counts still counts.
+   */
+  stockCounts: {
+    id: string; doc_number: string; status: "open" | "posted" | "abandoned";
+    category_id: string | null; note: string | null;
+    lines: { product_id: string; sku: string; name: string; unit_code: string;
+             bin: string | null; expected_qty: number; counted_qty: number | null }[];
+  }[] = [];
   /** 0061: the delivery notes, newest last. */
   deliveries: {
     id: string; doc_number: string; sale_id: string; customer_name: string;
@@ -402,6 +429,7 @@ export class Backend {
     this.seq = 0;
     this.archivedQuotes = {};
     this.deliveries = [];
+    this.stockCounts = [];
   }
 
   /** Balance the way the real customer_balance() computes it. */
@@ -737,6 +765,41 @@ function searchProducts(q: string) {
  * line_total carries the line's own discount AND its share of the sale-level
  * one, exactly as the server stores it.
  */
+/** How many of something has gone out of the door recently (0066). */
+function soldRecently(be: Backend, productId: string): number {
+  let n = 0;
+  for (const sale of be.sales) {
+    for (const it of sale.items) {
+      if (it.product_id === productId) n += it.qty;
+    }
+  }
+  return n;
+}
+
+/** Who it was last bought from, so an order can be raised without looking. */
+function lastSupplierOf(be: Backend, productId: string): string | null {
+  for (let i = be.supplierCodes.length - 1; i >= 0; i--) {
+    if (be.supplierCodes[i].product_id === productId) {
+      return be.suppliers.find((s) => s.id === be.supplierCodes[i].supplier_id)?.name ?? null;
+    }
+  }
+  return null;
+}
+
+/** A purchase order as pos_po_list returns it, with its lines counted (0066). */
+function poRow(be: Backend, o: Backend["purchaseOrders"][number]) {
+  const lines = be.poLines.filter((l) => l.po_id === o.id);
+  return {
+    id: o.id, doc_number: o.doc_number,
+    supplier: be.suppliers.find((s) => s.id === o.supplier_id)?.name ?? "—",
+    supplier_id: o.supplier_id, status: o.status, expected_on: o.expected_on,
+    note: o.note, created_at: o.created_at, created_by_name: o.created_by_name,
+    sent_at: o.sent_at, lines: lines.length,
+    total: Math.round(lines.reduce((t, l) => t + l.qty * (l.unit_cost ?? 0), 0) * 100) / 100,
+    outstanding_lines: lines.filter((l) => l.received_qty < l.qty).length,
+  };
+}
+
 export function fakeSaleLines(be: Backend, saleId: string) {
   const idx = Number(String(saleId).replace("s", ""));
   const sale = be.sales[idx];
@@ -769,10 +832,10 @@ export function fakeSaleLines(be: Backend, saleId: string) {
       allows_fraction: prod.allows_fraction,
       qty: it.qty, unit_price: unitOf(it),
       // What the shop paid for it, copied onto the line as pos_create_sale
-      // copies products.cost. The catalogue fake reports 50 throughout; the
-      // delivery line costs whatever the shop has said a trip costs, which is
+      // copies products.cost — including a price booked in against a purchase
+      // order. The delivery line costs whatever the shop has said a trip is,
       // null until it says (0064).
-      cost_at_sale: prod.kind === "delivery" ? prod.cost ?? null : 50,
+      cost_at_sale: prod.cost ?? null,
       line_total,
       tax_amount: Math.round((line_total - line_total / 1.15) * 100) / 100,
       discount_amount: own(it),
@@ -799,6 +862,8 @@ export async function installBackend(page: Page): Promise<Backend> {
     p.image_url = null;
     p.price_retail = SEED_RETAIL.get(p.id)!;
     p.stock_qty = SEED_STOCK.get(p.id) ?? null;
+    // Booking a delivery in against an order writes cost onto module state too.
+    p.cost = SEED_COST.get(p.id) ?? null;
   }
 
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
@@ -1207,6 +1272,341 @@ export async function installBackend(page: Page): Promise<Backend> {
           item_count: q.items.length, note: null, status: q.status,
         }]);
       }
+      // 0065: the stock take.
+      case "rpc/pos_stock_count_open": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const cat = (body.p_category_id as string) ?? null;
+        const row = {
+          id: `sc${be.stockCounts.length + 1}`,
+          doc_number: `CNT-${String(be.stockCounts.length + 1).padStart(6, "0")}`,
+          status: "open" as const, category_id: cat,
+          note: (body.p_note as string) ?? null,
+          // Tracked lines only: a delivery charge is not in aisle three.
+          lines: PRODUCTS.filter((p) => p.stock_qty != null)
+            .filter((p) => !cat || p.category_id === cat)
+            .map((p) => ({
+              product_id: p.id, sku: p.sku, name: p.name,
+              unit_code: p.unit_code, bin: p.bin,
+              expected_qty: p.stock_qty!, counted_qty: null as number | null,
+            })),
+        };
+        be.stockCounts.push(row);
+        return json({ id: row.id, doc_number: row.doc_number, status: row.status });
+      }
+      case "rpc/pos_stock_counts": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        return json([...be.stockCounts].reverse().map((c) => ({
+          id: c.id, doc_number: c.doc_number, status: c.status, note: c.note,
+          department: PRODUCTS.find((p) => p.category_id === c.category_id)?.category_name ?? null,
+          started_at: "2026-01-01T08:00:00Z", started_by_name: "Ehsan Rizvi",
+          posted_at: c.status === "posted" ? "2026-01-01T09:00:00Z" : null,
+          posted_by_name: c.status === "posted" ? "Ehsan Rizvi" : null,
+          lines: c.lines.length,
+          counted: c.lines.filter((l) => l.counted_qty != null).length,
+          variances: c.lines.filter(
+            (l) => l.counted_qty != null && l.counted_qty !== l.expected_qty).length,
+        })));
+      }
+      case "rpc/pos_stock_count_lines": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const c = be.stockCounts.find((x) => x.id === body.p_count_id);
+        if (!c) return fail("Unknown stock count");
+        return json(c.lines.map((l, n) => ({
+          id: `${c.id}-l${n}`, ...l,
+          variance: l.counted_qty == null ? null : l.counted_qty - l.expected_qty,
+          counted_at: l.counted_qty == null ? null : "2026-01-01T08:30:00Z",
+        })));
+      }
+      case "rpc/pos_stock_count_set": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const c = be.stockCounts.find((x) => x.id === body.p_count_id);
+        if (!c) return fail("Unknown stock count");
+        if (c.status !== "open") return fail(`That count has already been ${c.status}`);
+        const l = c.lines.find((x) => x.product_id === body.p_product_id);
+        if (!l) return fail("That line is not on this count");
+        const q = body.p_qty == null ? null : Number(body.p_qty);
+        if (q != null && q < 0) return fail("A shelf cannot hold less than nothing");
+        l.counted_qty = q;
+        return json(q);
+      }
+      case "rpc/pos_stock_count_post": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const c = be.stockCounts.find((x) => x.id === body.p_count_id);
+        if (!c) return fail("Unknown stock count");
+        if (c.status !== "open") return fail(`That count has already been ${c.status}`);
+        let moved = 0, up = 0, down = 0;
+        for (const l of c.lines) {
+          // Uncounted lines are left alone; counted ones move by the
+          // DIFFERENCE against what was expected when the sheet opened, not
+          // to the counted figure — the shop kept trading meanwhile.
+          if (l.counted_qty == null || l.counted_qty === l.expected_qty) continue;
+          const delta = l.counted_qty - l.expected_qty;
+          const p = PRODUCTS.find((x) => x.id === l.product_id);
+          if (p && p.stock_qty != null) p.stock_qty += delta;
+          moved++;
+          if (delta > 0) up += delta; else down -= delta;
+        }
+        c.status = "posted";
+        return json({ lines_moved: moved, units_up: up, units_down: down });
+      }
+      case "rpc/pos_stock_count_abandon": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const c = be.stockCounts.find((x) => x.id === body.p_count_id);
+        if (!c || c.status !== "open") return fail("That count cannot be abandoned");
+        c.status = "abandoned";
+        return json(null);
+      }
+      case "rpc/pos_reorder_list": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        return json(PRODUCTS
+          .filter((p) => p.stock_qty != null && p.reorder_level != null
+                      && p.stock_qty <= p.reorder_level)
+          .map((p) => ({
+            product_id: p.id, sku: p.sku, item: p.name,
+            department: p.category_name ?? "—", unit: p.unit_code, bin: p.bin,
+            on_hand: p.stock_qty, reorder_level: p.reorder_level,
+            short: p.reorder_level! - p.stock_qty!,
+            // Was hardcoded to 50, and sold_30d to zero, which meant the screen
+            // that exists to say HOW FAST something goes always said "none".
+            cost: p.cost ?? null,
+            supplier: lastSupplierOf(be, p.id),
+            sold_30d: soldRecently(be, p.id),
+          }))
+          .sort((a, b) => b.short - a.short));
+      }
+
+      // ---- 0066: ordering from a supplier, and what is owed for it. ----
+      case "rpc/pos_po_create": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const sup = be.suppliers.find((x) => x.id === body.p_supplier_id);
+        if (!sup) return fail("Unknown supplier");
+        const row = {
+          id: `po${be.purchaseOrders.length + 1}`,
+          doc_number: `PO-${String(be.purchaseOrders.length + 1).padStart(6, "0")}`,
+          supplier_id: sup.id, status: "draft",
+          expected_on: (body.p_expected_on as string) ?? null,
+          note: String(body.p_note ?? "").trim() || null,
+          created_at: new Date().toISOString(),
+          created_by_name: USERS.manager.row.name, sent_at: null,
+        };
+        be.purchaseOrders.push(row);
+        return json(poRow(be, row));
+      }
+      case "rpc/pos_po_set_line": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Unknown order");
+        if (po.status !== "draft" && po.status !== "sent") {
+          return fail(`That order is ${po.status} and cannot be changed`);
+        }
+        const prod = fakeProduct(String(body.p_product_id));
+        if (!prod) return fail("Unknown product");
+        const qty = Number(body.p_qty);
+        const cost = body.p_unit_cost == null ? null : Number(body.p_unit_cost);
+        const at = be.poLines.findIndex(
+          (l) => l.po_id === po.id && l.product_id === prod.id);
+        if (!Number.isFinite(qty) || qty <= 0) {
+          if (at >= 0) be.poLines.splice(at, 1);
+          return json(null);
+        }
+        // Changing your mind is not ordering twice: the line moves, it is not
+        // added again.
+        if (at >= 0) {
+          be.poLines[at].qty = qty;
+          be.poLines[at].unit_cost = cost ?? be.poLines[at].unit_cost ?? prod.cost ?? null;
+        } else {
+          be.poLines.push({
+            id: `pol${be.poLines.length + 1}`, po_id: po.id, product_id: prod.id,
+            sku: prod.sku, name: prod.name, unit_code: prod.unit_code,
+            qty, unit_cost: cost ?? prod.cost ?? null, received_qty: 0,
+          });
+        }
+        return json(null);
+      }
+      case "rpc/pos_po_from_reorder": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const sup = be.suppliers.find((x) => x.id === body.p_supplier_id);
+        if (!sup) return fail("Unknown supplier");
+        const row = {
+          id: `po${be.purchaseOrders.length + 1}`,
+          doc_number: `PO-${String(be.purchaseOrders.length + 1).padStart(6, "0")}`,
+          supplier_id: sup.id, status: "draft",
+          expected_on: (body.p_expected_on as string) ?? null,
+          note: "From the reorder list", created_at: new Date().toISOString(),
+          created_by_name: USERS.manager.row.name, sent_at: null,
+        };
+        be.purchaseOrders.push(row);
+        for (const p of PRODUCTS) {
+          if (p.stock_qty == null || p.reorder_level == null) continue;
+          if (p.stock_qty > p.reorder_level) continue;
+          be.poLines.push({
+            id: `pol${be.poLines.length + 1}`, po_id: row.id, product_id: p.id,
+            sku: p.sku, name: p.name, unit_code: p.unit_code,
+            // The shortfall plus a month's selling, so it does not come
+            // straight back onto the list.
+            qty: Math.ceil(Math.max(p.reorder_level - p.stock_qty, 0)
+                           + soldRecently(be, p.id)),
+            unit_cost: p.cost ?? null, received_qty: 0,
+          });
+        }
+        return json(poRow(be, row));
+      }
+      case "rpc/pos_po_list": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const live = (st: string) => ["draft", "sent", "part"].includes(st);
+        return json([...be.purchaseOrders]
+          .map((o) => poRow(be, o))
+          .sort((a, b) => (live(b.status) ? 1 : 0) - (live(a.status) ? 1 : 0)
+                       || b.created_at.localeCompare(a.created_at)));
+      }
+      case "rpc/pos_po_lines": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        return json(be.poLines
+          .filter((l) => l.po_id === body.p_po_id)
+          .map((l) => ({
+            id: l.id, product_id: l.product_id, sku: l.sku, name: l.name,
+            unit_code: l.unit_code, qty: l.qty, unit_cost: l.unit_cost,
+            received_qty: l.received_qty,
+            outstanding: Math.max(l.qty - l.received_qty, 0),
+            on_hand: fakeProduct(l.product_id)?.stock_qty ?? null,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      case "rpc/pos_po_send": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Unknown order");
+        if (po.status !== "draft") return fail(`That order has already been ${po.status}`);
+        if (!be.poLines.some((l) => l.po_id === po.id)) {
+          return fail("An order with nothing on it is not an order");
+        }
+        po.status = "sent";
+        po.sent_at = new Date().toISOString();
+        return json(poRow(be, po));
+      }
+      case "rpc/pos_po_receive": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Unknown order");
+        if (po.status === "cancelled" || po.status === "received") {
+          return fail(`That order is ${po.status}`);
+        }
+        let moved = 0;
+        for (const item of (body.p_lines as { line_id: string; qty: number;
+                                              unit_cost?: number | null }[]) ?? []) {
+          const line = be.poLines.find((l) => l.id === item.line_id && l.po_id === po.id);
+          if (!line) return fail("That line is not on this order");
+          const qty = Number(item.qty);
+          if (!Number.isFinite(qty) || qty <= 0) continue;
+          const cost = item.unit_cost == null ? null : Number(item.unit_cost);
+          const prod = fakeProduct(line.product_id);
+          if (prod && prod.stock_qty != null) prod.stock_qty += qty;
+          be.stockMoves.push({
+            product_id: line.product_id, qty_delta: qty, reason: "receipt",
+            note: `${po.doc_number} line ${line.name}`,
+          });
+          // Cost is a fact and is recorded; retail is a decision and is not
+          // touched. Same rule the server keeps.
+          if (cost != null && prod) prod.cost = cost;
+          line.received_qty += qty;
+          if (cost != null) line.unit_cost = cost;
+          moved += 1;
+        }
+        const left = be.poLines.filter(
+          (l) => l.po_id === po.id && l.received_qty < l.qty).length;
+        if (moved > 0) po.status = left === 0 ? "received" : "part";
+        return json({ lines_received: moved, lines_outstanding: left });
+      }
+      case "rpc/pos_po_cancel": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po || (po.status !== "draft" && po.status !== "sent")) {
+          return fail("That order cannot be cancelled now");
+        }
+        po.status = "cancelled";
+        po.note = String(body.p_reason ?? "").trim() || po.note;
+        return json(null);
+      }
+      case "rpc/pos_supplier_payables": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        // Whole days, as `current_date - due_date` counts them on the server.
+        // Subtracting timestamps and rounding made a bill fifteen days late
+        // report as sixteen, depending on the hour the test ran.
+        const dayOf = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86400000);
+        const today = Math.floor(Date.now() / 86400000);
+        const rows = be.supplierDocs
+          .filter((d) => d.kind === "invoice" && d.paid_at == null)
+          .map((d) => {
+            const total = d.total ?? 0;
+            const paid = d.paid_amount ?? 0;
+            const late = d.due_date == null ? null
+              : Math.max(0, today - dayOf(d.due_date));
+            return {
+              id: d.id,
+              supplier: be.suppliers.find((s) => s.id === d.supplier_id)?.name ?? "—",
+              supplier_id: d.supplier_id, doc_number: d.doc_number,
+              doc_date: d.doc_date, due_date: d.due_date ?? null,
+              total, paid, outstanding: Math.round((total - paid) * 100) / 100,
+              days_late: late, status: d.status,
+            };
+          })
+          .sort((a, b) => (b.days_late ?? -1) - (a.days_late ?? -1)
+                       || b.outstanding - a.outstanding);
+        return json({
+          rows,
+          totals: {
+            total: Math.round(rows.reduce((t, r) => t + r.outstanding, 0) * 100) / 100,
+            overdue: Math.round(rows.reduce(
+              (t, r) => t + ((r.days_late ?? 0) > 0 ? r.outstanding : 0), 0) * 100) / 100,
+            undated: rows.filter((r) => r.due_date == null).length,
+            documents: rows.length,
+          },
+        });
+      }
+      case "rpc/pos_supplier_mark_paid": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Unknown document");
+        if (d.kind !== "invoice" && d.kind !== "statement") {
+          return fail(`A ${d.kind} is not something the shop owes money against`);
+        }
+        const amount = body.p_amount == null ? null : Number(body.p_amount);
+        if (amount != null && amount <= 0) return fail("A payment has to be for something");
+        const already = d.paid_amount ?? 0;
+        const paid = already + (amount ?? ((d.total ?? 0) - already));
+        d.paid_amount = Math.round(paid * 100) / 100;
+        d.paid_by_name = USERS.manager.row.name;
+        if (body.p_due != null) d.due_date = String(body.p_due);
+        // A PART PAYMENT IS NOT A PAID BILL. The balance stays visible.
+        d.paid_at = d.paid_amount >= (d.total ?? 0) ? new Date().toISOString() : null;
+        return json({ ...d });
+      }
+      case "rpc/pos_supplier_set_due": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Unknown document");
+        d.due_date = body.p_due == null ? null : String(body.p_due);
+        return json(null);
+      }
+
       // 0061: deliveries.
       case "rpc/pos_admin_set_delivery_cost": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -1480,7 +1880,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         // captured — hardcoding active:true here would hide exactly the rows
         // this screen exists to review.
         return json([
-          ...PRODUCTS.map((p) => ({ ...p, cost: 50, description: null, active: true })),
+          ...PRODUCTS.map((p) => ({ ...p, description: null, active: true })),
           ...be.shelfAdded.map((p) => ({ ...p, cost: null, description: null })),
         ]);
       }

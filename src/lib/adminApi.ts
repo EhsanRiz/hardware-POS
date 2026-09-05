@@ -1109,3 +1109,287 @@ export async function setDeliveryCost(pin: string, cost: number): Promise<number
   if (error) throw error;
   return Number(data);
 }
+
+// --- Stock take, and what to order (0065) ------------------------------------
+
+export interface StockCount {
+  id: string;
+  doc_number: string;
+  status: "open" | "posted" | "abandoned";
+  note: string | null;
+  department: string | null;
+  started_at: string;
+  started_by_name: string | null;
+  posted_at: string | null;
+  posted_by_name: string | null;
+  lines: number;
+  counted: number;
+  variances: number;
+}
+
+export interface StockCountLine {
+  id: string;
+  product_id: string;
+  sku: string | null;
+  name: string;
+  unit_code: string;
+  bin: string | null;
+  expected_qty: number;
+  counted_qty: number | null;
+  variance: number | null;
+  counted_at: string | null;
+}
+
+export async function stockCounts(pin: string, limit = 30): Promise<StockCount[]> {
+  const { data, error } = await supabase.rpc("pos_stock_counts", {
+    p_register_token: requireToken(), p_pin: pin, p_limit: limit,
+  });
+  if (error) throw error;
+  return (data as StockCount[]) ?? [];
+}
+
+export async function openStockCount(
+  pin: string, categoryId: string | null, note: string | null
+): Promise<{ id: string; doc_number: string }> {
+  const { data, error } = await supabase.rpc("pos_stock_count_open", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_category_id: categoryId, p_note: note,
+  });
+  if (error) throw error;
+  return data as { id: string; doc_number: string };
+}
+
+export async function stockCountLines(
+  pin: string, countId: string
+): Promise<StockCountLine[]> {
+  const { data, error } = await supabase.rpc("pos_stock_count_lines", {
+    p_register_token: requireToken(), p_pin: pin, p_count_id: countId,
+  });
+  if (error) throw error;
+  return (data as StockCountLine[]) ?? [];
+}
+
+export async function setCountedQty(
+  pin: string, countId: string, productId: string, qty: number | null
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_stock_count_set", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_count_id: countId, p_product_id: productId, p_qty: qty,
+  });
+  if (error) throw error;
+}
+
+export async function postStockCount(
+  pin: string, countId: string
+): Promise<{ lines_moved: number; units_up: number; units_down: number }> {
+  const { data, error } = await supabase.rpc("pos_stock_count_post", {
+    p_register_token: requireToken(), p_pin: pin, p_count_id: countId,
+  });
+  if (error) throw error;
+  return data as { lines_moved: number; units_up: number; units_down: number };
+}
+
+export async function abandonStockCount(pin: string, countId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_stock_count_abandon", {
+    p_register_token: requireToken(), p_pin: pin, p_count_id: countId,
+  });
+  if (error) throw error;
+}
+
+export interface ReorderRow {
+  product_id: string;
+  sku: string | null;
+  item: string;
+  department: string;
+  unit: string;
+  bin: string | null;
+  on_hand: number;
+  reorder_level: number;
+  short: number;
+  cost: number | null;
+  /** Who it was last bought from, so an order can be raised without looking. */
+  supplier: string | null;
+  /** How fast it has been going, which is how many to buy. */
+  sold_30d: number;
+}
+
+export async function reorderList(pin: string): Promise<ReorderRow[]> {
+  const { data, error } = await supabase.rpc("pos_reorder_list", {
+    p_register_token: requireToken(), p_pin: pin,
+  });
+  if (error) throw error;
+  return (data as ReorderRow[]) ?? [];
+}
+
+// --- Ordering from a supplier, and what is owed for it (0066) ---------------
+
+export type PurchaseOrderStatus = "draft" | "sent" | "part" | "received" | "cancelled";
+
+export const PO_STATUS_LABEL: Record<PurchaseOrderStatus, string> = {
+  draft: "Draft",
+  sent: "With the supplier",
+  part: "Part delivered",
+  received: "All in",
+  cancelled: "Called off",
+};
+
+export interface PurchaseOrder {
+  id: string;
+  doc_number: string;
+  supplier: string;
+  supplier_id: string;
+  status: PurchaseOrderStatus;
+  expected_on: string | null;
+  note: string | null;
+  created_at: string;
+  created_by_name: string | null;
+  sent_at: string | null;
+  lines: number;
+  total: number;
+  /** How many lines still have something to come. Zero means it is all in. */
+  outstanding_lines: number;
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  product_id: string | null;
+  sku: string | null;
+  name: string;
+  unit_code: string;
+  qty: number;
+  unit_cost: number | null;
+  received_qty: number;
+  outstanding: number;
+  /** What is on the shelf right now, for judging whether to chase it. */
+  on_hand: number | null;
+}
+
+export async function poList(pin: string): Promise<PurchaseOrder[]> {
+  const { data, error } = await supabase.rpc("pos_po_list", {
+    p_register_token: requireToken(), p_pin: pin, p_limit: 100,
+  });
+  if (error) throw error;
+  return (data as PurchaseOrder[]) ?? [];
+}
+
+export async function poLines(pin: string, poId: string): Promise<PurchaseOrderLine[]> {
+  const { data, error } = await supabase.rpc("pos_po_lines", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+  });
+  if (error) throw error;
+  return (data as PurchaseOrderLine[]) ?? [];
+}
+
+export async function poCreate(
+  pin: string, supplierId: string, expectedOn: string | null = null,
+  note: string | null = null
+): Promise<PurchaseOrder> {
+  const { data, error } = await supabase.rpc("pos_po_create", {
+    p_register_token: requireToken(), p_pin: pin, p_supplier_id: supplierId,
+    p_expected_on: expectedOn, p_note: note,
+  });
+  if (error) throw error;
+  return data as PurchaseOrder;
+}
+
+/** Quantity zero takes the line off the order. */
+export async function poSetLine(
+  pin: string, poId: string, productId: string, qty: number,
+  unitCost: number | null = null
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_po_set_line", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+    p_product_id: productId, p_qty: qty, p_unit_cost: unitCost,
+  });
+  if (error) throw error;
+}
+
+export async function poFromReorder(
+  pin: string, supplierId: string, expectedOn: string | null = null
+): Promise<PurchaseOrder> {
+  const { data, error } = await supabase.rpc("pos_po_from_reorder", {
+    p_register_token: requireToken(), p_pin: pin, p_supplier_id: supplierId,
+    p_expected_on: expectedOn,
+  });
+  if (error) throw error;
+  return data as PurchaseOrder;
+}
+
+export async function poSend(pin: string, poId: string): Promise<PurchaseOrder> {
+  const { data, error } = await supabase.rpc("pos_po_send", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+  });
+  if (error) throw error;
+  return data as PurchaseOrder;
+}
+
+export async function poReceive(
+  pin: string, poId: string,
+  lines: { line_id: string; qty: number; unit_cost?: number | null }[]
+): Promise<{ lines_received: number; lines_outstanding: number }> {
+  const { data, error } = await supabase.rpc("pos_po_receive", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+    p_lines: lines,
+  });
+  if (error) throw error;
+  return data as { lines_received: number; lines_outstanding: number };
+}
+
+export async function poCancel(pin: string, poId: string, reason: string | null): Promise<void> {
+  const { error } = await supabase.rpc("pos_po_cancel", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId, p_reason: reason,
+  });
+  if (error) throw error;
+}
+
+export interface PayableRow {
+  id: string;
+  supplier: string;
+  supplier_id: string;
+  doc_number: string | null;
+  doc_date: string | null;
+  due_date: string | null;
+  total: number;
+  /** Anything already handed over against it. */
+  paid: number;
+  /** Total less paid — what the shop still has to find. */
+  outstanding: number;
+  /** Null when nobody put a date on it, which is not the same as "on time". */
+  days_late: number | null;
+  status: string;
+}
+
+export interface Payables {
+  rows: PayableRow[];
+  totals: { total: number; overdue: number; undated: number; documents: number };
+}
+
+export async function supplierPayables(pin: string): Promise<Payables> {
+  const { data, error } = await supabase.rpc("pos_supplier_payables", {
+    p_register_token: requireToken(), p_pin: pin,
+  });
+  if (error) throw error;
+  return data as Payables;
+}
+
+/** Amount null pays whatever is left on it. */
+export async function supplierMarkPaid(
+  pin: string, documentId: string, amount: number | null = null,
+  due: string | null = null
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_supplier_mark_paid", {
+    p_register_token: requireToken(), p_pin: pin, p_document_id: documentId,
+    p_amount: amount, p_due: due,
+  });
+  if (error) throw error;
+}
+
+export async function supplierSetDue(
+  pin: string, documentId: string, due: string | null
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_supplier_set_due", {
+    p_register_token: requireToken(), p_pin: pin, p_document_id: documentId,
+    p_due: due,
+  });
+  if (error) throw error;
+}
