@@ -1090,3 +1090,22 @@ export async function uploadShopLogo(pin: string, dataUrl: string): Promise<stri
   }
   return out.path;
 }
+
+/**
+ * What one delivery costs the shop.
+ *
+ * Written to the delivery product's cost, which is where every report reads
+ * it from: pos_create_sale copies a product's cost onto each line it writes,
+ * so setting this once makes the departments table, the items table, the
+ * export and the deliveries report all tell the truth about carriage at the
+ * same moment.
+ */
+export async function setDeliveryCost(pin: string, cost: number): Promise<number> {
+  const { data, error } = await supabase.rpc("pos_admin_set_delivery_cost", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_cost: cost,
+  });
+  if (error) throw error;
+  return Number(data);
+}

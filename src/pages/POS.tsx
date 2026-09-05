@@ -633,7 +633,13 @@ export default function POS() {
       // Off with the old charge before the new one goes on, so changing your
       // mind about the price does not put two delivery lines on the invoice.
       let next = lines.filter((l) => l.product.kind !== "delivery");
-      if (d.charge > 0) {
+      {
+        // The line goes on even when the delivery is FREE. A free trip still
+        // costs the shop fuel and an hour, and the cost is only recorded
+        // against a line — so a delivery given away used to be invisible in
+        // the one report that asks what delivering is worth. It also puts
+        // "Delivery R0.00" on the customer's invoice, which is a fair thing
+        // for them to see.
         const p = await deliveryProduct();
         next = [
           ...next,

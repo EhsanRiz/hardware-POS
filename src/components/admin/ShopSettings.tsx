@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { adminSaveSettings, uploadShopLogo, type ShopDetails } from "../../lib/adminApi";
+import {
+  adminSaveSettings, setDeliveryCost, uploadShopLogo, type ShopDetails,
+} from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { downscaleImage, imageSrc } from "../../lib/images";
 import { refreshSettings, shopSettings } from "../../lib/settings";
@@ -61,6 +63,17 @@ export default function ShopSettings({ pin }: { pin: string }) {
   const [saved, setSaved] = useState(false);
   // Read-only, and served rather than compiled in — see the note beside it.
   const [vat, setVat] = useState<number | null>(() => shopSettings().vat_rate ?? null);
+  /**
+   * What a trip costs the shop. Saved on its own like the logo, and for the
+   * same reason: it goes through a different door — it is the cost of the
+   * delivery line in the catalogue, not a field on the shop.
+   */
+  const [delCost, setDelCost] = useState(() => {
+    const c = shopSettings().delivery_cost;
+    return c == null ? "" : String(c);
+  });
+  const [delBusy, setDelBusy] = useState(false);
+  const [delSaved, setDelSaved] = useState(false);
 
   // The cache is what the till prints from; the server is what is true. Take
   // the server's version on the way in so an edit is never made against a
@@ -76,6 +89,9 @@ export default function ShopSettings({ pin }: { pin: string }) {
     void refreshSettings().then((server) => {
       if (!touched.current) setF(toDetails(server));
       setVat(server.vat_rate ?? null);
+      if (!touched.current) {
+        setDelCost(server.delivery_cost == null ? "" : String(server.delivery_cost));
+      }
     });
   }, []);
 
@@ -261,6 +277,55 @@ export default function ShopSettings({ pin }: { pin: string }) {
             </span>
           </span>
         </label>
+      </div>
+
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
+          <h2 className="font-medium">What a delivery costs</h2>
+          <p className="text-sm text-stone-500">
+            Fuel there and back, plus what the driver's hour is worth. Without
+            it every delivery reports as pure profit, which it is not — and
+            somebody will price against that figure. One number per trip; change
+            it when the diesel price moves.
+          </p>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="block flex-1">
+            <span className="text-sm text-stone-600">Cost per delivery</span>
+            <input
+              className="modal-input"
+              inputMode="decimal"
+              value={delCost}
+              placeholder="0.00"
+              aria-label="Cost per delivery"
+              onChange={(e) => {
+                touched.current = true;
+                setDelCost(e.target.value);
+                setDelSaved(false);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg border border-stone-300 disabled:opacity-40"
+            disabled={delBusy || delCost.trim() === ""
+              || !Number.isFinite(Number(delCost.replace(",", ".")))}
+            onClick={() => {
+              setDelBusy(true);
+              setError(null);
+              void setDeliveryCost(pin, Math.round(Number(delCost.replace(",", ".")) * 100) / 100)
+                .then(async (saved) => {
+                  setDelCost(String(saved));
+                  setDelSaved(true);
+                  await refreshSettings();
+                })
+                .catch((e) => setError(errorMessage(e, "That cost could not be saved")))
+                .finally(() => setDelBusy(false));
+            }}
+          >
+            {delBusy ? "Saving…" : delSaved ? "Saved" : "Save cost"}
+          </button>
+        </div>
       </div>
 
       <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">

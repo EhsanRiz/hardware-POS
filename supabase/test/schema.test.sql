@@ -3041,4 +3041,108 @@ begin
     'nor what every line sells for');
 end $$;
 
+-- 0064: what a delivery costs the shop --------------------------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_cem uuid; v_deliv record; v_sale public.sales;
+  v_note public.deliveries; v_rep jsonb; v_row record; v_rows jsonb;
+  v_from timestamptz; v_to timestamptz; v_cost numeric; v_net numeric;
+  v_org uuid;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id, org_id into v_cem, v_org from public.products where sku = 'CEM-425-50';
+  v_from := now();
+  v_to := now() + interval '1 hour';
+
+  -- Nothing said yet: the settings hand back null rather than a made-up
+  -- figure, and the report is honest that it does not know.
+  -- Nulled rather than deleted: an earlier block has already sold against
+  -- this line, and a shop's history holds it in place.
+  update public.products set cost = null
+   where kind = 'delivery' and org_id = v_org;
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert(v_row.delivery_cost is null,
+    'a shop that has not said what a trip costs is not given a figure');
+
+  -- The manager says: R60 a trip, there and back, with the driver's hour in it.
+  perform assert_eq(public.pos_admin_set_delivery_cost(v_tok, '1234', 60), 60::numeric,
+    'the cost is set once, for the shop');
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.delivery_cost, 60::numeric, 'and reads back');
+  -- It lives on the delivery line, which is what makes every report true at
+  -- once: pos_create_sale copies a product's cost onto each line it writes.
+  perform assert_eq(
+    (select cost from public.products
+      where kind = 'delivery' and org_id = v_org), 60::numeric,
+    'kept on the delivery line itself, where cost_at_sale reads it');
+
+  select * into v_deliv from public.pos_delivery_product(v_tok);
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_cem, 'qty', 1),
+      jsonb_build_object('product_id', v_deliv.id, 'qty', 1, 'unit_price', 90)),
+    p_payment_method => 'cash');
+  perform assert_eq(
+    (select cost_at_sale from public.sale_items
+      where sale_id = v_sale.id and product_id = v_deliv.id), 60::numeric,
+    'and rides onto the line, so it is what the trip cost THEN');
+
+  v_note := public.pos_create_delivery(v_tok, v_mgr, v_sale.id,
+    'Morija Exports', '14 Kolonyama Rd', current_date, null, 90, null);
+
+  -- WHAT DELIVERING IS WORTH. R90 charged is R78.26 earned once VAT is out of
+  -- it, less R60 to make the trip.
+  v_rep := public.pos_deliveries_report(v_tok, '1234', v_from, v_to);
+  v_net := round(90 / (1 + public.tax_rate_at('standard', current_date)), 2);
+  perform assert_eq((v_rep->'totals'->>'carriage_net')::numeric, v_net, 'earned');
+  perform assert_eq((v_rep->'totals'->>'carriage_cost')::numeric, 60::numeric, 'cost');
+  perform assert_eq((v_rep->'totals'->>'carriage_margin')::numeric, round(v_net - 60, 2),
+    'and what the trip was actually worth, which is the number an owner wants');
+
+  -- AND THE DEPARTMENT STOPS LYING. It read a hundred percent before, because
+  -- a carriage line had no cost on it at all.
+  v_rows := public.pos_sales_by_department(v_tok, '1234', v_from, v_to);
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e
+     where e->>'department' = 'Delivery'
+       and (e->>'margin_percent')::numeric < 100),
+    'the departments report no longer shows delivery as pure profit');
+
+  -- A FREE DELIVERY STILL COSTS THE SHOP. It is the case that matters most:
+  -- a trip given away to keep a builder happy is a decision, and an owner
+  -- should be able to see what the decision costs rather than assume nothing.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_cem, 'qty', 1),
+      jsonb_build_object('product_id', v_deliv.id, 'qty', 1, 'unit_price', 0)),
+    p_payment_method => 'cash');
+  perform public.pos_create_delivery(v_tok, v_mgr, v_sale.id,
+    'Someone Local', 'Round the corner', current_date, null, 0, null);
+  v_rep := public.pos_deliveries_report(v_tok, '1234', v_from, v_to);
+  perform assert_eq((v_rep->'totals'->>'carriage_free')::int, 1, 'one went out free');
+  perform assert_eq((v_rep->'totals'->>'carriage_cost')::numeric, 120::numeric,
+    'and it cost the shop just as much as the one that was charged for');
+  perform assert_eq((v_rep->'totals'->>'carriage_margin')::numeric, round(v_net - 120, 2),
+    'so delivering came out worse than it looked');
+  perform assert((v_rep->'totals'->>'carriage_margin')::numeric < 0,
+    'and in this case at a loss, which is exactly what nobody could see before');
+
+  -- Nonsense is refused, and so is anybody without the permission.
+  perform assert_refuses(
+    format('select public.pos_admin_set_delivery_cost(%L, %L, -1)', v_tok, '1234'),
+    'a delivery cannot cost less than nothing');
+  perform assert_refuses(
+    format('select public.pos_admin_set_delivery_cost(%L, %L, 60)', v_tok, '2222'),
+    'and a counter hand cannot set the shop''s cost base');
+
+  select count(*) into v_cost from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_org_settings';
+  perform assert_eq(v_cost::int, 1, 'pos_org_settings still has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;

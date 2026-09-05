@@ -43,6 +43,8 @@ export interface FakeProduct {
   max_discount_amount: number | null;
   /** 0061: 'delivery' is priced at the counter; everything else by the shop. */
   kind?: "goods" | "delivery";
+  /** 0064: what the line costs the shop, where the shop has said. */
+  cost?: number | null;
 }
 
 /**
@@ -60,6 +62,9 @@ export const DELIVERY_LINE: FakeProduct = {
   tax_code: "standard", stock_qty: null, reorder_level: null, image_url: null,
   sort_order: 0, bin: null, max_discount_percent: null,
   max_discount_amount: null, kind: "delivery",
+  // 0064: what a trip costs the shop. Mutable, because the settings screen
+  // sets it and the reports read it back.
+  cost: null as number | null,
 };
 
 /**
@@ -360,6 +365,8 @@ export class Backend {
     // 0059: no logo until a shop uploads one, and the documents then set the
     // name in type instead.
     logo_url: "",
+    // 0064: read off the delivery line, not stored on the shop.
+    delivery_cost: null as unknown as string,
   };
   /**
    * The archived quotation PDFs, by quote id. Write once: the fake refuses a
@@ -761,6 +768,11 @@ export function fakeSaleLines(be: Backend, saleId: string) {
       name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
       allows_fraction: prod.allows_fraction,
       qty: it.qty, unit_price: unitOf(it),
+      // What the shop paid for it, copied onto the line as pos_create_sale
+      // copies products.cost. The catalogue fake reports 50 throughout; the
+      // delivery line costs whatever the shop has said a trip costs, which is
+      // null until it says (0064).
+      cost_at_sale: prod.kind === "delivery" ? prod.cost ?? null : 50,
       line_total,
       tax_amount: Math.round((line_total - line_total / 1.15) * 100) / 100,
       discount_amount: own(it),
@@ -1196,6 +1208,18 @@ export async function installBackend(page: Page): Promise<Backend> {
         }]);
       }
       // 0061: deliveries.
+      case "rpc/pos_admin_set_delivery_cost": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        const c = Number(body.p_cost);
+        if (!Number.isFinite(c) || c < 0) {
+          return fail("A delivery cannot cost less than nothing");
+        }
+        // Onto the delivery line itself, which is where every report reads it.
+        DELIVERY_LINE.cost = Math.round(c * 100) / 100;
+        be.orgSettings.delivery_cost = DELIVERY_LINE.cost as unknown as string;
+        return json(DELIVERY_LINE.cost);
+      }
       case "rpc/pos_delivery_product": {
         if (!tokenOk) return fail("Register not paired or revoked");
         // From the one definition, not a second copy of it: the till prints
@@ -2036,9 +2060,14 @@ export async function installBackend(page: Page): Promise<Backend> {
             return true;
           });
           const today = new Date().toISOString().slice(0, 10);
-          const carriageNet = lines
-            .filter(({ line }) => line.product_id === DELIVERY_LINE.id)
+          const carriageLines = lines.filter(
+            ({ line }) => line.product_id === DELIVERY_LINE.id);
+          const carriageNet = carriageLines
             .reduce((t, { line }) => r2(t + line.line_total - line.tax_amount), 0);
+          // cost_at_sale, as the server records it: the figure as it stood when
+          // the trip was made.
+          const carriageCost = carriageLines
+            .reduce((t, { line }) => r2(t + (line.cost_at_sale ?? 0) * line.qty), 0);
           return json({
             totals: {
               count: made.length,
@@ -2049,6 +2078,8 @@ export async function installBackend(page: Page): Promise<Backend> {
               carriage: r2(made.reduce((t, d) => t + d.charge, 0)),
               carriage_free: made.filter((d) => d.charge === 0).length,
               carriage_net: carriageNet,
+              carriage_cost: carriageCost,
+              carriage_margin: r2(carriageNet - carriageCost),
             },
             outstanding: be.deliveries
               .filter((d) => d.status === "pending")
