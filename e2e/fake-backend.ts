@@ -41,7 +41,25 @@ export interface FakeProduct {
   /** The shop's ceiling on discounting this line. Null means uncapped. */
   max_discount_percent: number | null;
   max_discount_amount: number | null;
+  /** 0061: 'delivery' is priced at the counter; everything else by the shop. */
+  kind?: "goods" | "delivery";
 }
+
+/**
+ * The shop's delivery line, as pos_delivery_product() makes it.
+ *
+ * Not in PRODUCTS: it is not something anybody scans off a shelf, and a
+ * catalogue search that turned it up would be a way to sell nothing for
+ * nothing. The till asks the server for it when a delivery is arranged.
+ */
+export const DELIVERY_LINE: FakeProduct = {
+  id: "delivery-line", sku: "DELIVERY", barcode: null, name: "Delivery",
+  category_id: null, category_name: null, unit_code: "ea", unit_name: "Each",
+  allows_fraction: false, price_retail: 0, price_trade: 0,
+  tax_code: "standard", stock_qty: null, reorder_level: null, image_url: null,
+  sort_order: 0, bin: null, max_discount_percent: null,
+  max_discount_amount: null, kind: "delivery",
+};
 
 export const PRODUCTS: FakeProduct[] = [
   mk("p1", "CEM-425-50", "6001234000015", "Cement 42.5N 50kg", "bag", "Bag", false, 115, 108, 240, 40),
@@ -333,6 +351,14 @@ export class Backend {
    * that quietly allows it would make a green test out of a broken one.
    */
   archivedQuotes: Record<string, string> = {};
+  /** 0061: the delivery notes, newest last. */
+  deliveries: {
+    id: string; doc_number: string; sale_id: string; customer_name: string;
+    address: string; deliver_on: string; deliver_at: string | null;
+    charge: number; note: string | null; status: "pending" | "delivered";
+    cashier_name: string; delivered_by_name: string | null;
+    delivered_at: string | null;
+  }[] = [];
   quotes: { id: string; doc_number: string; status: string; sale_id: string | null;
     customer_name: string | null;
             customer_id: string | null;
@@ -351,6 +377,7 @@ export class Backend {
     this.offline = false;
     this.seq = 0;
     this.archivedQuotes = {};
+    this.deliveries = [];
   }
 
   /** Balance the way the real customer_balance() computes it. */
@@ -437,14 +464,15 @@ export class Backend {
 
     const items =
       (body.p_items as {
-        product_id: string; qty: number;
+        product_id: string; qty: number; unit_price?: number;
         discount_amount?: number; discount_percent?: number | null;
         discount_reason?: string | null;
       }[]) ?? [];
     let subtotal = 0;
     let itemsDiscount = 0;
     for (const it of items) {
-      const p = PRODUCTS.find((x) => x.id === it.product_id);
+      const p = PRODUCTS.find((x) => x.id === it.product_id)
+        ?? (it.product_id === DELIVERY_LINE.id ? DELIVERY_LINE : undefined);
       if (!p) throw new Error("Product not available");
       if (!p.allows_fraction && it.qty !== Math.trunc(it.qty)) {
         throw new Error(`${p.name} is sold per ${p.unit_name} and cannot be split`);
@@ -452,7 +480,14 @@ export class Backend {
       if (p.stock_qty != null && p.stock_qty < it.qty) {
         throw new Error(`Not enough stock for ${p.name} (${p.stock_qty} ${p.unit_code} on hand)`);
       }
-      const line = Math.round(this.price(p, false) * it.qty * 100) / 100;
+      // 0061: an open line carries the price the counter named; anything else
+      // is priced by the shop however loudly the request asks otherwise. The
+      // rule is the server's line_price(), mirrored here so a test cannot pass
+      // against a fake that is more generous than the database.
+      const unit = p.kind === "delivery" && it.unit_price != null
+        ? Math.round(it.unit_price * 100) / 100
+        : this.price(p, false);
+      const line = Math.round(unit * it.qty * 100) / 100;
       // The percentage decides, as it does on the server: a client sending a
       // percentage and a mismatched amount must not get to choose which wins.
       const lineDisc =
@@ -1137,6 +1172,86 @@ export async function installBackend(page: Page): Promise<Backend> {
           valid_until: "2099-01-01", expired: false,
           item_count: q.items.length, note: null, status: q.status,
         }]);
+      }
+      // 0061: deliveries.
+      case "rpc/pos_delivery_product": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json([{ id: "delivery-line", sku: "DELIVERY", name: "Delivery",
+                       unit_code: "ea" }]);
+      }
+      case "rpc/pos_create_delivery": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const sale = be.sales[Number(String(body.p_sale_id ?? "").replace(/^s/, ""))];
+        if (!sale) return fail("Unknown sale");
+        if (String(body.p_customer_name ?? "").trim() === "") {
+          return fail("A delivery needs a name");
+        }
+        // Asked twice is a double tap, not a second load — the same rule
+        // pos_create_delivery keeps, and the reason the note is not rewritten.
+        const already = be.deliveries.find((d) => d.sale_id === body.p_sale_id);
+        if (already) return json(already);
+        const u = Object.values(USERS).find((x) => x.row.id === body.p_cashier_id);
+        const row = {
+          id: `d${be.deliveries.length + 1}`,
+          doc_number: `DEL-${String(be.deliveries.length + 1).padStart(6, "0")}`,
+          sale_id: String(body.p_sale_id),
+          customer_name: String(body.p_customer_name),
+          address: String(body.p_address),
+          deliver_on: String(body.p_deliver_on),
+          deliver_at: (body.p_deliver_at as string) ?? null,
+          charge: Number(body.p_charge ?? 0),
+          note: (body.p_note as string) ?? null,
+          status: "pending" as const,
+          cashier_name: u?.row.name ?? "Sam",
+          delivered_by_name: null,
+          delivered_at: null,
+        };
+        be.deliveries.push(row);
+        return json(row);
+      }
+      case "rpc/pos_list_deliveries": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const rows = [...be.deliveries].sort((a, b) =>
+          a.status === b.status ? 0 : a.status === "pending" ? -1 : 1);
+        return json(rows.map((d) => {
+          const sale = be.sales[Number(d.sale_id.replace(/^s/, ""))];
+          return {
+            ...d,
+            sale_number: sale ? `INV-${String(be.sales.indexOf(sale) + 1).padStart(6, "0")}` : null,
+            created_at: "2026-01-01T08:00:00Z",
+            // Goods only: the carriage charge is a line on the invoice, not
+            // something anybody signs for at a gate.
+            item_count: (sale?.items ?? []).filter(
+              (i: { product_id: string }) => i.product_id !== "delivery-line").length,
+          };
+        }));
+      }
+      case "rpc/pos_delivery_items": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const d = be.deliveries.find((x) => x.id === body.p_delivery_id);
+        if (!d) return fail("Unknown delivery");
+        const sale = be.sales[Number(d.sale_id.replace(/^s/, ""))];
+        return json((sale?.items ?? [])
+          .filter((i: { product_id: string }) => i.product_id !== "delivery-line")
+          .map((i: { product_id: string; qty: number }) => {
+            const prod = PRODUCTS.find((x) => x.id === i.product_id);
+            return { sku: prod?.sku ?? null, name: prod?.name ?? "?",
+                     unit_code: prod?.unit_code ?? "ea", qty: i.qty };
+          }));
+      }
+      case "rpc/pos_mark_delivered": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const d = be.deliveries.find((x) => x.id === body.p_delivery_id);
+        if (!d) return fail("Unknown delivery");
+        if (d.status === "delivered") {
+          return fail("That delivery is already marked as delivered");
+        }
+        const u = Object.values(USERS).find((x) => x.row.id === body.p_user_id);
+        d.status = "delivered";
+        d.delivered_at = new Date().toISOString();
+        d.delivered_by_name = u?.row.name ?? "Sam";
+        if (body.p_note) d.note = String(body.p_note);
+        return json(d);
       }
       case "rpc/pos_list_quotes":
         if (!tokenOk) return fail("Register not paired or revoked");

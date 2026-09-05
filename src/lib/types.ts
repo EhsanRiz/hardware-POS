@@ -83,6 +83,13 @@ export interface Product {
    */
   max_discount_percent?: number | null;
   max_discount_amount?: number | null;
+  /**
+   * What sort of line this is. Ordinary goods are priced by the shop; a
+   * 'delivery' line is quoted per job and carries the price the counter named
+   * (0061). The server only honours a sent price for the second kind, so an
+   * ordinary line cannot be repriced from a till.
+   */
+  kind?: "goods" | "delivery";
 }
 
 export interface Category {

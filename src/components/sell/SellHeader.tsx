@@ -34,14 +34,16 @@ export default function SellHeader({
   failed: number;
   canManage: boolean;
   /** Which section is on screen; drives the highlighted tab. */
-  section?: "sell" | "accounts" | "stock" | "quotes";
+  section?: "sell" | "accounts" | "stock" | "quotes" | "deliveries";
   /** Whether this user may open Accounts at all. */
   canAccounts?: boolean;
   /** Whether this user may open Quotes (same right as selling). */
   canQuotes?: boolean;
   /** Whether this user may open Stock (manage_inventory). */
   canStock?: boolean;
-  onSection?: (s: "sell" | "accounts" | "stock" | "quotes") => void;
+  onSection?: (
+    s: "sell" | "accounts" | "stock" | "quotes" | "deliveries"
+  ) => void;
   onShowFailed: () => void;
   onManage: () => void;
   onSignOut: () => void;
@@ -70,6 +72,15 @@ export default function SellHeader({
           onClick={() => onSection?.("quotes")}
         >
           Quotes
+        </button>
+        {/* No permission on it at all. Whoever is loading the bakkie needs to
+            know what is on it, and that is not always the person who can open
+            Accounts. */}
+        <button
+          aria-current={section === "deliveries" ? "page" : undefined}
+          onClick={() => onSection?.("deliveries")}
+        >
+          Deliveries
         </button>
         <button
           aria-current={section === "accounts" ? "page" : undefined}

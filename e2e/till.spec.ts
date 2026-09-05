@@ -4732,8 +4732,10 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
   // the letterhead sat 4mm from the edge of the page.
   await page.emulateMedia({ media: "print" });
   // Addressed off the page, not through the dialog: print hides everything but
-  // the sheet, and a hidden wrapper takes its role with it.
-  const sheet = page.locator("#doc-sheet");
+  // the sheet, and a hidden wrapper takes its role with it. The padding is on
+  // .doc-a4 rather than on #doc-sheet, which is now only the box the copies of
+  // a delivery note stack inside.
+  const sheet = page.locator("#doc-sheet .doc-a4").first();
   const pad = await sheet.evaluate((el) => ({
     left: parseFloat(getComputedStyle(el).paddingLeft),
     top: parseFloat(getComputedStyle(el).paddingTop),
@@ -4973,4 +4975,130 @@ test("a quote saved while the line was down is archived the first time it is ask
     .getByRole("button", { name: "PDF" }).click();
   expect(readFileSync((await (await download).path())!).toString("latin1")).toContain("%PDF-");
   await expect.poll(() => Object.keys(be.archivedQuotes).length).toBe(1);
+});
+
+/*
+ * 0061: the shop delivers.
+ */
+test("a delivery is arranged at the counter, charged on the invoice, and noted", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Morija Exports");
+  await form.getByLabel("Address").fill("14 Kolonyama Rd, Maseru");
+  await form.getByLabel("Time").fill("after 14:00");
+  await form.getByLabel("Delivery charge").fill("85");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+
+  // THE CHARGE IS A LINE ON THE SALE. It is money the shop took, so it is in
+  // the total, VAT is worked on it, and it is in the day's takings — not a
+  // figure on a scrap of paper beside the till.
+  await expect(page.locator(".line-row", { hasText: "Delivery" })).toBeVisible();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001/);
+  expect(be.storedSales[0].total).toBe(200);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // And the note is written against that sale.
+  expect(be.deliveries).toHaveLength(1);
+  // The fake resolves a sale by its place in the list, as it does everywhere.
+  expect(be.deliveries[0].sale_id).toBe("s0");
+  expect(be.deliveries[0].charge).toBe(85);
+
+  // The tab: open to everybody, outstanding first.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Deliveries" }).click();
+  const row = page.locator("tr.acc-row", { hasText: "DEL-000001" });
+  await expect(row).toContainText("Morija Exports");
+  await expect(row).toContainText("14 Kolonyama Rd, Maseru");
+  await expect(row).toContainText("INV-000001");
+  await expect(page.getByText(/1 still to go/)).toBeVisible();
+
+  // The note itself carries no money at all.
+  await row.click();
+  const peek = page.getByRole("dialog", { name: "Delivery DEL-000001" });
+  await peek.getByRole("button", { name: "Delivery note" }).click();
+  const doc = page.getByRole("dialog", { name: "Delivery Note DEL-000001" });
+  await expect(doc.locator("#doc-sheet")).toBeVisible();
+  await expect(doc).toContainText("Cement 42.5N 50kg");
+  await expect(doc).toContainText("Deliver to");
+  await expect(doc).toContainText("14 Kolonyama Rd, Maseru");
+  await expect(doc).toContainText("after 14:00");
+  await expect(doc).toContainText("INV-000001");
+  // What the customer signs.
+  await expect(doc).toContainText("received in the quantities shown and in good condition");
+  await expect(doc).toContainText("Notes / exceptions");
+  await expect(doc).toContainText("Received by (print name)");
+  // No prices, no totals, and no carriage line among the goods: the invoice
+  // carries the figures, and nobody signs for "Delivery x 1" at a gate.
+  await expect(doc).not.toContainText("Unit price");
+  await expect(doc).not.toContainText("Subtotal");
+  // Scoped to ONE copy: there are two of everything on this document, and
+  // "two rows" across both copies would have been one goods line each — the
+  // right number for the wrong reason.
+  const firstCopy = doc.locator(".doc-a4").first();
+  await expect(firstCopy.locator(".doc-lines tbody tr")).toHaveCount(1);
+  await expect(firstCopy.locator(".doc-lines")).not.toContainText("Delivery");
+  // Two copies, so one comes back signed.
+  await expect(doc.locator(".doc-a4")).toHaveCount(2);
+  await expect(doc).toContainText("Customer copy");
+  await expect(doc).toContainText("Shop copy");
+  await page.getByRole("button", { name: "Close document" }).click();
+
+  // Signed for, by whoever took the page off the driver.
+  await peek.getByRole("button", { name: "Mark delivered" }).click();
+  await expect(page.getByText(/0 still to go/)).toBeVisible();
+  await expect(page.locator("tr.acc-row", { hasText: "DEL-000001" }))
+    .toContainText("Delivered");
+  expect(be.deliveries[0].status).toBe("delivered");
+  expect(be.deliveries[0].delivered_by_name).toBe(USERS.employee.row.name);
+});
+
+test("changing the delivery charge replaces the line rather than adding another", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  let form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Morija Exports");
+  await form.getByLabel("Address").fill("14 Kolonyama Rd");
+  await form.getByLabel("Delivery charge").fill("85");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+
+  // Somebody looks it up on a map and it is further than they thought.
+  await page.getByRole("button", { name: /Deliver · Morija Exports/ }).click();
+  form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await expect(form.getByLabel("Address")).toHaveValue("14 Kolonyama Rd");
+  await form.getByLabel("Delivery charge").fill("120");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+
+  await expect(page.locator(".line-row", { hasText: "Delivery" })).toHaveCount(1);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].total).toBe(235);
+});
+
+test("a delivery arranged offline says so rather than losing the address quietly", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Morija Exports");
+  await form.getByLabel("Address").fill("14 Kolonyama Rd");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+
+  // The line drops between arranging it and taking the money. A queued sale
+  // has no id on the server, so there is nothing for a note to belong to —
+  // and somebody is standing there waiting to load a bakkie.
+  be.offline = true;
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/delivery note follows when the connection returns/i);
+  expect(be.deliveries).toHaveLength(0);
 });

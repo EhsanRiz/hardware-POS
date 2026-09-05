@@ -251,6 +251,46 @@ check("and the rest of the letterhead moves down to make room for it",
 check("a shop with no logo gets no image objects", !text.includes("/XObject")
   && !text.includes("/DCTDecode"));
 
+console.log("--- pdf: a delivery note carries no money ---");
+const note = Buffer.from(sheetAsPdf({
+  ...quote, kind: "delivery", number: "DEL-000003",
+  customer: { name: "Morija Exports" },
+  deliverTo: "14 Kolonyama Rd\nMaseru",
+  deliverOn: "6 Sep 2026", deliverAt: "after 14:00", invoiceNumber: "INV-000482",
+  validUntil: null,
+}, shop)).toString("latin1");
+// The writer escapes parentheses, as a PDF string literal must — so the search
+// has to escape them too, or "Received by (print name)" reads as absent when it
+// is on the page.
+const says = (t) => note.includes(`(${t.replace(/[()\\]/g, (c) => "\\" + c)}) Tj`);
+check("it says what it is", says("Delivery Note") && says("DEL-000003"));
+check("it says where the load goes", says("DELIVER TO") && says("14 Kolonyama Rd")
+  && says("Maseru"));
+check("when, and against which invoice", says("6 Sep 2026") && says("after 14:00")
+  && says("INV-000482"));
+check("the goods are on it, in the quantities sold",
+  says("Nail Wire Round 2.5 x 50mm") && says("2 kg"));
+// The whole point of the answer "quantities only": the person signing at a
+// gate is often not the person paying, and the invoice carries the figures.
+check("NO money anywhere on it", !says("R 84.00") && !says("R 42.00")
+  && !says("UNIT PRICE") && !says("AMOUNT") && !says("Total") && !says("VAT"),
+  (note.match(/\(R [^)]*\) Tj/g) || []).join(" "));
+check("and the customer signs for goods, not for money",
+  says("GOODS RECEIVED") && says("NOTES / EXCEPTIONS")
+  && says("Received by (print name)") && says("Signature"));
+check("the declaration says what is being confirmed",
+  note.includes("received in the quantities") && note.includes("good condition"));
+// Two copies: one is signed and comes back, one stays with the customer.
+check("it prints twice, each copy saying which it is",
+  says("CUSTOMER COPY") && says("SHOP COPY"));
+check("and each copy is a whole document, not a labelled second page",
+  (note.match(/\(Delivery Note\) Tj/g) || []).length === 2
+  && (note.match(/\(GOODS RECEIVED\) Tj/g) || []).length === 2,
+  `${(note.match(/\(Delivery Note\) Tj/g) || []).length} headings`);
+check("on two pages", (note.match(/\/Type \/Page\b/g) || []).length === 2,
+  `${(note.match(/\/Type \/Page\b/g) || []).length} pages`);
+inside(note, "a delivery note");
+
 console.log("--- pdf: the file it arrives as ---");
 check("the attachment is named for the document",
   sheetFileName(quote) === "Quotation-QUO-000020.pdf", sheetFileName(quote));

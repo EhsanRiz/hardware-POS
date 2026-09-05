@@ -2734,4 +2734,119 @@ begin
     'and it is not a public bucket: a quotation names a customer');
 end $$;
 
+-- 0061: deliveries ---------------------------------------------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_cem uuid; v_price numeric;
+  v_deliv record; v_sale public.sales; v_row public.deliveries;
+  v_n int; v_charge numeric; v_item record; v_before numeric;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id, price_retail into v_cem, v_price from public.products where sku = 'CEM-425-50';
+
+  -- The shop's delivery line is made the first time it is asked for, and only
+  -- once however often it is asked.
+  select * into v_deliv from public.pos_delivery_product(v_tok);
+  perform assert(v_deliv.id is not null, 'the shop gets a line to charge delivery on');
+  perform assert_eq(v_deliv.sku, 'DELIVERY', 'named so a bookkeeper knows it');
+  select count(*) into v_n from public.products where kind = 'delivery';
+  perform assert_eq(v_n, 1, 'and asking again does not make a second one');
+  select * into v_deliv from public.pos_delivery_product(v_tok);
+  select count(*) into v_n from public.products where kind = 'delivery';
+  perform assert_eq(v_n, 1, 'still one');
+
+  -- THE PRICE THE COUNTER NAMED. Every other line is priced by the shop; this
+  -- one is quoted per job, and the money has to land in the sale so it is
+  -- banked and taxed like everything else.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_cem, 'qty', 2),
+      jsonb_build_object('product_id', v_deliv.id, 'qty', 1, 'unit_price', 85)),
+    p_payment_method => 'cash');
+  perform assert_eq(v_sale.total, round(v_price * 2, 2) + 85,
+    'the delivery charge is in the sale total');
+  select unit_price into v_charge from public.sale_items
+   where sale_id = v_sale.id and product_id = v_deliv.id;
+  perform assert_eq(v_charge, 85::numeric, 'and it is written down at the price given');
+  select count(*) into v_n from public.sale_items
+   where sale_id = v_sale.id and tax_amount > 0;
+  perform assert_eq(v_n, 2, 'VAT is worked on the delivery as on the goods');
+
+  -- AND NOT ON ANYTHING ELSE. A till that can name its own price can sell
+  -- cement for a rand; the right belongs to the product, not to the request.
+  declare v_cheeky public.sales;
+  begin
+    v_cheeky := public.pos_create_sale(
+      p_register_token => v_tok, p_cashier_id => v_mgr,
+      p_items => jsonb_build_array(
+        jsonb_build_object('product_id', v_cem, 'qty', 1, 'unit_price', 1)),
+      p_payment_method => 'cash');
+    perform assert_eq(v_cheeky.total, v_price,
+      'a price sent for ordinary goods is ignored, not obeyed');
+  end;
+
+  -- The note.
+  v_row := public.pos_create_delivery(v_tok, v_mgr, v_sale.id,
+    'Morija Exports', '14 Kolonyama Rd, Maseru', current_date + 1,
+    'after 14:00', 85, null);
+  perform assert(v_row.doc_number like 'DEL-%', 'the note has its own number');
+  perform assert_eq(v_row.status, 'pending', 'and starts as something still to do');
+  perform assert_eq(v_row.cashier_name is not null, true, 'with whoever took it');
+
+  -- Asked twice is a double tap, not a second load.
+  declare v_again public.deliveries;
+  begin
+    v_again := public.pos_create_delivery(v_tok, v_mgr, v_sale.id,
+      'Someone Else', 'Another Street', current_date + 5, null, 0, null);
+    perform assert_eq(v_again.id, v_row.id, 'a second ask hands back the first note');
+    perform assert_eq(v_again.customer_name, 'Morija Exports',
+      'and does not quietly rewrite the address it was going to');
+  end;
+
+  perform assert_refuses(
+    format('select public.pos_create_delivery(%L, %L, %L, %L, %L, %L)',
+           v_tok, v_mgr, v_sale.id, '  ', 'An address', current_date),
+    'a delivery with no name is refused');
+
+  -- WHAT IS ON THE LOAD. The goods, and not the charge for carrying them:
+  -- nobody signs for "Delivery x 1" at a gate.
+  select count(*) into v_n from public.pos_delivery_items(v_tok, v_row.id);
+  perform assert_eq(v_n, 1, 'the note lists the goods only');
+  select * into v_item from public.pos_delivery_items(v_tok, v_row.id) limit 1;
+  perform assert_eq(v_item.qty, 2::numeric, 'in the quantities that were sold');
+  perform assert(not exists (
+    select 1 from public.pos_delivery_items(v_tok, v_row.id) where sku = 'DELIVERY'),
+    'and the delivery charge is not among them');
+
+  -- The list puts what is still owed first.
+  select count(*) into v_n from public.pos_list_deliveries(v_tok);
+  perform assert(v_n >= 1, 'the tab shows it');
+  select * into v_deliv from public.pos_list_deliveries(v_tok) limit 1;
+  perform assert_eq(v_deliv.status, 'pending', 'outstanding first, so a driver can load');
+  perform assert_eq(v_deliv.item_count, 1, 'counting goods, not the charge');
+  perform assert(v_deliv.sale_number is not null, 'and naming the invoice it came from');
+
+  -- Signed for.
+  v_row := public.pos_mark_delivered(v_tok, v_mgr, v_row.id, 'Left with the foreman');
+  perform assert_eq(v_row.status, 'delivered', 'it can be marked off');
+  perform assert(v_row.delivered_at is not null, 'with when');
+  perform assert(v_row.delivered_by_name is not null, 'and by whom');
+  perform assert_eq(v_row.note, 'Left with the foreman', 'and what was said about it');
+  perform assert_refuses(
+    format('select public.pos_mark_delivered(%L, %L, %L)', v_tok, v_mgr, v_row.id),
+    'and cannot be marked off twice');
+
+  perform assert_refuses(
+    format('select public.pos_list_deliveries(%L)', 'not-a-token'),
+    'a stranger cannot read the shop''s deliveries');
+
+  select count(*) into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_create_sale';
+  perform assert_eq(v_n, 1, 'pos_create_sale still has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;

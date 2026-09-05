@@ -4,6 +4,8 @@ import {
   approveSale,
   checkApprovalCode,
   closeQuote,
+  createDelivery,
+  deliveryProduct,
   fetchCatalogue,
   fetchCategories,
   listCustomers,
@@ -39,6 +41,8 @@ import { refreshSettings, shopSettings, vatRate } from "../lib/settings";
 import { fmtDate } from "../lib/dates";
 import { quoteSheet } from "../lib/quoteSheet";
 import { archiveSheet } from "../lib/sendSheet";
+import DeliveryForm, { type DeliveryDetails } from "../components/sell/DeliveryForm";
+import Deliveries from "../components/deliveries/Deliveries";
 import { submitSale, usePendingSync } from "../lib/sync";
 import type {
   CartLine,
@@ -182,7 +186,9 @@ export default function POS() {
   // Which section fills the frame. Sell is home; the others swap the counter
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
-  const [section, setSection] = useState<"sell" | "accounts" | "stock" | "quotes">("sell");
+  const [section, setSection] = useState<
+    "sell" | "accounts" | "stock" | "quotes" | "deliveries"
+  >("sell");
   // The product being looked at closely, and what confirming it means. From a
   // search result it ADDS the quantity chosen; from a line already in the sale
   // it REPLACES that line's quantity.
@@ -198,6 +204,17 @@ export default function POS() {
   const [stockPin, setStockPin] = useState<string | null>(null);
   const [askStockPin, setAskStockPin] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  /**
+   * The delivery this sale is going out on, once the counter has asked.
+   *
+   * Held here rather than written straight away because the note belongs to a
+   * sale, and the sale does not exist until the money is taken. The charge is
+   * in the cart from the moment it is agreed, though — that is what makes it
+   * banked and taxed rather than a figure on a scrap of paper.
+   */
+  const [delivery, setDelivery] = useState<DeliveryDetails | null>(null);
+  const [askDelivery, setAskDelivery] = useState(false);
+
   // "Save as quote" with nobody picked asks who it is for first. Null when
   // the question is not being asked; the text typed so far while it is.
   const [quoteName, setQuoteName] = useState<string | null>(null);
@@ -418,6 +435,7 @@ export default function POS() {
     setApprovalCode(null);
     setFreshId(null);
     setFromQuote(null);
+    setDelivery(null);
     setTerm("");
     scanRef.current?.focus();
   }
@@ -599,6 +617,50 @@ export default function POS() {
     }
   }
 
+  /**
+   * Take the address, and put the carrying charge in the cart.
+   *
+   * The charge is a line like any other from here on: it is in the total, VAT
+   * is worked on it, it prints on the receipt and it lands in the day's
+   * takings. The product it hangs off is the shop's own delivery line, which
+   * the server makes the first time anybody delivers anything.
+   */
+  async function agreeDelivery(d: DeliveryDetails) {
+    setAskDelivery(false);
+    try {
+      const previous = delivery;
+      setDelivery(d);
+      // Off with the old charge before the new one goes on, so changing your
+      // mind about the price does not put two delivery lines on the invoice.
+      let next = lines.filter((l) => l.product.kind !== "delivery");
+      if (d.charge > 0) {
+        const p = await deliveryProduct();
+        next = [
+          ...next,
+          {
+            product: {
+              id: p.id, sku: p.sku, barcode: null, name: p.name,
+              description: null, category_id: null, category_name: null,
+              unit_code: p.unit_code, unit_name: p.unit_code,
+              allows_fraction: false,
+              // The price IS the charge: every figure the till works out
+              // downstream reads it from here.
+              price_retail: d.charge, price_trade: d.charge,
+              tax_code: "standard", stock_qty: null, reorder_level: null,
+              image_url: null, sort_order: 0, kind: "delivery",
+            },
+            qty: 1,
+          },
+        ];
+      }
+      setLines(next);
+      if (!previous) setBanner(`Going to ${d.customerName} — the note prints with the sale.`);
+    } catch (e) {
+      setDelivery(null);
+      setBanner(errorMessage(e, "The delivery charge could not be added"));
+    }
+  }
+
   /** Set the sale aside so the next customer can be served. */
   function park() {
     if (lines.length === 0) return;
@@ -729,6 +791,36 @@ export default function POS() {
         }
       }
 
+      // The note, now that there is a sale for it to belong to. A queued sale
+      // has no id on the server yet, so there is nothing to hang a note on —
+      // said out loud rather than swallowed, because somebody is waiting to
+      // load a bakkie.
+      let deliveryNote = "";
+      if (delivery) {
+        if (queued || !sale.id) {
+          deliveryNote = " The delivery note follows when the connection returns.";
+        } else {
+          try {
+            await createDelivery({
+              cashierId: user.id,
+              saleId: sale.id,
+              customerName: delivery.customerName,
+              address: delivery.address,
+              deliverOn: delivery.deliverOn,
+              deliverAt: delivery.deliverAt || null,
+              charge: delivery.charge,
+              note: delivery.note || null,
+            });
+            deliveryNote = ` Delivery note for ${delivery.customerName}.`;
+          } catch (e) {
+            // Said out loud on the same line as the sale: somebody is waiting
+            // to load a bakkie, and a note that silently did not happen is a
+            // delivery nobody knows about.
+            deliveryNote = ` ${errorMessage(e, "The delivery note did not save")}`;
+          }
+        }
+      }
+
       clearSale();
       setLastSale(done);
       // A sale the server parked is NOT completed, and saying so was how a
@@ -737,11 +829,11 @@ export default function POS() {
       // tell: queued sales have not got one yet either, so the two are told
       // apart by which of them the server actually accepted.
       setBanner(
-        queued
+        (queued
           ? "Saved on this device — it will sync when the connection returns."
           : sale.status === "pending_approval"
             ? "Waiting for a manager — no invoice yet. Release it in Manage → Sales."
-            : `${sale.doc_number ?? "Sale"} completed.`
+            : `${sale.doc_number ?? "Sale"} completed.`) + deliveryNote
       );
       if (!queued) void refresh();
     } catch (e) {
@@ -783,7 +875,7 @@ export default function POS() {
 
   // Accounts and Stock replace the counter, not the frame: the header keeps
   // the sync state and the way back, and a parked sale stays parked underneath.
-  if ((section === "accounts" || section === "quotes" ||
+  if ((section === "accounts" || section === "quotes" || section === "deliveries" ||
        (section === "stock" && stockPin)) && user) {
     return (
       <div className="sell">
@@ -792,6 +884,8 @@ export default function POS() {
           <Accounts user={user} />
         ) : section === "quotes" ? (
           <Quotes user={user} onRecall={recallQuote} />
+        ) : section === "deliveries" ? (
+          <Deliveries user={user} />
         ) : (
           <Stock pin={stockPin!} />
         )}
@@ -904,6 +998,14 @@ export default function POS() {
               onClick={startQuote}
             >
               Save as quote
+            </button>
+
+            <button
+              className="btn-line"
+              disabled={lines.length === 0 || busy}
+              onClick={() => setAskDelivery(true)}
+            >
+              {delivery ? `Deliver · ${delivery.customerName}` : "Deliver"}
             </button>
 
             <button
@@ -1075,6 +1177,15 @@ export default function POS() {
             </div>
           </form>
         </div>
+      )}
+
+      {askDelivery && (
+        <DeliveryForm
+          initial={delivery}
+          suggestedName={customer?.name ?? null}
+          onCancel={() => setAskDelivery(false)}
+          onConfirm={(d) => void agreeDelivery(d)}
+        />
       )}
 
       {showDiscount && (

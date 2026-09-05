@@ -7,7 +7,7 @@
 // details and a serial number on one page. Both exist, for different people.
 import type { ShopSettings } from "./types";
 
-export type SheetKind = "quote" | "invoice";
+export type SheetKind = "quote" | "invoice" | "delivery";
 
 export interface SheetLine {
   /** The shop's own code, so a customer can quote it back. */
@@ -47,12 +47,33 @@ export interface Sheet {
   trade?: boolean;
   /** How it was paid, on an invoice that has been settled. */
   paidWith?: string | null;
+  /** Where the load is going. */
+  deliverTo?: string | null;
+  deliverOn?: string | null;
+  /** What the shop promised: "after 14:00", "Tue morning". */
+  deliverAt?: string | null;
+  /** The invoice these goods were sold on, so an office can match the two. */
+  invoiceNumber?: string | null;
 }
 
 export const SHEET_TITLE: Record<SheetKind, string> = {
   quote: "Quotation",
   // The words matter: SARS asks for them on the document itself.
   invoice: "Tax Invoice",
+  delivery: "Delivery Note",
+};
+
+/**
+ * A delivery note carries no money.
+ *
+ * The customer signs for goods received, not for what they cost — and the
+ * person signing at a gate is often not the person who is paying. The invoice
+ * carries the figures and travels with the load or after it.
+ */
+export const SHEET_PRICED: Record<SheetKind, boolean> = {
+  quote: true,
+  invoice: true,
+  delivery: false,
 };
 
 /**
@@ -94,21 +115,29 @@ export function sheetAsText(sheet: Sheet, s: ShopSettings): string {
   out.push(sheet.date);
   if (sheet.validUntil) out.push(`Valid until ${sheet.validUntil}`);
   if (sheet.customer.name) out.push(`For: ${sheet.customer.name}`);
+  if (sheet.deliverTo) out.push(sheet.deliverTo);
+  if (sheet.deliverOn) {
+    out.push(`Delivery: ${sheet.deliverOn}${sheet.deliverAt ? `, ${sheet.deliverAt}` : ""}`);
+  }
+  if (sheet.invoiceNumber) out.push(`Invoice: ${sheet.invoiceNumber}`);
   if (sheet.poNumber) out.push(`Your order: ${sheet.poNumber}`);
   out.push("");
   for (const l of sheet.lines) {
     out.push(
       `${l.qty} ${l.unit} × ${l.description}` +
       (l.code ? ` (${l.code})` : "") +
-      ` — ${money(l.lineTotal)}`
+      (SHEET_PRICED[sheet.kind] ? ` — ${money(l.lineTotal)}` : "")
     );
   }
-  out.push("");
-  out.push(`Subtotal ${money(sheet.subtotal)}`);
-  if (sheet.discount > 0) out.push(`Discount -${money(sheet.discount)}`);
-  out.push(`VAT ${money(sheet.vat)}`);
-  out.push(`Total ${money(sheet.total)}`);
-  const terms = sheet.kind === "quote" ? s.quote_terms : s.receipt_terms;
+  if (SHEET_PRICED[sheet.kind]) {
+    out.push("");
+    out.push(`Subtotal ${money(sheet.subtotal)}`);
+    if (sheet.discount > 0) out.push(`Discount -${money(sheet.discount)}`);
+    out.push(`VAT ${money(sheet.vat)}`);
+    out.push(`Total ${money(sheet.total)}`);
+  }
+  const terms = sheet.kind === "quote" ? s.quote_terms
+    : sheet.kind === "delivery" ? null : s.receipt_terms;
   if (terms && terms.trim()) {
     out.push("");
     out.push(terms.trim());
