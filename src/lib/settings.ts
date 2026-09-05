@@ -7,6 +7,8 @@
 import { fetchSettings } from "./api";
 import { VAT_RATE } from "./config";
 import { cacheGet, cacheSet } from "./localCache";
+import { imageSrc } from "./images";
+import { primeLogo } from "./logoBytes";
 import type { ShopSettings } from "./types";
 
 const KEY = "shop.settings";
@@ -57,6 +59,9 @@ export async function refreshSettings(): Promise<ShopSettings> {
   try {
     const s = await fetchSettings();
     cacheSet(KEY, s);
+    // Into bytes now rather than at the moment somebody presses Email: a
+    // document built inside a click cannot wait for a download.
+    primeLogo(imageSrc(s.logo_url));
     return s;
   } catch {
     return shopSettings();

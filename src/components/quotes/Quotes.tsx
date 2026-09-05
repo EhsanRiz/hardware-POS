@@ -14,7 +14,9 @@ import { buildQuoteText } from "../../lib/receipt";
 import { shopSettings, vatRate } from "../../lib/settings";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
-import { emailSheet, sheetMailto, type SendOutcome } from "../../lib/sendSheet";
+import { emailSheet, saveSheetPdf, sheetMailto, type SendOutcome } from "../../lib/sendSheet";
+import { primeLogo } from "../../lib/logoBytes";
+import { imageSrc } from "../../lib/images";
 import type { User } from "../../lib/types";
 import { fmtDate } from "../../lib/dates";
 
@@ -41,6 +43,8 @@ export default function Quotes({
   const [quotes, setQuotes] = useState<QuoteSummary[] | null>(null);
   /** How the last emailed quote went out, when it needed saying. */
   const [sent, setSent] = useState<SendOutcome | null>(null);
+  /** The quote whose PDF is being fetched and built, if any. */
+  const [pdfFor, setPdfFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -143,6 +147,26 @@ export default function Quotes({
   }
 
 
+  /**
+   * The quotation as a file, from the list, without opening anything.
+   *
+   * Built on the spot rather than stored: the lines and prices are already
+   * frozen in the database, so the same quote gives the same document every
+   * time, and there is no upload to fail and no file to go missing.
+   */
+  async function downloadPdf(q: QuoteSummary) {
+    setPdfFor(q.id);
+    setError(null);
+    try {
+      const lines = await quoteItems(q.id);
+      await saveSheetPdf(asSheet(q, lines), shopSettings());
+    } catch (e) {
+      setError(errorMessage(e, "Could not build that PDF"));
+    } finally {
+      setPdfFor(null);
+    }
+  }
+
   async function recall(q: QuoteSummary) {
     setBusy(true);
     setError(null);
@@ -216,7 +240,7 @@ export default function Quotes({
               </tr>
             )}
             {shown.map((q) => (
-              <tr key={q.id} className="acc-row" onClick={() => { setSent(null); setViewing(q); }}>
+              <tr key={q.id} className="acc-row" onClick={() => { setSent(null); primeLogo(imageSrc(shopSettings().logo_url)); setViewing(q); }}>
                 <td>
                   <span className="acc-name">{q.doc_number}</span>
                   <span className="acc-sub">
@@ -241,6 +265,13 @@ export default function Quotes({
                       disabled={busy || !online}
                     >
                       Open on the till
+                    </button>
+                    <button
+                      className="btn-line quiet"
+                      onClick={(e) => { e.stopPropagation(); void downloadPdf(q); }}
+                      disabled={pdfFor !== null || !online}
+                    >
+                      {pdfFor === q.id ? "Building…" : "PDF"}
                     </button>
                     <button
                       className="btn-line quiet"
@@ -329,6 +360,16 @@ export default function Quotes({
                 onClick={() => viewLines && setSheet(asSheet(viewing, viewLines))}
               >
                 A4 quote
+              </button>
+              <button
+                className="px-4 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
+                disabled={!viewLines}
+                onClick={() =>
+                  viewLines &&
+                  void saveSheetPdf(asSheet(viewing, viewLines), shopSettings())
+                }
+              >
+                PDF
               </button>
               {/* What leaves here is the A4 quotation as a PDF. It used to be
                   the till slip — a 48-column thermal receipt pasted into the

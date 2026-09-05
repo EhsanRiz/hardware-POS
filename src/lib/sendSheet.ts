@@ -16,14 +16,30 @@
  * The second is two steps, and it is as close as a browser gets. Saying so in
  * the message beats pretending the attachment is there.
  */
+import { imageSrc } from "./images";
+import { ensureLogo, logoImage } from "./logoBytes";
 import { sheetAsPdf, sheetFileName } from "./pdf";
 import { SHEET_TITLE, sheetAsText, type Sheet } from "./sheet";
 import type { ShopSettings } from "./types";
 
-export function sheetPdfFile(sheet: Sheet, s: ShopSettings): File {
-  return new File([sheetAsPdf(sheet, s)], sheetFileName(sheet), {
+export function sheetPdfFile(
+  sheet: Sheet,
+  s: ShopSettings,
+  logo = logoImage()
+): File {
+  return new File([sheetAsPdf(sheet, s, logo)], sheetFileName(sheet), {
     type: "application/pdf",
   });
+}
+
+/**
+ * Save the document to the device, waiting for the shop's logo first.
+ *
+ * A download has the luxury of waiting; emailing does not, which is why that
+ * path takes whatever priming has already produced.
+ */
+export async function saveSheetPdf(sheet: Sheet, s: ShopSettings): Promise<void> {
+  saveFile(sheetPdfFile(sheet, s, await ensureLogo(imageSrc(s.logo_url))));
 }
 
 /**

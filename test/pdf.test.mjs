@@ -96,6 +96,24 @@ check("InnovaPOS signs the foot", /InnovaPOS \\267 a product of InnovaEarth/.tes
 check("and the E&OE disclaimer is there", has("E&OE. This document is computer generated and is valid without a signature."));
 
 console.log("--- pdf: it is laid out, not stacked ---");
+// THE CHECK THAT SHOULD HAVE BEEN FIRST. Every string, on every document, has
+// to fit between the margins — and the ones that did not were the document
+// number, the date, and the total, all drawn left-aligned FROM the right
+// margin and running off the edge of the paper. The assertion below this one
+// missed it: it matched the first "R 84.00" in the file, which was the line
+// amount in the table, not the total underneath it. A test that finds the
+// first thing that matches is a test that can be satisfied by the wrong thing.
+const inside = (pdf, label) => {
+  const bad = [...pdf.matchAll(
+    /\/(F\d) ([\d.]+) Tf [\d. ]+rg 1 0 0 1 (-?[\d.]+) (-?[\d.]+) Tm \(([^)]*)\) Tj/g
+  )].map((m) => ({
+    x: Number(m[3]), y: Number(m[4]), text: m[5],
+    end: Number(m[3]) + widthOf(m[5], Number(m[2]), m[1] === "F2"),
+  })).filter((d) => d.x < 20 || d.end > 595.28 - 20 || d.y < 10 || d.y > 841.89 - 20);
+  check(`nothing runs off the paper (${label})`, bad.length === 0,
+    bad.slice(0, 3).map((d) => `"${d.text}" ${d.x.toFixed(0)}..${d.end.toFixed(0)}`).join("; "));
+};
+inside(text, "a one-line quotation");
 // Right-aligned money is the whole reason the width tables exist: without them
 // every figure starts at the same x and the column is ragged on the wrong side.
 const place = (s) => {
@@ -141,6 +159,7 @@ const wide = Buffer.from(sheetAsPdf({
 }, shop)).toString("latin1");
 const drawn = [...wide.matchAll(/1 0 0 1 ([\d.]+) [\d.]+ Tm \(([^)]*)\) Tj/g)]
   .map((m) => ({ x: Number(m[1]), s: m[2] }));
+inside(wide, "a very long description");
 const qty = drawn.find((d) => d.s === "12 ea");
 const descLines = drawn.filter((d) => d.s.includes("PVC Sewer Pipe") || d.s.includes("SABS"));
 check("a long description wraps rather than running on", descLines.length >= 2,
@@ -154,6 +173,7 @@ console.log("--- pdf: the invoice differs from the quote ---");
 const inv = Buffer.from(sheetAsPdf({
   ...quote, kind: "invoice", number: "INV-000123", customer: { name: "Mokoena" },
 }, { ...shop, bank_name: "FNB", bank_account_number: "62012345678" })).toString("latin1");
+inside(inv, "a tax invoice with banking");
 check("a tax invoice says so", inv.includes("(Tax Invoice) Tj"));
 check("it has no signature block", !inv.includes("(ACCEPTED BY) Tj"));
 check("it says where to pay while it is owed", inv.includes("(62012345678) Tj"));
@@ -171,6 +191,7 @@ const many = sheetAsPdf({
   })),
 }, shop);
 const manyText = Buffer.from(many).toString("latin1");
+inside(manyText, "sixty lines over two pages");
 const pageCount = (manyText.match(/\/Type \/Page\b/g) || []).length;
 check("it runs onto a second page rather than off the first", pageCount >= 2, `${pageCount} pages`);
 check("and the count in the page tree agrees",
@@ -186,6 +207,49 @@ check("and none of it is drawn off the bottom of the paper",
   `${ys.length} strings, lowest at ${Math.min(...ys)}`);
 check("the column heads repeat on the new page",
   (manyText.match(/\(DESCRIPTION\) Tj/g) || []).length === pageCount);
+
+console.log("--- pdf: the shop's own mark ---");
+// A one-pixel JPEG is a real JPEG: SOI, a minimal frame, EOI. What matters
+// here is that the bytes go in untouched and the reader is told how to read
+// them, not what the picture is.
+const JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a" +
+  "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA" +
+  "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==", "base64");
+const withLogo = Buffer.from(sheetAsPdf(quote, shop, {
+  jpeg: new Uint8Array(JPEG), width: 400, height: 120,
+})).toString("latin1");
+check("the image is declared as a JPEG the reader can decode",
+  /\/Subtype \/Image \/Width 400 \/Height 120 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/DCTDecode/
+    .test(withLogo));
+check("its bytes go in whole and its length is honest", (() => {
+  const m = withLogo.match(/\/Filter \/DCTDecode \/Length (\d+) >>\nstream\n/);
+  if (!m) return false;
+  const start = m.index + m[0].length;
+  return Number(m[1]) === JPEG.length
+    && withLogo.slice(start, start + JPEG.length) === JPEG.toString("latin1")
+    && withLogo.slice(start + JPEG.length, start + JPEG.length + 10) === "\nendstream";
+})());
+check("the page can reach it", /\/XObject << \/Im1 5 0 R >>/.test(withLogo));
+// 400x120 into the screen's own 20mm x 80mm box. The box is 226.77 x 56.69pt,
+// wider in proportion than the mark, so the HEIGHT binds: 56.69 tall and
+// 188.98 wide, centred on a 595.28pt page at x = 203.15. A mark stretched to
+// fill the box instead would come out 226.77 x 56.69 and visibly squashed.
+check("it is drawn to fit its box, not stretched to fill it",
+  /q 188.98 0 0 56.69 203.15 [\d.]+ cm \/Im1 Do Q/.test(withLogo),
+  (withLogo.match(/q [\d.]+ 0 0 [\d.]+ [\d.]+ [\d.]+ cm/) || ["none"])[0]);
+check("the shop's name is still set beneath it", withLogo.includes("(5 Star Hardware Store) Tj"));
+inside(withLogo, "a quotation with a logo");
+// Everything below the mark moves down by its height; nothing may be pushed
+// off the page or on top of anything else.
+const titleY = (pdf) => Number(pdf.match(/1 0 0 1 [\d.]+ ([\d.]+) Tm \(Quotation\) Tj/)[1]);
+check("and the rest of the letterhead moves down to make room for it",
+  titleY(withLogo) < titleY(text) - 60,
+  `with ${titleY(withLogo)}, without ${titleY(text)}`);
+// No logo, no image machinery at all — an empty /XObject entry is a reference
+// to an object that is not there.
+check("a shop with no logo gets no image objects", !text.includes("/XObject")
+  && !text.includes("/DCTDecode"));
 
 console.log("--- pdf: the file it arrives as ---");
 check("the attachment is named for the document",

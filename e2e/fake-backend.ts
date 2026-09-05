@@ -293,6 +293,16 @@ export class Backend {
   readPages = 0;
   /** Logos the shop-logo function accepted, newest last. */
   uploadedLogos: string[] = [];
+  /** The bytes of the last one, as the data URL it arrived as. */
+  logoBytes: string | null = null;
+  /**
+   * How long the storage bucket takes to answer, in milliseconds.
+   *
+   * A shop's line is not instant, and a document built before the logo has
+   * arrived comes out without it — a race that would show up once, on a real
+   * quotation, and never reproduce. Tests that care set this.
+   */
+  imageDelayMs = 0;
   /** The shop's own details, mutable so a settings save can be asserted on. */
   orgSettings: Record<string, string | boolean> = {
     // A shop that has never been asked prices every line, as 0042 defaults it.
@@ -785,7 +795,31 @@ export async function installBackend(page: Page): Promise<Backend> {
     const path = `org1/logo/${be.uploadedLogos.length + 1}.png`;
     be.uploadedLogos.push(path);
     be.orgSettings.logo_url = path;
+    // Keep the bytes, because something now READS them back: the PDF writer
+    // has to put the picture inside the file, and a bucket that stores an
+    // upload and then serves nothing is a fake that lies about the one thing
+    // the feature depends on.
+    be.logoBytes = String(b.image);
     return respond(200, { ok: true, path });
+  });
+
+  // The storage bucket, for the objects the fake has actually been given. A
+  // real one serves these with CORS headers, and without them a canvas that
+  // draws the logo is tainted and the PDF silently comes out without it — so
+  // the header is part of what is being modelled, not decoration.
+  await page.route(/\/storage\/v1\/object\/public\/product-images\//, async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    if (be.imageDelayMs) {
+      await new Promise((r) => setTimeout(r, be.imageDelayMs));
+    }
+    const m = /^data:(image\/[a-z+]+);base64,(.*)$/.exec(be.logoBytes ?? "");
+    if (!m) return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({
+      status: 200,
+      contentType: m[1],
+      headers: { "access-control-allow-origin": "*" },
+      body: Buffer.from(m[2], "base64"),
+    });
   });
 
   // 0055: the supplier-document function. Pages in, signed URLs out; the fake

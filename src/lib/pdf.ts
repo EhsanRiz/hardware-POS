@@ -23,12 +23,13 @@
  * drift. The styling is a separate copy of the same decisions, and that one
  * can: if you move a colour or a margin in index.css, move it here too.
  *
- * NOT HERE YET: an uploaded shop logo. The HTML document prints it; this sets
- * the shop's name in type instead. Embedding an image means re-encoding a PNG,
- * and it has not been built.
+ * An uploaded shop logo rides along as a JPEG /DCTDecode stream — see
+ * logoBytes.ts for why JPEG and why it is loaded ahead of the click. Without
+ * one the document sets the shop's name in type, which is a letterhead too.
  */
 import { money } from "./money";
 import { SHEET_TITLE, shopReach, shopWhere, type Sheet } from "./sheet";
+import type { PdfImage } from "./logoBytes";
 import type { ShopSettings } from "./types";
 
 /** Adobe's Helvetica widths, per 1000 units, for the printable ASCII range. */
@@ -179,6 +180,13 @@ class Sheet2Pdf {
     );
   }
 
+  /** Place /Im1, given its drawn size in points and its top-left corner. */
+  image(x: number, top: number, w: number, h: number) {
+    this.ops.push(
+      `q ${n2(w)} 0 0 ${n2(h)} ${n2(x)} ${n2(PAGE.h - top - h)} cm /Im1 Do Q`
+    );
+  }
+
   rule(x1: number, x2: number, weight: number, colour: Rgb, top?: number) {
     const at = PAGE.h - (top ?? this.y);
     this.ops.push(
@@ -189,20 +197,34 @@ class Sheet2Pdf {
 }
 
 /** Assemble the objects, the cross-reference table and the trailer. */
-function assemble(streams: string[]): Uint8Array<ArrayBuffer> {
+function assemble(streams: string[], logo: PdfImage | null): Uint8Array<ArrayBuffer> {
   const objs: string[] = [];
   const pageIds: number[] = [];
-  // 1 catalogue, 2 page tree, 3 and 4 the two fonts; the pages follow.
+  // 1 catalogue, 2 page tree, 3 and 4 the two fonts; the logo, if there is one,
+  // is 5, and the pages follow.
   objs.push("<< /Type /Catalog /Pages 2 0 R >>");
   objs.push("");
   objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
   objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  let xobject = "";
+  if (logo) {
+    // The JPEG goes in whole: /DCTDecode is the reader's own decoder, so there
+    // is nothing to re-encode and nothing to get wrong.
+    let raw = "";
+    for (const b of logo.jpeg) raw += String.fromCharCode(b);
+    objs.push(
+      `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode ` +
+        `/Length ${raw.length} >>\nstream\n${raw}\nendstream`
+    );
+    xobject = " /XObject << /Im1 5 0 R >>";
+  }
   for (const stream of streams) {
     const contentId = objs.length + 2;
     pageIds.push(objs.length + 1);
     objs.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n2(PAGE.w)} ${n2(PAGE.h)}] ` +
-        `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`
+        `/Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobject} >> /Contents ${contentId} 0 R >>`
     );
     objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
   }
@@ -228,13 +250,28 @@ function assemble(streams: string[]): Uint8Array<ArrayBuffer> {
 }
 
 /** The quotation or tax invoice, as a file a builder can forward. */
-export function sheetAsPdf(sheet: Sheet, s: ShopSettings): Uint8Array<ArrayBuffer> {
+export function sheetAsPdf(
+  sheet: Sheet,
+  s: ShopSettings,
+  logo: PdfImage | null = null
+): Uint8Array<ArrayBuffer> {
   const p = new Sheet2Pdf();
   const title = SHEET_TITLE[sheet.kind];
   const centre = PAGE.w / 2;
   const owed = sheet.kind === "invoice" && !sheet.paidWith;
 
   const letterhead = () => {
+    if (logo) {
+      // The same box the screen gives it: 20mm tall, 80mm wide, centred, and
+      // never stretched.
+      const fit = Math.min((20 * MM) / logo.height, (80 * MM) / logo.width);
+      const w = logo.width * fit;
+      const h = logo.height * fit;
+      p.image(centre - w / 2, p.y, w, h);
+      p.y += h + 3 * MM;
+    }
+    // The name is set whether or not there is a mark above it: a mark is not a
+    // name, and a tax invoice must carry the supplier's.
     p.text(s.shop_name, centre, 19, { bold: true, colour: GREEN, align: "centre" });
     p.y += 21;
     const where = shopWhere(s).join(", ");
@@ -284,7 +321,7 @@ export function sheetAsPdf(sheet: Sheet, s: ShopSettings): Uint8Array<ArrayBuffe
   if (sheet.servedBy) meta.push(["Served by", sheet.servedBy]);
   for (const [k, v] of meta) {
     p.text(k, RIGHT - 110, 9.5, { colour: GREY });
-    p.text(v, RIGHT, 9.5);
+    p.text(v, RIGHT, 9.5, { align: "right" });
     p.y += 13;
   }
   p.y = Math.max(p.y, titleTop + 26) + 8;
@@ -359,7 +396,9 @@ export function sheetAsPdf(sheet: Sheet, s: ShopSettings): Uint8Array<ArrayBuffe
       p.y += 6;
     }
     p.text(k, RIGHT - 160, big ? 12 : 9.5, { bold: big, colour: big ? GREEN : GREY });
-    p.text(v, RIGHT, big ? 12 : 9.5, { bold: big, colour: big ? GREEN : INK });
+    p.text(v, RIGHT, big ? 12 : 9.5, {
+      bold: big, colour: big ? GREEN : INK, align: "right",
+    });
     p.y += big ? 17 : 13;
   }
   const afterTotals = p.y;
@@ -427,7 +466,7 @@ export function sheetAsPdf(sheet: Sheet, s: ShopSettings): Uint8Array<ArrayBuffe
     centre, 7.5, { colour: GREY, align: "centre" }
   );
 
-  return assemble(p.done());
+  return assemble(p.done(), logo);
 }
 
 /** What the attachment is called when it lands in someone's downloads. */

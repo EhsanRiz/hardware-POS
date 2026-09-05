@@ -24,6 +24,13 @@ export default defineConfig({
 
   use: {
     baseURL: "http://localhost:4173",
+    // The app is a PWA, and its service worker keeps a CacheFirst rule over
+    // /storage/v1/object/public/* so product photographs survive an outage.
+    // That rule re-issues those GETs from the worker, where page.route cannot
+    // see them — so the fake backend, which claims to intercept every request
+    // the till makes, silently did not intercept a single image. Blocking the
+    // worker puts the fake back in charge of the whole conversation.
+    serviceWorkers: "block",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
