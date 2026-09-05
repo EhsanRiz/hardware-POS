@@ -258,7 +258,10 @@ export function sheetAsPdf(
   const p = new Sheet2Pdf();
   const title = SHEET_TITLE[sheet.kind];
   const centre = PAGE.w / 2;
-  const owed = sheet.kind === "invoice" && !sheet.paidWith;
+  // Where to pay. A statement is a request for money as much as an unpaid
+  // invoice is, and sending one without bank details is asking twice.
+  const owed = (sheet.kind === "invoice" && !sheet.paidWith)
+    || (sheet.kind === "statement" && sheet.total > 0);
   const priced = SHEET_PRICED[sheet.kind];
   // A delivery note goes out twice: one copy is signed and comes back.
   const copies: (string | null)[] =
@@ -299,6 +302,25 @@ export function sheetAsPdf(
   const AMOUNT = RIGHT;
   const PRICE = RIGHT - 78;
   const QTY = RIGHT - 150;
+  /* A statement has no quantities and no unit prices: date, what it was,
+     what it cost, what was paid, and where the balance stood after it. */
+  const S_DATE = SIDE;
+  const S_REF = SIDE + 66;
+  const S_DETAIL = SIDE + 148;
+  const S_BALANCE = RIGHT;
+  const S_PAYMENT = RIGHT - 76;
+  const S_CHARGE = RIGHT - 152;
+  const statementHead = () => {
+    p.text("DATE", S_DATE, 8, { bold: true, colour: GREEN });
+    p.text("REFERENCE", S_REF, 8, { bold: true, colour: GREEN });
+    p.text("DETAIL", S_DETAIL, 8, { bold: true, colour: GREEN });
+    p.text("CHARGE", S_CHARGE, 8, { bold: true, colour: GREEN, align: "right" });
+    p.text("PAID", S_PAYMENT, 8, { bold: true, colour: GREEN, align: "right" });
+    p.text("BALANCE", S_BALANCE, 8, { bold: true, colour: GREEN, align: "right" });
+    p.y += 11;
+    p.rule(SIDE, RIGHT, 0.8, GREEN);
+    p.y += 8;
+  };
   const tableHead = () => {
     p.text("CODE", CODE, 8, { bold: true, colour: GREEN });
     p.text("DESCRIPTION", DESC, 8, { bold: true, colour: GREEN });
@@ -330,6 +352,9 @@ export function sheetAsPdf(
       ["Number", sheet.number],
       ["Date", sheet.date],
     ];
+    if (sheet.statement) {
+      meta.push(["Period", `${sheet.statement.from} to ${sheet.statement.to}`]);
+    }
     if (sheet.validUntil) meta.push(["Valid until", sheet.validUntil]);
     if (sheet.deliverOn) meta.push(["Deliver on", sheet.deliverOn]);
     if (sheet.deliverAt) meta.push(["Time", sheet.deliverAt]);
@@ -368,6 +393,103 @@ export function sheetAsPdf(
       p.y += 12;
     }
     p.y += 10;
+
+    if (sheet.statement) {
+      const st = sheet.statement;
+      statementHead();
+
+      // The figure the whole page hangs off. A statement whose lines do not
+      // start from a stated opening balance is a list, not a statement.
+      p.text("Balance brought forward", S_DETAIL, 10, { bold: true });
+      p.text(money(st.opening), S_BALANCE, 10, { bold: true, align: "right" });
+      p.y += 13;
+      p.rule(SIDE, RIGHT, 0.4, HAIR);
+      p.y += 6;
+
+      for (const e of st.entries) {
+        if (p.y > PAGE.h - FOOT - 30) {
+          p.page();
+          statementHead();
+        }
+        const detail = wrap(e.detail, 10, S_CHARGE - 54 - S_DETAIL);
+        p.text(e.date, S_DATE, 9, { colour: GREY });
+        if (e.ref) p.text(e.ref, S_REF, 9, { colour: GREY });
+        p.text(detail[0] ?? "", S_DETAIL, 10);
+        if (e.charge) p.text(money(e.charge), S_CHARGE, 10, { align: "right" });
+        if (e.payment) p.text(money(e.payment), S_PAYMENT, 10, { align: "right" });
+        p.text(money(e.balance), S_BALANCE, 10, { align: "right" });
+        p.y += 13;
+        for (const extra of detail.slice(1)) {
+          p.text(extra, S_DETAIL, 10);
+          p.y += 12;
+        }
+        p.y += 3;
+        p.rule(SIDE, RIGHT, 0.4, HAIR);
+        p.y += 6;
+      }
+
+      p.y += 8;
+      const stTop = p.y;
+      const stTotals: [string, string, boolean][] = [
+        ["Brought forward", money(st.opening), false],
+        ["Charged", money(st.charges), false],
+        ["Paid", `-${money(st.payments)}`, false],
+        ["Balance now due", money(st.closing), true],
+      ];
+      for (const [k, v, big] of stTotals) {
+        if (big) {
+          p.y += 3;
+          p.rule(RIGHT - 160, RIGHT, 1, AMBER);
+          p.y += 6;
+        }
+        p.text(k, RIGHT - 160, big ? 12 : 9.5, { bold: big, colour: big ? GREEN : GREY });
+        p.text(v, RIGHT, big ? 12 : 9.5, {
+          bold: big, colour: big ? GREEN : INK, align: "right",
+        });
+        p.y += big ? 17 : 13;
+      }
+      const stAfter = p.y;
+
+      // HOW OLD THE MONEY IS, on the left, opposite the totals. It is the
+      // half of a statement that actually gets a shop paid.
+      p.y = stTop;
+      p.text("HOW OLD THIS IS", SIDE, 8, { colour: GREY });
+      p.y += 12;
+      for (const [k, v] of [
+        ["Current", st.ageing.current],
+        ["30 days", st.ageing.days30],
+        ["60 days", st.ageing.days60],
+        ["90+ days", st.ageing.days90],
+      ] as [string, number][]) {
+        p.text(k, SIDE, 9.5, { colour: GREY });
+        p.text(money(v), SIDE + 150, 9.5, { align: "right" });
+        p.y += 12;
+      }
+      p.y += 6;
+      const stBanking: [string, string][] = (
+        [
+          ["Bank", s.bank_name],
+          ["Account name", s.bank_account_name],
+          ["Account no", s.bank_account_number],
+          ["Branch code", s.bank_branch_code],
+        ] as [string, string | null | undefined][]
+      ).filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
+      if (owed && stBanking.length) {
+        for (const [k, v] of stBanking) {
+          p.text(k, SIDE, 9, { colour: GREY });
+          p.text(v, SIDE + 80, 9);
+          p.y += 12;
+        }
+        p.y += 6;
+      }
+      const stTerms = (s.receipt_terms ?? "").trim();
+      for (const line of stTerms ? wrap(stTerms, 9, RIGHT - 175 - SIDE) : []) {
+        p.text(line, SIDE, 9, { colour: GREY });
+        p.y += 11;
+      }
+      p.y = Math.max(p.y, stAfter);
+      continue;
+    }
 
     tableHead();
     for (const l of sheet.lines) {

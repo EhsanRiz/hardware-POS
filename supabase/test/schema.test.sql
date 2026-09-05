@@ -3145,4 +3145,524 @@ begin
   perform assert_eq(v_cost::int, 1, 'pos_org_settings still has exactly one signature');
 end $$;
 
+-- 0065: counting the shelves, and knowing what to order ---------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_cem uuid; v_org uuid; v_before numeric;
+  v_count public.stock_counts; v_line record; v_res jsonb; v_n int;
+  v_after numeric; v_rows jsonb;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select id, org_id, stock_qty into v_cem, v_org, v_before
+    from public.products where sku = 'CEM-425-50';
+
+  v_count := public.pos_stock_count_open(v_tok, '1234', null, 'Tuesday morning');
+  perform assert(v_count.doc_number like 'CNT-%', 'a count sheet has its own number');
+  perform assert_eq(v_count.status, 'open', 'and starts open');
+
+  select count(*) into v_n from public.stock_count_lines where count_id = v_count.id;
+  perform assert(v_n > 0, 'with a line for every tracked product');
+  -- A delivery charge is not somewhere in aisle three.
+  perform assert(not exists (
+    select 1 from public.stock_count_lines l
+      join public.products p on p.id = l.product_id
+     where l.count_id = v_count.id and p.stock_qty is null),
+    'and none for the lines that have no shelf');
+
+  select * into v_line from public.pos_stock_count_lines(v_tok, '1234', v_count.id)
+   where product_id = v_cem;
+  perform assert_eq(v_line.expected_qty, v_before, 'the sheet says what was expected');
+  perform assert(v_line.counted_qty is null, 'and nothing counted yet');
+  perform assert(v_line.variance is null, 'so no variance to report');
+
+  -- THE SHOP KEEPS TRADING WHILE SOMEBODY WALKS THE AISLE. This is the case
+  -- that makes a stock take dangerous: setting the quantity to what the shelf
+  -- held ten minutes ago would silently undo the sale rung up in between.
+  perform public.pos_stock_count_set(v_tok, '1234', v_count.id, v_cem, v_before - 3);
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_cem, 'qty', 2)),
+    p_payment_method => 'cash');
+
+  v_res := public.pos_stock_count_post(v_tok, '1234', v_count.id);
+  perform assert_eq((v_res->>'lines_moved')::int, 1, 'one line disagreed and was moved');
+  perform assert_eq((v_res->>'units_down')::numeric, 3::numeric, 'three short');
+
+  select stock_qty into v_after from public.products where id = v_cem;
+  -- Expected minus the three that were missing, minus the two that were sold
+  -- while the counting was going on. NOT the counted figure, which would have
+  -- put the two sold bags back on the shelf.
+  perform assert_eq(v_after, v_before - 3 - 2,
+    'the difference is applied, so a sale during the count still counts');
+
+  perform assert(exists (
+    select 1 from public.stock_movements
+     where product_id = v_cem and reason = 'stocktake' and ref_id = v_count.id),
+    'and the correction is on the record as a stocktake, with who and when');
+
+  select * into v_count from public.stock_counts where id = v_count.id;
+  perform assert_eq(v_count.status, 'posted', 'the sheet is closed');
+  perform assert(v_count.posted_by_name is not null, 'by somebody with a name');
+
+  perform assert_refuses(
+    format('select public.pos_stock_count_post(%L, %L, %L)', v_tok, '1234', v_count.id),
+    'and cannot be posted twice');
+  perform assert_refuses(
+    format('select public.pos_stock_count_set(%L, %L, %L, %L, 5)',
+           v_tok, '1234', v_count.id, v_cem),
+    'nor counted into after it is posted');
+
+  -- A HALF-FINISHED SHEET corrects what it knows and says nothing about the
+  -- rest, which is the honest reading of a clipboard with blanks on it.
+  declare v_c2 public.stock_counts; v_untouched numeric; v_chain uuid;
+  begin
+    select id, stock_qty into v_chain, v_untouched
+      from public.products where sku = 'CHN-06';
+    v_c2 := public.pos_stock_count_open(v_tok, '1234', null, null);
+    perform public.pos_stock_count_set(v_tok, '1234', v_c2.id, v_cem, 10);
+    v_res := public.pos_stock_count_post(v_tok, '1234', v_c2.id);
+    perform assert_eq(
+      (select stock_qty from public.products where id = v_chain), v_untouched,
+      'a line nobody counted is left exactly as it was');
+  end;
+
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L)', v_tok, '2222'),
+    'a counter hand cannot open a stock take');
+
+  -- WHAT TO ORDER. reorder_level has been on every product since 0002 and
+  -- nothing has ever asked it the obvious question.
+  update public.products set reorder_level = 9999 where id = v_cem;
+  v_rows := public.pos_reorder_list(v_tok, '1234');
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'sku' = 'CEM-425-50'),
+    'a line under its reorder level is on the list');
+  select e into v_res from jsonb_array_elements(v_rows) e where e->>'sku' = 'CEM-425-50';
+  perform assert((v_res->>'short')::numeric > 0, 'saying how far short it is');
+  perform assert((v_res->>'sold_30d')::numeric > 0,
+    'and how fast it has been going, so somebody can judge how many to buy');
+
+  update public.products set reorder_level = 0 where id = v_cem;
+  v_rows := public.pos_reorder_list(v_tok, '1234');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'sku' = 'CEM-425-50'),
+    'and drops off once there is enough on the shelf');
+end $$;
+
+-- 0066: ordering from a supplier, and what is owed for it -------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_sup public.suppliers; v_po public.purchase_orders;
+  v_cem uuid; v_chn uuid; v_before numeric; v_retail numeric; v_chncost numeric;
+  v_cemline uuid; v_chnline uuid; v_row record; v_res jsonb; v_n int;
+  v_doc uuid; v_pay jsonb; v_e jsonb; v_short numeric;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id, stock_qty, price_retail into v_cem, v_before, v_retail
+    from public.products where sku = 'CEM-425-50';
+  select id, cost into v_chn, v_chncost from public.products where sku = 'CHN-06';
+
+  v_sup := public.pos_purchasing_save_supplier(v_tok, '1234', null, 'PPC Cement');
+
+  v_po := public.pos_po_create(v_tok, '1234', v_sup.id, current_date + 7,
+                               '  Standing order  ');
+  perform assert(v_po.doc_number like 'PO-%', 'an order gets its own number');
+  perform assert_eq(v_po.status, 'draft', 'and starts as a draft');
+  perform assert_eq(v_po.note, 'Standing order', 'with its note trimmed');
+  perform assert(v_po.created_by_name is not null, 'and somebody''s name on it');
+
+  perform assert_refuses(
+    format('select public.pos_po_send(%L, %L, %L)', v_tok, '1234', v_po.id),
+    'an order with nothing on it is not an order');
+
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_cem, 20, 74.50);
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_chn, 5);
+
+  -- CHANGING YOUR MIND IS NOT ORDERING TWICE. Setting the same line again has
+  -- to move the quantity, not put the product on the order a second time.
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_cem, 30, 74.50);
+  select count(*)::int into v_n from public.purchase_order_lines where po_id = v_po.id;
+  perform assert_eq(v_n, 2, 'the order still has two lines, not three');
+
+  select * into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_cem;
+  v_cemline := v_row.id;
+  perform assert_eq(v_row.qty, 30::numeric, 'at the quantity last asked for');
+  perform assert_eq(v_row.unit_cost, 74.50::numeric, 'at the price agreed');
+  perform assert_eq(v_row.outstanding, 30::numeric, 'all of it still to come');
+  select * into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_chn;
+  v_chnline := v_row.id;
+  perform assert_eq(v_row.unit_cost, v_chncost,
+    'a line with no price named falls back to what the product costs today');
+
+  -- Taken off, and put back.
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_chn, 0);
+  select count(*)::int into v_n from public.purchase_order_lines where po_id = v_po.id;
+  perform assert_eq(v_n, 1, 'ordering none of something takes it off the order');
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_chn, 5);
+  select id into v_chnline from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_chn;
+
+  perform assert_refuses(
+    format('select public.pos_po_set_line(%L, %L, %L, %L, 1)',
+           v_tok, '1234', v_po.id, gen_random_uuid()),
+    'and a line needs a product that exists');
+
+  -- Sent, and now the supplier has it.
+  v_po := public.pos_po_send(v_tok, '1234', v_po.id);
+  perform assert_eq(v_po.status, 'sent', 'the order goes out');
+  perform assert(v_po.sent_at is not null, 'with the time it went');
+  perform assert_refuses(
+    format('select public.pos_po_send(%L, %L, %L)', v_tok, '1234', v_po.id),
+    'and cannot be sent twice');
+
+  select * into v_row from public.pos_po_list(v_tok, '1234') where id = v_po.id;
+  perform assert_eq(v_row.supplier, 'PPC Cement', 'the list names the supplier');
+  perform assert_eq(v_row.lines, 2, 'counts the lines');
+  perform assert_eq(v_row.total, round(30 * 74.50 + 5 * v_chncost, 2),
+    'and says what the order is worth');
+  perform assert_eq(v_row.outstanding_lines, 2, 'with nothing arrived yet');
+
+  -- WHAT THE ORDER SAYS IS WHAT WAS ORDERED. A product renamed between the
+  -- order going out and the lorry arriving must not rewrite the paperwork.
+  update public.products set name = 'Cement 42.5N (new bag)' where id = v_cem;
+  select name into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_cem;
+  perform assert(v_row.name <> 'Cement 42.5N (new bag)',
+    'the order still reads as it was written');
+
+  -- HALF A LOAD IS THE NORMAL CASE, not an error.
+  v_res := public.pos_po_receive(v_tok, '1234', v_po.id,
+    jsonb_build_array(jsonb_build_object('line_id', v_cemline, 'qty', 12,
+                                         'unit_cost', 76)));
+  perform assert_eq((v_res->>'lines_received')::int, 1, 'one line arrived');
+  perform assert_eq((v_res->>'lines_outstanding')::int, 2, 'both still short');
+  perform assert_eq((select stock_qty from public.products where id = v_cem),
+    v_before + 12, 'and twelve went on the shelf');
+  perform assert_eq((select status from public.purchase_orders where id = v_po.id),
+    'part', 'the order is part delivered');
+  select * into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_cem;
+  perform assert_eq(v_row.outstanding, 18::numeric, 'eighteen still owed to us');
+
+  -- Cost is a fact and is recorded. Retail is a decision and is not touched.
+  perform assert_eq((select cost from public.products where id = v_cem), 76::numeric,
+    'what it cost this time is what it costs');
+  perform assert_eq((select price_retail from public.products where id = v_cem), v_retail,
+    'but nobody reprices the shelf behind the owner''s back');
+  perform assert(exists (
+    select 1 from public.stock_movements
+     where product_id = v_cem and reason = 'receipt'
+       and ref_table = 'purchase_orders' and ref_id = v_po.id and unit_cost = 76),
+    'and the movement carries what was paid, so stock can be valued at it');
+
+  perform assert_refuses(
+    format('select public.pos_po_set_line(%L, %L, %L, %L, 40)',
+           v_tok, '1234', v_po.id, v_cem),
+    'an order that has started arriving can no longer be edited');
+  perform assert_refuses(
+    format('select public.pos_po_cancel(%L, %L, %L)', v_tok, '1234', v_po.id),
+    'nor cancelled out from under the goods already booked in');
+
+  -- The rest of it.
+  v_res := public.pos_po_receive(v_tok, '1234', v_po.id,
+    jsonb_build_array(jsonb_build_object('line_id', v_cemline, 'qty', 18),
+                      jsonb_build_object('line_id', v_chnline, 'qty', 5)));
+  perform assert_eq((v_res->>'lines_outstanding')::int, 0, 'nothing left to come');
+  perform assert_eq((select status from public.purchase_orders where id = v_po.id),
+    'received', 'and the order is closed');
+  perform assert_eq((select cost from public.products where id = v_cem), 76::numeric,
+    'a receipt with no price named leaves the cost where it was');
+  perform assert_refuses(
+    format('select public.pos_po_receive(%L, %L, %L, %L::jsonb)',
+           v_tok, '1234', v_po.id, '[]'),
+    'and a closed order takes nothing more');
+
+  -- One that is not coming.
+  declare v_po2 public.purchase_orders;
+  begin
+    v_po2 := public.pos_po_create(v_tok, '1234', v_sup.id);
+    perform public.pos_po_set_line(v_tok, '1234', v_po2.id, v_cem, 4);
+
+    -- A receive with nothing on it must not pretend something arrived.
+    v_res := public.pos_po_receive(v_tok, '1234', v_po2.id, '[]'::jsonb);
+    perform assert_eq((select status from public.purchase_orders where id = v_po2.id),
+      'draft', 'booking in nothing does not make an order part delivered');
+
+    perform public.pos_po_cancel(v_tok, '1234', v_po2.id, 'Out of stock at the depot');
+    select * into v_row from public.purchase_orders where id = v_po2.id;
+    perform assert_eq(v_row.status, 'cancelled', 'an order can be called off');
+    perform assert_eq(v_row.note, 'Out of stock at the depot', 'with the reason on it');
+    perform assert_refuses(
+      format('select public.pos_po_cancel(%L, %L, %L)', v_tok, '1234', v_po2.id),
+      'and cannot be called off twice');
+  end;
+
+  -- THE REORDER LIST, TURNED INTO THE DOCUMENT THAT FIXES IT.
+  declare v_po3 public.purchase_orders; v_sold numeric;
+  begin
+    update public.products set reorder_level = 9999 where id = v_cem;
+    select stock_qty into v_short from public.products where id = v_cem;
+    select coalesce(sum(si.qty), 0) into v_sold from public.sale_items si
+      join public.sales sa on sa.id = si.sale_id
+     where si.product_id = v_cem and sa.status = 'completed'
+       and sa.created_at >= now() - interval '30 days';
+    perform assert(v_sold > 0, 'the fixture has actually sold some of it');
+
+    v_po3 := public.pos_po_from_reorder(v_tok, '1234', v_sup.id);
+    select * into v_row from public.pos_po_lines(v_tok, '1234', v_po3.id)
+     where product_id = v_cem;
+    perform assert(v_row.qty is not null, 'what is short goes onto an order');
+    perform assert_eq(v_row.qty, ceil(9999 - v_short + v_sold),
+      'ordering the shortfall plus a month''s selling, so it does not come '
+      'straight back onto the list');
+    update public.products set reorder_level = 0 where id = v_cem;
+  end;
+
+  perform assert_refuses(
+    format('select public.pos_po_create(%L, %L, %L)', v_tok, '2222', v_sup.id),
+    'a counter hand does not order from suppliers');
+  perform assert_refuses(
+    format('select * from public.pos_po_list(%L, %L)', v_tok, '2222'),
+    'nor see what has been ordered');
+  perform assert_refuses(
+    format('select public.pos_po_create(%L, %L, %L)', v_tok, '1234', gen_random_uuid()),
+    'and an order needs a supplier that exists');
+
+  -- WHAT THE SHOP OWES ------------------------------------------------------
+
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup.id, 'invoice',
+    'PPC-4471', current_date - 60, 4300.00);
+  perform public.pos_supplier_set_due(v_tok, '1234', v_doc, current_date - 30);
+
+  v_pay := public.pos_supplier_payables(v_tok, '1234');
+  select e into v_e from jsonb_array_elements(v_pay->'rows') e
+   where e->>'id' = v_doc::text;
+  perform assert(v_e is not null, 'an unpaid invoice is money the shop owes');
+  perform assert_eq((v_e->>'days_late')::int, 30, 'and it says how late it is');
+  perform assert_eq((v_e->>'outstanding')::numeric, 4300.00::numeric,
+    'and how much of it is still outstanding');
+  perform assert_eq(v_e->>'supplier', 'PPC Cement', 'and who is waiting for it');
+  perform assert((v_pay->'totals'->>'overdue')::numeric >= 4300,
+    'and it counts towards what is overdue');
+
+  -- A PART PAYMENT IS NOT A PAID BILL. This is the one that hides money: pay
+  -- R1000 of R4300 and the other R3300 must still be visible.
+  perform public.pos_supplier_mark_paid(v_tok, '1234', v_doc, 1000);
+  v_pay := public.pos_supplier_payables(v_tok, '1234');
+  select e into v_e from jsonb_array_elements(v_pay->'rows') e
+   where e->>'id' = v_doc::text;
+  perform assert(v_e is not null, 'a part paid invoice is still owed');
+  perform assert_eq((v_e->>'paid')::numeric, 1000::numeric, 'less what has been paid');
+  perform assert_eq((v_e->>'outstanding')::numeric, 3300::numeric,
+    'leaving the balance where somebody can see it');
+
+  -- Paid off, and gone.
+  perform public.pos_supplier_mark_paid(v_tok, '1234', v_doc, 3300);
+  select * into v_row from public.supplier_documents where id = v_doc;
+  perform assert(v_row.paid_at is not null, 'settled in full');
+  perform assert_eq(v_row.paid_amount, 4300.00::numeric, 'for the whole amount');
+  perform assert(v_row.paid_by_name is not null, 'by somebody with a name');
+  v_pay := public.pos_supplier_payables(v_tok, '1234');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_pay->'rows') e where e->>'id' = v_doc::text),
+    'and it drops off what is owed');
+
+  -- A BILL NOBODY DATED IS THE ONE THAT GETS FORGOTTEN, so it is listed.
+  declare v_doc2 uuid; v_doc3 uuid;
+  begin
+    v_doc2 := public.pos_purchasing_add_document(v_tok, '1234', v_sup.id, 'invoice',
+      'PPC-4488', current_date, 500.00);
+    v_pay := public.pos_supplier_payables(v_tok, '1234');
+    select e into v_e from jsonb_array_elements(v_pay->'rows') e
+     where e->>'id' = v_doc2::text;
+    perform assert(v_e is not null, 'an invoice with no due date is still owed');
+    perform assert(v_e->>'due_date' is null, 'listed as undated');
+    perform assert((v_pay->'totals'->>'undated')::int >= 1, 'and counted as such');
+
+    -- A quote is not a bill.
+    v_doc3 := public.pos_purchasing_add_document(v_tok, '1234', v_sup.id, 'quote',
+      'PPC-Q9', current_date, 9999.00);
+    v_pay := public.pos_supplier_payables(v_tok, '1234');
+    perform assert(not exists (
+      select 1 from jsonb_array_elements(v_pay->'rows') e where e->>'id' = v_doc3::text),
+      'a quote is not money owed');
+    perform assert_refuses(
+      format('select public.pos_supplier_mark_paid(%L, %L, %L)', v_tok, '1234', v_doc3),
+      'and cannot be paid');
+    perform assert_refuses(
+      format('select public.pos_supplier_mark_paid(%L, %L, %L, -5)',
+             v_tok, '1234', v_doc2),
+      'nor can a payment be for less than nothing');
+  end;
+
+  perform assert_refuses(
+    format('select public.pos_supplier_payables(%L, %L)', v_tok, '2222'),
+    'and a counter hand cannot see what the shop owes');
+
+  -- next_doc_number was replaced again; it must still be the only one.
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'next_doc_number';
+  perform assert_eq(v_n, 1, 'next_doc_number still has exactly one signature');
+end $$;
+
+-- 0067: the statement a customer is sent ------------------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_cust uuid; v_prod uuid; v_price numeric;
+  v_sale public.sales; v_old uuid; v_recent uuid; v_pay uuid; v_st jsonb;
+  v_line jsonb; v_n int; v_from date; v_to date; v_bal numeric;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id into v_org, v_mgr from fixture;
+  select id, price_retail into v_prod, v_price
+    from public.products where sku = 'CEM-425-50';
+
+  -- An account opened with money already owed on it, three months ago.
+  insert into public.customers (org_id, name, phone, address, is_trade,
+                                credit_limit, opening_balance, active, created_at)
+  values (v_org, 'Molefe Builders', '0824447788', '12 Kerk St, Ladybrand',
+          true, 50000, 1500, true, now() - interval '100 days')
+  returning id into v_cust;
+
+  -- One charge before the window, one inside it. Backdated after the fact,
+  -- because pos_create_sale stamps now() and a statement is about time.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 4)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+  v_old := v_sale.id;
+  update public.sales set created_at = now() - interval '75 days' where id = v_old;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 2)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+  v_recent := v_sale.id;
+  update public.sales set created_at = now() - interval '10 days' where id = v_recent;
+
+  -- A cash sale to the same buyer. It is not on the account and must not be
+  -- on the statement: a customer sent a statement listing money they already
+  -- handed over at the counter will ring up and say so.
+  perform public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash', p_customer_id => v_cust);
+
+  -- Two payments inside the window, one of them reversed afterwards.
+  select payment_id into v_pay from public.pos_take_account_payment(
+    v_tok, v_mgr, v_cust, 400, 'cash', 'receipt 1', null, null);
+  update public.customer_payments set created_at = now() - interval '8 days'
+   where id = v_pay;
+  select payment_id into v_pay from public.pos_take_account_payment(
+    v_tok, v_mgr, v_cust, 250, 'eft', 'wrong account', null, null);
+  update public.customer_payments set created_at = now() - interval '5 days'
+   where id = v_pay;
+  perform public.pos_void_account_payment(v_tok, '1234', v_pay, 'Paid by the wrong Molefe');
+
+  v_from := (now() - interval '30 days')::date;
+  v_to := current_date;
+  v_st := public.pos_customer_statement(v_tok, v_cust, v_from, v_to);
+
+  perform assert_eq(v_st->'customer'->>'name', 'Molefe Builders',
+    'the statement names who it is for');
+  perform assert(v_st->>'reference' like 'STM-%', 'and carries a reference');
+
+  -- RULE 1. Everything before the window is one figure at the top, whether or
+  -- not any of it appears below.
+  perform assert_eq((v_st->>'opening')::numeric,
+    round(1500 + (select total from public.sales where id = v_old), 2),
+    'the opening balance is the account before the window, not the first line');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_st->'lines') e
+     where e->>'ref' = (select doc_number from public.sales where id = v_old)),
+    'and the sale it came from is not listed again inside the window');
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_st->'lines') e
+     where e->>'ref' = (select doc_number from public.sales where id = v_recent)),
+    'while the one inside it is');
+
+  -- The cash sale never touched the account.
+  select count(*)::int into v_n from jsonb_array_elements(v_st->'lines') e
+   where e->>'kind' = 'charge';
+  perform assert_eq(v_n, 1, 'a sale paid at the counter is not on the account');
+
+  -- RULE 2. A reversed payment is shown, marked, and pays nothing.
+  select e into v_line from jsonb_array_elements(v_st->'lines') e
+   where e->>'ref' = 'wrong account';
+  perform assert(v_line is not null, 'a reversed payment stays on the statement');
+  perform assert_eq((v_line->>'payment')::numeric, 0::numeric, 'paying nothing');
+  perform assert((v_line->>'detail') like '%(reversed)%', 'and saying so');
+
+  perform assert_eq((v_st->>'payments')::numeric, 400::numeric,
+    'so only the payment that stood is counted');
+  perform assert_eq((v_st->>'charges')::numeric,
+    (select total from public.sales where id = v_recent),
+    'against the one charge inside the window');
+
+  -- IT HAS TO ADD UP. Opening plus charges less payments is the closing
+  -- figure, and the closing figure is what they actually owe today.
+  perform assert_eq((v_st->>'closing')::numeric,
+    round((v_st->>'opening')::numeric + (v_st->>'charges')::numeric
+          - (v_st->>'payments')::numeric, 2),
+    'the statement adds up from its own opening to its own closing');
+  perform assert_eq((v_st->>'closing')::numeric, public.customer_balance(v_cust),
+    'and the closing balance is what the account actually stands at');
+
+  -- The running balance on the last line is the closing balance, or the
+  -- customer is reading two different numbers on one page.
+  select e into v_line from jsonb_array_elements(v_st->'lines') e
+   order by (e->>'at') desc limit 1;
+  perform assert_eq((v_line->>'balance')::numeric, (v_st->>'closing')::numeric,
+    'the last line lands on the closing balance');
+
+  -- HOW OLD THE MONEY IS. The opening balance and the 75-day-old sale are
+  -- both older than 60 days, so telling the customer "current" would be a lie.
+  perform assert((v_st->'ageing'->>'days90')::numeric
+                 + (v_st->'ageing'->>'days60')::numeric > 0,
+    'the old money is shown as old');
+  perform assert_eq((v_st->'ageing'->>'total')::numeric, (v_st->>'closing')::numeric,
+    'and the ageing adds up to the same balance');
+
+  -- A window with nothing in it is still a statement: the opening carries.
+  v_st := public.pos_customer_statement(v_tok, v_cust,
+    (now() - interval '3 days')::date, current_date);
+  perform assert_eq(jsonb_array_length(v_st->'lines'), 0, 'a quiet month has no lines');
+  perform assert_eq((v_st->>'opening')::numeric, (v_st->>'closing')::numeric,
+    'and opens and closes on the same figure');
+  perform assert_eq((v_st->>'closing')::numeric, public.customer_balance(v_cust),
+    'which is still what they owe');
+
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L, %L, %L)',
+           v_tok, v_cust, current_date, current_date - 1),
+    'a statement cannot end before it starts');
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L)', v_tok, gen_random_uuid()),
+    'and needs a customer that exists');
+  perform assert_refuses(
+    format('select public.pos_customer_statement(%L, %L)', 'not-a-token', v_cust),
+    'nor will it answer a stranger');
+
+end $$;
+
+do $$
+declare v_n int;
+begin
+  perform assert(not has_function_privilege('anon',
+    'public.customer_entries(uuid, uuid)', 'execute'),
+    'a device cannot read a whole account through the helper');
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_customer_statement';
+  perform assert_eq(v_n, 1, 'pos_customer_statement has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;

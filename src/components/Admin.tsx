@@ -42,6 +42,7 @@ import ShopSettings from "./admin/ShopSettings";
 import Approvals from "./admin/Approvals";
 import StaffAdmin from "./admin/StaffAdmin";
 import Shelf from "./admin/Shelf";
+import Buying from "./admin/Buying";
 import Suppliers from "./admin/Suppliers";
 
 type TabKey =
@@ -49,6 +50,7 @@ type TabKey =
   | "import"
   | "shelf"
   | "suppliers"
+  | "buying"
   | "sales"
   | "approvals"
   | "cashup"
@@ -95,6 +97,10 @@ export default function Admin({
     if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
     // The drawer of supplier paperwork, for whoever does the buying.
     if (can(user, "manage_purchasing")) t.push({ key: "suppliers", label: "Suppliers" });
+    // Ordering, and what is owed for it. Its own tab rather than a corner of
+    // Suppliers: filing a supplier's paperwork and deciding what to buy are
+    // done by the same person at completely different moments.
+    if (can(user, "manage_purchasing")) t.push({ key: "buying", label: "Buying" });
     // Its own tab rather than a corner of Settings: issuing a code is something
     // a manager does standing in a bank queue with a phone to their ear, not
     // something they configure.
@@ -596,6 +602,7 @@ export default function Admin({
 
       {tab === "shelf" && <Shelf user={user} pin={pin} />}
       {tab === "suppliers" && <Suppliers pin={pin} />}
+      {tab === "buying" && <Buying pin={pin} products={products} />}
 
       {tab === "sales" && <SalesHistory pin={pin} user={user} />}
 

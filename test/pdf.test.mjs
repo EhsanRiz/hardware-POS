@@ -291,11 +291,83 @@ check("on two pages", (note.match(/\/Type \/Page\b/g) || []).length === 2,
   `${(note.match(/\/Type \/Page\b/g) || []).length} pages`);
 inside(note, "a delivery note");
 
+console.log("--- pdf: a statement is a period, not a basket ---");
+const stEntries = (n) => Array.from({ length: n }, (_, i) => ({
+  date: `${(i % 28) + 1} Aug 2026`,
+  ref: `INV-${String(i + 1).padStart(6, "0")}`,
+  detail: `Invoice ${i}`,
+  charge: 100 + i,
+  payment: 0,
+  balance: 1960 + (i + 1) * 100,
+}));
+const stSheet = (entries) => ({
+  ...quote,
+  kind: "statement",
+  number: "STM-20260905-A1B2C3",
+  validUntil: null,
+  customer: {
+    name: "Molefe Builders", address: "12 Kerk St, Ladybrand",
+    phone: "082 444 7788", vatNumber: "4370229645",
+  },
+  lines: [],
+  subtotal: 0, discount: 0, vat: 0,
+  total: 1790,
+  statement: {
+    from: "1 Jul 2026", to: "5 Sep 2026",
+    opening: 1960,
+    entries,
+    charges: 230, payments: 400, closing: 1790,
+    ageing: { current: 230, days30: 0, days60: 460, days90: 1100 },
+  },
+});
+const stmt = Buffer.from(sheetAsPdf(stSheet([
+  { date: "26 Aug 2026", ref: "INV-000482", detail: "Invoice",
+    charge: 230, payment: 0, balance: 2190 },
+  { date: "28 Aug 2026", ref: "receipt 1", detail: "Cash",
+    charge: 0, payment: 400, balance: 1790 },
+]), { ...shop, bank_name: "FNB", bank_account_number: "62012345678" }))
+  .toString("latin1");
+check("it says what it is", stmt.includes("(Statement) Tj"));
+// A statement with no period on it is a balance, and a customer cannot check
+// a balance against their own books.
+check("it names the period it covers",
+  stmt.includes("(Period) Tj") && stmt.includes("(1 Jul 2026 to 5 Sep 2026) Tj"));
+// The figure the whole page hangs off. Without it the lines are a list.
+check("it opens on the balance brought forward",
+  stmt.includes("(Balance brought forward) Tj") && stmt.includes("(R 1 960.00) Tj"));
+check("and closes on what is due now",
+  stmt.includes("(Balance now due) Tj") && stmt.includes("(R 1 790.00) Tj"));
+check("it says how old the money is",
+  stmt.includes("(HOW OLD THIS IS) Tj") && stmt.includes("(R 1 100.00) Tj"));
+// A statement is a request for money, so it has to say where to send it.
+check("and where to pay it", stmt.includes("(62012345678) Tj"));
+// No quantities and no unit prices: those columns belong to an item table.
+check("it does not pretend to be an item table",
+  !stmt.includes("(UNIT PRICE) Tj") && !stmt.includes("(QTY) Tj")
+  && stmt.includes("(BALANCE) Tj"));
+inside(stmt, "a statement");
+
+// Being in the file is not being on the paper — the same trap the item table
+// fell into. Sixty entries is a busy trade account's quarter.
+const stLong = Buffer.from(sheetAsPdf(stSheet(stEntries(60)), shop)).toString("latin1");
+inside(stLong, "a statement of sixty entries");
+const stPages = (stLong.match(/\/Type \/Page\b/g) || []).length;
+check("a long statement runs onto further pages", stPages >= 2, `${stPages} pages`);
+check("with the column heads repeated on each",
+  (stLong.match(/\(BALANCE\) Tj/g) || []).length === stPages);
+const stYs = [...stLong.matchAll(/1 0 0 1 -?[\d.]+ (-?[\d.]+) Tm/g)].map((m) => Number(m[1]));
+check("and none of it drawn off the bottom of the paper",
+  stYs.every((y) => y > 10 && y < 841.89),
+  `lowest at ${Math.min(...stYs)}`);
+
 console.log("--- pdf: the file it arrives as ---");
 check("the attachment is named for the document",
   sheetFileName(quote) === "Quotation-QUO-000020.pdf", sheetFileName(quote));
 check("and a tax invoice's name has no space in it",
   sheetFileName({ ...quote, kind: "invoice", number: "INV-9" }) === "Tax-Invoice-INV-9.pdf");
+check("and a statement is named for the account it is for",
+  sheetFileName({ ...quote, kind: "statement", number: "STM-20260905-A1B2C3" })
+    === "Statement-STM-20260905-A1B2C3.pdf");
 
 const failed = results.filter((r) => !r).length;
 console.log(`\n${failed} failure(s)`);

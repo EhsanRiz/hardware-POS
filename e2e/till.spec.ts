@@ -2267,13 +2267,15 @@ test("a buyer's address is kept, and the slip carries their name next time", asy
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: /Walk-in customer/i }).click();
   await page.getByPlaceholder(/Name, account code or phone/i).fill("083 555 0199");
-  await page.getByRole("button", { name: /Record .* as a new buyer/i }).click();
+  await page.getByRole("button", { name: /Add .* as a new buyer/i }).click();
 
   // All three optional, and all three worth having: the name puts them on the
   // invoice, the number finds them again, the address goes on a delivery note.
   await page.getByLabel(/Their name/i).fill("T. Mokoena");
   await page.getByLabel(/Delivery address/i).fill("14 Mabille Rd, Maseru");
-  await page.getByRole("button", { name: /^Save 083/ }).click();
+  // The button names the PERSON once there is a name to use — "Save 083 555
+  // 0199" told a cashier what they had typed, not who they were saving.
+  await page.getByRole("button", { name: /^Save T\. Mokoena/ }).click();
 
   const saved = be.customers.find((c) => c.name === "T. Mokoena");
   expect(saved).toBeTruthy();
@@ -2896,7 +2898,7 @@ test("a buyer's number is captured once and recognised however it is typed", asy
   await page.getByRole("button", { name: /Walk-in customer/i }).click();
   const picker = page.getByRole("dialog", { name: /Choose a customer/i });
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("082 555 0143");
-  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByText(/Add .* as a new buyer/i).click();
   await picker.getByLabel(/Their name/i).fill("T. Dlamini");
   await picker.getByRole("button", { name: /^Save/ }).click();
 
@@ -2911,7 +2913,7 @@ test("a buyer's number is captured once and recognised however it is typed", asy
   await page.getByRole("button", { name: /T. Dlamini/ }).click();
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("+27 82 555 0143");
   // Found, not offered as new — the whole point.
-  await expect(picker.getByText(/Record .* as a new buyer/i)).toHaveCount(0);
+  await expect(picker.getByText(/Add .* as a new buyer/i)).toHaveCount(0);
   // The row itself, not the "Purchases by…" button sitting beside it.
   await picker.locator(".modal-row", { hasText: "T. Dlamini" }).click();
 
@@ -2925,7 +2927,7 @@ test("a mistyped number is refused rather than stored as a buyer", async ({ page
   const picker = page.getByRole("dialog", { name: /Choose a customer/i });
   // Six digits reads as a phone number to the UI, but it is too short to be one.
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("123456");
-  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByText(/Add .* as a new buyer/i).click();
   await picker.getByRole("button", { name: /^Save/ }).click();
 
   await expect(picker.getByText(/does not look like a phone number/i)).toBeVisible();
@@ -5250,4 +5252,320 @@ test("a delivery costs the shop, and a free one costs it just the same", async (
   await expect(del).toContainText("-R 60.00");
   // And it does not tell the shop to go and set a cost it has already set.
   await expect(del).not.toContainText("No cost is recorded against a delivery");
+});
+
+test("a buyer given by name is added right there, with the number that finds them again", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+
+  // A NAME, which is how somebody actually introduces themselves. This used to
+  // dead-end at "Nothing on file matches": the offer to record a buyer was
+  // only made when what had been typed read as a phone number.
+  await picker.getByPlaceholder(/Name, account code or phone/i).fill("Ehsan");
+  await expect(picker.getByText(/Nothing on file matches/i)).toHaveCount(0);
+  await picker.getByRole("button", { name: /Add Ehsan as a new buyer/i }).click();
+
+  // The name is carried through, and the number is ASKED for rather than
+  // assumed — it is the key the record is kept under, so the save waits on it.
+  await expect(picker.getByLabel(/Their name/i)).toHaveValue("Ehsan");
+  await expect(picker.getByRole("button", { name: /^Save/ })).toBeDisabled();
+  await picker.getByLabel(/Their phone number/i).fill("082 555 0143");
+  await expect(picker.getByRole("button", { name: /^Save Ehsan/ })).toBeEnabled();
+  await picker.getByRole("button", { name: /^Save/ }).click();
+
+  await expect(page.getByText("Ehsan")).toBeVisible();
+  expect(be.customers).toHaveLength(1);
+  expect(be.customers[0].name).toBe("Ehsan");
+  // A cashier recording a buyer never grants credit — that is a back-office
+  // decision, and the server enforces it.
+  expect(be.customers[0].is_trade).toBe(false);
+  expect(be.customers[0].credit_limit).toBe(0);
+
+  // And the sale is theirs.
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("Ehsan");
+});
+
+/*
+ * 0065: counting the shelves.
+ */
+test("a stock take corrects the shelf, and a sale during the count still counts", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const cement = PRODUCTS.find((p) => p.sku === "CEM-425-50")!;
+  const before = cement.stock_qty!;
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  // Entering Stock costs a PIN, even for a manager already signed in.
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: "Stock take" }).click();
+  await page.getByRole("button", { name: "Start a count" }).click();
+
+  const sheet = page.locator("tr.acc-row", { hasText: "CNT-000001" });
+  await expect(sheet).toBeVisible();
+  await sheet.getByRole("button", { name: "Continue" }).click();
+
+  // The sheet says what the system expects, and nothing is counted yet.
+  const row = page.locator("tr.acc-row", { hasText: "Cement 42.5N 50kg" });
+  await expect(row).toContainText(String(before));
+
+  // Three bags short on the shelf.
+  await row.getByLabel(/Counted Cement/i).fill(String(before - 3));
+  await row.getByLabel(/Counted Cement/i).blur();
+  await expect(row).toContainText("-3");
+
+  // THE SHOP KEEPS TRADING. Two bags go out while the aisle is being walked,
+  // and setting stock to what the shelf held would put them back.
+  //
+  // Moved directly rather than by ringing up a sale: the fake backend does
+  // not take stock down when it sells, which is a gap in the fake and not in
+  // the till. What this test can still prove is the part that matters here —
+  // that posting applies the DIFFERENCE against the snapshot rather than the
+  // counted figure, so a movement from anywhere survives it. The interaction
+  // with a real sale is proved in the database suite, where selling does move
+  // stock.
+  cement.stock_qty = before - 2;
+
+  // Post it from where we are: the sheet is already open, and its expected
+  // figures were taken when it was started.
+  await page.getByRole("button", { name: /Post 1 correction/ }).click();
+
+  // The DIFFERENCE was applied, not the counted figure: three missing bags
+  // came off, and the two that were sold stayed sold.
+  await expect(page.getByText(/1 line corrected/)).toBeVisible();
+  expect(cement.stock_qty).toBe(before - 3 - 2);
+  await expect(page.locator("tr.acc-row", { hasText: "CNT-000001" }))
+    .toContainText("posted");
+});
+
+test("a line nobody counted is left exactly as it was", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const chain = PRODUCTS.find((p) => p.sku === "CHN-06")!;
+  const untouched = chain.stock_qty!;
+  const cement = PRODUCTS.find((p) => p.sku === "CEM-425-50")!;
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  // Entering Stock costs a PIN, even for a manager already signed in.
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: "Stock take" }).click();
+  await page.getByRole("button", { name: "Start a count" }).click();
+  await page.locator("tr.acc-row", { hasText: "CNT-000001" })
+    .getByRole("button", { name: "Continue" }).click();
+
+  // One line counted, the rest of the sheet left blank — a half-finished
+  // clipboard, which is the normal state of one at four in the afternoon.
+  const row = page.locator("tr.acc-row", { hasText: "Cement 42.5N 50kg" });
+  await row.getByLabel(/Counted Cement/i).fill("5");
+  await row.getByLabel(/Counted Cement/i).blur();
+  await page.getByRole("button", { name: /Post 1 correction/ }).click();
+
+  expect(cement.stock_qty).toBe(5);
+  // Blank means "I did not look", not "the shelf is empty".
+  expect(chain.stock_qty).toBe(untouched);
+});
+
+test("what is short becomes an order, and half a load is booked in against it", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Voltex", contact_name: null, phone: null,
+    email: null, vat_number: null, notes: null,
+  });
+  const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
+  const before = cable.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+
+  // WHAT TO ORDER. The one line at or below its reorder level, with how fast
+  // it goes — "short 1" and "short 1, sells 30 a month" are different problems.
+  const short = page.locator("tr.acc-row", { hasText: "Twin & Earth 2.5mm 100m" });
+  await expect(short).toBeVisible();
+
+  await page.getByLabel("Supplier to order from").selectOption("sup1");
+  await page.getByRole("button", { name: "Raise an order for all of it" }).click();
+  await expect(page.getByText(/PO-000001 raised/)).toBeVisible();
+
+  // It lands as a draft, on the order it was raised from.
+  const line = page.locator("tr.acc-row", { hasText: "Twin & Earth 2.5mm 100m" });
+  await expect(line).toBeVisible();
+  await expect(page.getByText(/PO-000001 · Voltex · Draft/)).toBeVisible();
+  expect(be.poLines).toHaveLength(1);
+  expect(be.poLines[0].qty).toBe(1);
+
+  // Ordering more than the bare shortfall, because one roll is not a delivery.
+  await line.getByLabel(/Ordered Twin & Earth/i).fill("6");
+  await line.getByLabel(/Ordered Twin & Earth/i).blur();
+  await expect(line.getByLabel(/Ordered Twin & Earth/i)).toHaveValue("6");
+  expect(be.poLines).toHaveLength(1);
+  expect(be.poLines[0].qty).toBe(6);
+
+  await page.getByRole("button", { name: "It has gone to the supplier" }).click();
+  await expect(page.getByText("Marked as with the supplier.")).toBeVisible();
+
+  // HALF A LOAD IS THE NORMAL CASE. Four turn up, at a price that has moved.
+  await line.getByLabel(/Arrived Twin & Earth/i).fill("4");
+  await line.getByLabel(/Cost of Twin & Earth/i).fill("1180");
+  await page.getByRole("button", { name: "Book in what arrived" }).click();
+  await expect(page.getByText(/1 line is still to come/)).toBeVisible();
+
+  expect(cable.stock_qty).toBe(before + 4);
+  expect(be.poLines[0].received_qty).toBe(4);
+  // Two still to come, on the order, not quietly written off.
+  await expect(line.locator("td.num.is-bad")).toHaveText("2");
+
+  // Cost is a fact and is recorded. Retail is a decision and is not touched:
+  // a supplier's price rise must never silently reprice the shelf.
+  expect(cable.cost).toBe(1180);
+  expect(cable.price_retail).toBe(1450);
+
+  // The rest, and the order closes.
+  await line.getByLabel(/Arrived Twin & Earth/i).fill("2");
+  await page.getByRole("button", { name: "Book in what arrived" }).click();
+  await expect(page.getByText("That is the whole order in. Stock has moved.")).toBeVisible();
+  expect(cable.stock_qty).toBe(before + 6);
+  expect(be.purchaseOrders[0].status).toBe("received");
+});
+
+test("a part payment leaves the balance where somebody can still see it", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "Voltex", contact_name: null, phone: null,
+    email: null, vat_number: null, notes: null,
+  });
+  const long = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const due = new Date(Date.now() - 15 * 86400000).toISOString().slice(0, 10);
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "VX-7781",
+    doc_date: long, total: 4300, note: null, status: "stored",
+    created_at: new Date().toISOString(), due_date: due,
+  });
+  // A quote from the same supplier: filed, but not money owed.
+  be.supplierDocs.push({
+    id: "doc2", supplier_id: "sup1", kind: "quote", doc_number: "VX-Q2",
+    doc_date: long, total: 9999, note: null, status: "stored",
+    created_at: new Date().toISOString(),
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+  await page.getByRole("button", { name: "What you owe" }).click();
+
+  const bill = page.locator("tr.acc-row", { hasText: "VX-7781" });
+  await expect(bill).toBeVisible();
+  await expect(bill).toContainText("15 days late");
+  await expect(bill).toContainText(/R\s?4\s?300\.00/);
+  // A quote is not a bill.
+  await expect(page.locator("tr.acc-row", { hasText: "VX-Q2" })).toHaveCount(0);
+
+  // R1000 against R4300. The other R3300 is the number that must not vanish.
+  page.once("dialog", (d) => void d.accept("1000"));
+  await bill.getByRole("button", { name: "Pay" }).click();
+  await expect(bill).toContainText(/R\s?3\s?300\.00/);
+  await expect(bill).toContainText(/R\s?1\s?000\.00/);
+  expect(be.supplierDocs[0].paid_at).toBeNull();
+
+  // Settled, and it leaves the list.
+  page.once("dialog", (d) => void d.accept("3300"));
+  await bill.getByRole("button", { name: "Pay" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "VX-7781" })).toHaveCount(0);
+  await expect(page.getByText("Nothing is owed to a supplier.")).toBeVisible();
+  expect(be.supplierDocs[0].paid_amount).toBe(4300);
+});
+
+test("a statement opens on what was owed before it, and adds up to what is owed now", async ({ page }) => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 864e5).toISOString();
+  be.customers.push({
+    id: "k9", code: "TRD-009", name: "Molefe Builders",
+    phone: "082 444 7788", is_trade: true, credit_limit: 50000,
+    balance: 0, available: 50000,
+    address: "12 Kerk St, Ladybrand", vat_number: "4370229645",
+    // The account was opened owing money, three months ago.
+    opening_balance: 1500, created_at: daysAgo(100),
+  });
+  // One charge before the window and one inside it.
+  const sale = (at: string, total: number) => ({
+    client_ref: null, cashier_id: USERS.manager.row.id, customer_id: "k9",
+    items: [{ product_id: "p1", qty: 1 }], payment_method: "account",
+    discount_amount: 0, discount_reason: null, approved_by: null,
+    created_at: at, total, payments: [], po_number: null,
+    customer_vat_number: null, rounding: 0, within_limit: true,
+    amount_tendered: null, change_due: null,
+  });
+  be.sales.push(sale(daysAgo(75), 460));
+  be.sales.push(sale(daysAgo(10), 230));
+  // A cash sale to the same buyer, which never touched the account.
+  be.sales.push({ ...sale(daysAgo(9), 115), payment_method: "cash" });
+  be.accountPayments.push({
+    id: "ap9", customer_id: "k9", amount: 400, method: "cash",
+    reference: "receipt 1", client_ref: null, voided: false,
+    created_at: daysAgo(8),
+  });
+  // And one that was reversed. It stays on the statement and pays nothing.
+  be.accountPayments.push({
+    id: "ap10", customer_id: "k9", amount: 250, method: "eft",
+    reference: "wrong account", client_ref: null, voided: true,
+    created_at: daysAgo(5),
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Accounts" }).click();
+  await page.locator("tr.acc-row", { hasText: "Molefe Builders" }).click();
+
+  await page.getByLabel("Statement period").selectOption("3");
+  await page.getByRole("button", { name: /^Statement$/ }).click();
+
+  const doc = page.locator(".doc-a4");
+  await expect(doc).toBeVisible();
+  await expect(doc).toContainText("Statement for");
+  await expect(doc).toContainText("Molefe Builders");
+  await expect(doc).toContainText("VAT No 4370229645");
+
+  // THE OPENING BALANCE IS EVERYTHING BEFORE THE WINDOW. The account opened
+  // owing 1500 and the 75-day-old invoice was 460, and neither is a line
+  // inside a three-month window that starts after them.
+  const brought = doc.locator("tr.doc-brought");
+  await expect(brought).toContainText("Balance brought forward");
+  await expect(brought).toContainText(/1\s?960\.00/);
+
+  // The charge inside the window is listed; the cash sale is not on the
+  // account and must never appear on a statement.
+  await expect(doc.locator(".doc-statement tbody tr")).toHaveCount(4);
+  await expect(doc).toContainText("Invoice");
+  await expect(doc.locator(".doc-statement")).not.toContainText("115.00");
+
+  // A reversed payment is shown, marked, and pays nothing.
+  const reversed = doc.locator(".doc-statement tbody tr", { hasText: "wrong account" });
+  await expect(reversed).toContainText("(reversed)");
+  await expect(reversed).not.toContainText("250.00");
+
+  // IT HAS TO ADD UP: 1960 + 230 - 400 = 1790, and the last line lands there.
+  const totals = doc.locator(".doc-totals");
+  await expect(totals).toContainText(/Charged/);
+  await expect(totals.locator("tr.doc-total")).toContainText("Balance now due");
+  await expect(totals.locator("tr.doc-total")).toContainText(/1\s?790\.00/);
+  await expect(doc.locator(".doc-statement tbody tr").last())
+    .toContainText(/1\s?790\.00/);
+
+  // How old the money is, which is the half that gets a shop paid. Payments
+  // are consumed oldest first: the R400 comes off the 100-day-old opening
+  // balance, leaving R1 100 at 90+ days, the 75-day-old invoice whole at 60
+  // days, and only the recent R230 current. Calling any of that "current"
+  // would be the lie that lets a debt sit.
+  const ageing = doc.locator(".doc-ageing");
+  await expect(ageing.locator("tr", { hasText: "90+ days" }))
+    .toContainText(/1\s?100\.00/);
+  await expect(ageing.locator("tr", { hasText: "60 days" })).toContainText("460.00");
+  await expect(ageing.locator("tr", { hasText: "Current" })).toContainText("230.00");
 });

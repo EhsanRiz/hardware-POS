@@ -42,7 +42,10 @@ export default function DocumentSheet({
   const copies: (string | null)[] =
     sheet.kind === "delivery" ? ["Customer copy", "Shop copy"] : [null];
   const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
-  const owed = sheet.kind === "invoice" && !sheet.paidWith;
+  // Where to pay. A statement is a request for money as much as an unpaid
+  // invoice is, and sending one without bank details is asking twice.
+  const owed = (sheet.kind === "invoice" && !sheet.paidWith)
+    || (sheet.kind === "statement" && sheet.total > 0);
   const banking = [
     ["Bank", s.bank_name],
     ["Account name", s.bank_account_name],
@@ -171,7 +174,8 @@ export default function DocumentSheet({
             <section className="doc-to">
               <span className="doc-label">
                 {sheet.kind === "quote" ? "Quotation for"
-                  : sheet.kind === "delivery" ? "Deliver to" : "Invoiced to"}
+                  : sheet.kind === "delivery" ? "Deliver to"
+                  : sheet.kind === "statement" ? "Statement for" : "Invoiced to"}
               </span>
               <div className="doc-to-name">
                 {sheet.customer.name ??
@@ -184,6 +188,42 @@ export default function DocumentSheet({
               {sheet.trade && <div className="doc-trade">Trade pricing</div>}
             </section>
 
+            {sheet.statement ? (
+              <table className="doc-lines doc-statement">
+                <thead>
+                  <tr>
+                    <th className="doc-col-code">Date</th>
+                    <th>Reference</th>
+                    <th>Detail</th>
+                    <th className="num">Charge</th>
+                    <th className="num">Paid</th>
+                    <th className="num">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* The figure the page hangs off. Without it the lines are
+                      a list, not a statement. */}
+                  <tr className="doc-brought">
+                    <td className="doc-col-code" />
+                    <td />
+                    <td>Balance brought forward</td>
+                    <td className="num" />
+                    <td className="num" />
+                    <td className="num">{money(sheet.statement.opening)}</td>
+                  </tr>
+                  {sheet.statement.entries.map((e, i) => (
+                    <tr key={i}>
+                      <td className="doc-col-code">{e.date}</td>
+                      <td>{e.ref}</td>
+                      <td>{e.detail}</td>
+                      <td className="num">{e.charge ? money(e.charge) : ""}</td>
+                      <td className="num">{e.payment ? money(e.payment) : ""}</td>
+                      <td className="num">{money(e.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
             <table className="doc-lines">
               <thead>
                 <tr>
@@ -213,9 +253,22 @@ export default function DocumentSheet({
                 ))}
               </tbody>
             </table>
+            )}
 
             <div className="doc-foot">
               <div className="doc-foot-left">
+                {/* How old the money is. The half of a statement that
+                    actually gets a shop paid. */}
+                {sheet.statement && (
+                  <table className="doc-bank doc-ageing">
+                    <tbody>
+                      <tr><th>Current</th><td>{money(sheet.statement.ageing.current)}</td></tr>
+                      <tr><th>30 days</th><td>{money(sheet.statement.ageing.days30)}</td></tr>
+                      <tr><th>60 days</th><td>{money(sheet.statement.ageing.days60)}</td></tr>
+                      <tr><th>90+ days</th><td>{money(sheet.statement.ageing.days90)}</td></tr>
+                    </tbody>
+                  </table>
+                )}
                 {sheet.note && <p className="doc-note">{sheet.note}</p>}
                 {terms.trim() && <p className="doc-terms">{terms.trim()}</p>}
                 {/* Where to pay, on an invoice that leaves owing. */}
@@ -261,7 +314,18 @@ export default function DocumentSheet({
                 </div>
               )}
 
-              {priced && (
+              {sheet.statement ? (
+              <table className="doc-totals">
+                <tbody>
+                  <tr><th>Brought forward</th><td>{money(sheet.statement.opening)}</td></tr>
+                  <tr><th>Charged</th><td>{money(sheet.statement.charges)}</td></tr>
+                  <tr><th>Paid</th><td>-{money(sheet.statement.payments)}</td></tr>
+                  <tr className="doc-total">
+                    <th>Balance now due</th><td>{money(sheet.statement.closing)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              ) : priced && (
               <table className="doc-totals">
                 <tbody>
                   <tr><th>Subtotal</th><td>{money(sheet.subtotal)}</td></tr>

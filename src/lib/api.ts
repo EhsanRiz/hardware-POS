@@ -437,6 +437,51 @@ export async function customerLedger(
   return data as LedgerEntry[];
 }
 
+/** What a customer's statement says, for a period (0067). */
+export interface CustomerStatement {
+  customer: {
+    id: string; name: string; phone: string | null; address: string | null;
+    vat_number: string | null; credit_limit: number | null;
+  };
+  from: string;
+  to: string;
+  /** Deterministic, so asking twice gives the same document. */
+  reference: string;
+  opening: number;
+  lines: {
+    at: string; kind: "opening" | "charge" | "payment"; ref: string;
+    detail: string; charge: number; payment: number; voided: boolean;
+    balance: number;
+  }[];
+  charges: number;
+  payments: number;
+  closing: number;
+  ageing: {
+    current: number; days30: number; days60: number; days90: number;
+    total: number; oldest_unpaid: string | null;
+  };
+  as_at: string;
+}
+
+/**
+ * One customer's statement: what was owed when the period opened, what moved
+ * inside it, and what is owed now. Dates are whole days, inclusive.
+ */
+export async function customerStatement(
+  customerId: string,
+  from: string | null = null,
+  to: string | null = null
+): Promise<CustomerStatement> {
+  const { data, error } = await supabase.rpc("pos_customer_statement", {
+    p_register_token: requireToken(),
+    p_customer_id: customerId,
+    p_from: from,
+    p_to: to,
+  });
+  if (error) throw error;
+  return data as CustomerStatement;
+}
+
 /**
  * A contractor settling their account at the counter.
  *

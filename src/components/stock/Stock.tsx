@@ -13,6 +13,7 @@ import { fmtQty } from "../../lib/receipt";
 import type { Product } from "../../lib/types";
 import { fmtDayMonthTime } from "../../lib/dates";
 import BarcodeScanner from "../BarcodeScanner";
+import StockTake from "./StockTake";
 
 const CATALOGUE_KEY = "catalogue.products";
 
@@ -37,7 +38,9 @@ export default function Stock({ pin }: { pin: string }) {
   const [products, setProducts] = useState<Product[]>(() =>
     cacheGet<Product[]>(CATALOGUE_KEY, [])
   );
-  const [tab, setTab] = useState<"low" | "receive" | "all" | "moves">("low");
+  const [tab, setTab] = useState<
+    "low" | "receive" | "count" | "all" | "moves"
+  >("low");
   const [term, setTerm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -212,6 +215,14 @@ export default function Stock({ pin }: { pin: string }) {
           Receive a delivery
           {deliveryLines.length ? ` · ${deliveryLines.length}` : ""}
         </button>
+        {/* The other kind of correction: not "this bag is torn" but somebody
+            walking an aisle with the tablet, writing down what is there. */}
+        <button
+          className={`btn-line${tab === "count" ? " is-on" : ""}`}
+          onClick={() => setTab("count")}
+        >
+          Stock take
+        </button>
         <button
           className={`btn-line${tab === "all" ? " is-on" : ""}`}
           onClick={() => setTab("all")}
@@ -258,7 +269,7 @@ export default function Stock({ pin }: { pin: string }) {
         </div>
       )}
 
-      {tab !== "moves" && (
+      {tab !== "moves" && tab !== "count" && (
         <div className="stock-receive-bar">
           <input
             value={term}
@@ -292,7 +303,21 @@ export default function Stock({ pin }: { pin: string }) {
       )}
 
       <div className="acc-scroll">
-        {tab === "moves" ? (
+        {tab === "count" ? (
+          <StockTake
+            pin={pin}
+            online={online}
+            // The departments the catalogue already knows about, so a count
+            // can be one aisle at a time.
+            categories={[
+              ...new Map(
+                products
+                  .filter((p) => p.category_id && p.category_name)
+                  .map((p) => [p.category_id!, { id: p.category_id!, name: p.category_name! }])
+              ).values(),
+            ].sort((a, b) => a.name.localeCompare(b.name))}
+          />
+        ) : tab === "moves" ? (
           <MovementsTable moves={moves} />
         ) : (
           <table className="acc-table">

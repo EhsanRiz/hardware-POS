@@ -237,6 +237,14 @@ button {
 .doc-col-code { width: 26mm; color: var(--color-neutral-700, #55625b); font-size: 9pt; }
 .doc-off { display: block; font-size: 8.5pt; color: var(--color-neutral-700, #55625b); }
 
+/* A statement's columns. The date is narrower than a product code, and the
+   balance column is the one a customer's eye actually runs down, so it is set
+   in the same weight as the figures it is totalling. */
+.doc-statement .doc-col-code { width: 22mm; white-space: nowrap; }
+.doc-statement td:nth-child(2) { width: 26mm; color: var(--color-neutral-700, #55625b); }
+.doc-statement .doc-brought td { font-weight: 600; }
+.doc-ageing th { padding-right: 8mm; }
+
 .doc-foot { display: flex; gap: 12mm; margin-top: 6mm; align-items: flex-start; }
 .doc-foot-left { flex: 1; min-width: 0; font-size: 9pt; color: var(--color-neutral-800, #3d4b44); }
 .doc-note { margin-bottom: 3mm; }
