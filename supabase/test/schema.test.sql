@@ -2880,4 +2880,165 @@ begin
   perform assert_eq(v_n, 1, 'pos_create_sale still has exactly one signature');
 end $$;
 
+-- 0063: the reports that answer the rest of the questions -------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_cem uuid; v_price numeric;
+  v_deliv record; v_sale public.sales; v_note public.deliveries;
+  v_from timestamptz; v_to timestamptz;
+  v_rep jsonb; v_rows jsonb; v_row jsonb; v_n int; v_cust uuid;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, price_retail into v_cem, v_price from public.products where sku = 'CEM-425-50';
+  v_from := now();
+  v_to := now() + interval '1 hour';
+
+  -- A delivery, charged and promised for yesterday so it is already late.
+  select * into v_deliv from public.pos_delivery_product(v_tok);
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_cem, 'qty', 2),
+      jsonb_build_object('product_id', v_deliv.id, 'qty', 1, 'unit_price', 90)),
+    p_payment_method => 'cash');
+  v_note := public.pos_create_delivery(v_tok, v_mgr, v_sale.id,
+    'Morija Exports', '14 Kolonyama Rd', current_date - 1, 'after 14:00', 90, null);
+
+  -- DELIVERY IS A DEPARTMENT, NOT A DASH. The carriage was always counted in
+  -- the takings and the VAT; what it was not was VISIBLE. It landed under '—'
+  -- with whatever else nobody had filed, at a hundred percent margin.
+  perform assert(
+    (select category_id from public.products where id = v_deliv.id) is not null,
+    'the delivery line has a department of its own');
+  v_rows := public.pos_sales_by_department(v_tok, '1234', v_from, v_to);
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'department' = 'Delivery'),
+    'so the departments report can show what carriage earned');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_rows) e
+     where e->>'department' = '—' and (e->>'sales')::numeric > 0),
+    'and nothing of it is left under a dash');
+
+  -- WHAT THE SHOP PROMISED. Money is half of it; the other half is whether
+  -- the load went out.
+  v_rep := public.pos_deliveries_report(v_tok, '1234', v_from, v_to);
+  perform assert_eq((v_rep->'totals'->>'count')::int, 1, 'the deliveries report counts it');
+  perform assert_eq((v_rep->'totals'->>'outstanding')::int, 1, 'as still to go');
+  perform assert_eq((v_rep->'totals'->>'carriage')::numeric, 90::numeric,
+    'and totals the carriage agreed');
+  perform assert_eq((v_rep->'totals'->>'carriage_net')::numeric,
+    round(90 / (1 + public.tax_rate_at('standard', current_date)), 2),
+    'and what it earned ex VAT, from the sale line rather than the note');
+  perform assert_eq((v_rep->'totals'->>'late')::int, 1,
+    'a load promised for yesterday and still not gone is late');
+  perform assert_eq(jsonb_array_length(v_rep->'outstanding'), 1,
+    'and is listed, so somebody can ring the customer');
+  perform assert_eq(((v_rep->'outstanding'->0)->>'days_late')::int, 1, 'by a day');
+
+  perform public.pos_mark_delivered(v_tok, v_mgr, v_note.id, null);
+  v_rep := public.pos_deliveries_report(v_tok, '1234', v_from, v_to);
+  perform assert_eq((v_rep->'totals'->>'delivered')::int, 1, 'signed for, it moves across');
+  perform assert_eq((v_rep->'totals'->>'late')::int, 0, 'and stops being late');
+
+  -- WHO SOLD IT. The day close is per drawer, which cannot answer this: two
+  -- people work one till and one person works three.
+  v_rows := public.pos_sales_by_cashier(v_tok, '1234', v_from, v_to);
+  perform assert(jsonb_array_length(v_rows) >= 1, 'sales are attributed to a person');
+  select e into v_row from jsonb_array_elements(v_rows) e
+   where e->>'cashier' = (select name from public.app_users where id = v_mgr);
+  perform assert(v_row is not null, 'by name');
+  perform assert((v_row->>'sales')::numeric > 0, 'with what they took');
+  perform assert((v_row->>'average')::numeric > 0, 'and the average sale');
+  -- Money off a LINE rides on the line, not on the sale, so a person who only
+  -- ever marks single items down would show as having given nothing away.
+  declare v_disc_sale public.sales; v_before numeric;
+  begin
+    v_before := (v_row->>'discount')::numeric;
+    v_disc_sale := public.pos_create_sale(
+      p_register_token => v_tok, p_cashier_id => v_mgr,
+      p_items => jsonb_build_array(jsonb_build_object(
+        'product_id', v_cem, 'qty', 1, 'discount_amount', 5)),
+      p_payment_method => 'cash');
+    v_rows := public.pos_sales_by_cashier(v_tok, '1234', v_from, v_to);
+    select e into v_row from jsonb_array_elements(v_rows) e
+     where e->>'cashier' = (select name from public.app_users where id = v_mgr);
+    perform assert_eq((v_row->>'discount')::numeric, v_before + 5,
+      'a discount taken off one line counts against whoever gave it');
+  end;
+
+  -- WHAT THE SHELVES ARE WORTH.
+  v_rep := public.pos_stock_value(v_tok, '1234');
+  perform assert((v_rep->'totals'->>'at_cost')::numeric > 0, 'stock has a value at cost');
+  perform assert((v_rep->'totals'->>'at_retail')::numeric
+                 > (v_rep->'totals'->>'at_cost')::numeric,
+    'and is worth more on the shelf than it cost, or the shop is in trouble');
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_rep->'departments') e
+     where e->>'department' = 'Delivery'),
+    'a delivery is not stock and has no value on a shelf');
+
+  -- WHERE THE MARGIN WENT. Retail includes VAT and cost does not; comparing
+  -- them raw is what makes every margin in a shop look 15 points too good.
+  update public.products set cost = round(price_retail * 0.95, 2)
+   where sku = 'CEM-425-50';
+  v_rows := public.pos_margin_slipped(v_tok, '1234', 15);
+  select e into v_row from jsonb_array_elements(v_rows) e where e->>'sku' = 'CEM-425-50';
+  perform assert(v_row is not null, 'a line whose cost has caught its price is listed');
+  perform assert((v_row->>'below_cost')::boolean,
+    'and is flagged as selling below cost once VAT is taken off the price');
+  update public.products set cost = 80 where sku = 'CEM-425-50';
+  v_rows := public.pos_margin_slipped(v_tok, '1234', 15);
+  perform assert(not exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'sku' = 'CEM-425-50'),
+    'and drops off the list when the price is put right');
+
+  -- MONEY BACK ACROSS THE COUNTER, both kinds, with a reason attached.
+  v_rows := public.pos_money_back(v_tok, '1234', now() - interval '1 day', v_to);
+  perform assert(jsonb_array_length(v_rows) >= 1, 'refunds are listed, not just totalled');
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'kind' = 'return'),
+    'a return of goods is one kind');
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e where (e->>'reason') is not null),
+    'and each says why');
+  -- The other kind. A cancelled sale (0054) is money back across the counter
+  -- too, and had no report at all — it is not a return, so nothing counted it.
+  perform assert(exists (
+    select 1 from jsonb_array_elements(v_rows) e where e->>'kind' = 'cancelled'),
+    'a cancelled sale is the other kind, and was in no report before this');
+
+  -- WHO OWES, AND HOW OLD IT IS.
+  v_rep := public.pos_debtors_ageing(v_tok, '1234');
+  perform assert((v_rep->'totals'->>'total')::numeric >= 0, 'the book totals');
+  select count(*) into v_n from public.customers cu
+    cross join lateral public.customer_aging(cu.id) a where a.total_due > 0;
+  perform assert_eq(jsonb_array_length(v_rep->'rows'), v_n,
+    'and lists every account with something on it, and no others');
+
+  -- Every one of them behind the same permission as the rest of the reports.
+  perform assert_refuses(
+    format('select public.pos_deliveries_report(%L, %L, now() - interval ''1 day'', now())', v_tok, '2222'),
+    'a counter hand cannot read the deliveries report');
+  perform assert_refuses(
+    format('select public.pos_stock_value(%L, %L)', v_tok, '2222'),
+    'nor what the stock is worth');
+  perform assert_refuses(
+    format('select public.pos_debtors_ageing(%L, %L)', v_tok, '2222'),
+    'nor who owes the shop money');
+  perform assert_refuses(
+    format('select public.pos_sales_by_cashier(%L, %L, now() - interval ''1 day'', now())', v_tok, '2222'),
+    'nor how everyone else did');
+  perform assert_refuses(
+    format('select public.pos_margin_slipped(%L, %L)', v_tok, '2222'),
+    'nor the shop''s cost base');
+  perform assert_refuses(
+    format('select public.pos_purchases_by_supplier(%L, %L, now() - interval ''1 day'', now())', v_tok, '2222'),
+    'nor what it pays its suppliers');
+  perform assert_refuses(
+    format('select public.pos_item_movement(%L, %L, now() - interval ''1 day'', now())', v_tok, '2222'),
+    'nor what every line sells for');
+end $$;
+
 select 'all database tests passed' as result;

@@ -5113,3 +5113,101 @@ test("a delivery arranged offline says so rather than losing the address quietly
   await expect(banner(page)).toContainText(/delivery note follows when the connection returns/i);
   expect(be.deliveries).toHaveLength(0);
 });
+
+/*
+ * 0063: the reports that answer the rest of the questions.
+ */
+test("a delivery shows up in the reports as its own department and its own tab", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Morija Exports");
+  await form.getByLabel("Address").fill("14 Kolonyama Rd");
+  await form.getByLabel("Delivery charge").fill("90");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+
+  // DEPARTMENTS. The carriage was always in the takings and the VAT; what it
+  // was not was visible. It landed under "—" with whatever else nobody had
+  // filed, at a hundred percent margin.
+  await page.getByRole("tab", { name: "Departments" }).click();
+  const depts = page.getByRole("region", { name: "Departments" });
+  await expect(depts).toContainText("Delivery");
+
+  // ITS OWN TAB. Money is half of it; the other half is whether the load went.
+  await page.getByRole("tab", { name: "Deliveries" }).click();
+  const del = page.getByRole("region", { name: "Deliveries" });
+  await expect(del).toContainText("Arranged");
+  await expect(del).toContainText("DEL-000001");
+  await expect(del).toContainText("Morija Exports");
+  await expect(del).toContainText("14 Kolonyama Rd");
+  // Charged is what the note agreed; earned is what the invoice took, less
+  // VAT. R90 in becomes R78.26 earned.
+  await expect(del).toContainText("90.00");
+  await expect(del).toContainText("78.26");
+  await expect(del).toContainText("Still to go out");
+});
+
+test("the reports answer who sold it, what came back, and what the shelves are worth", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: "TRD-001", name: "Mokoena Building Contractors",
+    phone: "051 924 0000", is_trade: false, credit_limit: 25000,
+    balance: 0, available: 25000,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.locator(".modal-row", { hasText: "Mokoena" }).click();
+  await page.getByRole("button", { name: /^Account$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+
+  // WHO. The day close balances a drawer; two people work one till.
+  await page.getByRole("tab", { name: "People" }).click();
+  const people = page.getByRole("region", { name: "People" });
+  await expect(people).toContainText(USERS.manager.row.name);
+  await expect(people).toContainText("115.00");
+
+  // WHAT MOVED, line by line rather than by department.
+  await page.getByRole("tab", { name: "Items" }).click();
+  const items = page.getByRole("region", { name: "Items" });
+  await expect(items).toContainText("Cement 42.5N 50kg");
+  await expect(items).toContainText("CEM-425-50");
+
+  // WHAT THE SHELVES ARE WORTH, and what is no longer earning on them.
+  await page.getByRole("tab", { name: "Stock" }).click();
+  const stock = page.getByRole("region", { name: "Stock" });
+  await expect(stock).toContainText("At cost");
+  await expect(stock).toContainText("At retail");
+  await expect(stock).toContainText("Where the margin went");
+
+  // WHO OWES. The sale above went on account, so the shop is owed for it.
+  await page.getByRole("tab", { name: "Debtors" }).click();
+  const debtors = page.getByRole("region", { name: "Debtors" });
+  await expect(debtors).toContainText("Mokoena Building Contractors");
+  await expect(debtors).toContainText("115.00");
+
+  // WHAT IT BOUGHT. Nothing yet, and it says so rather than showing an empty
+  // table with no explanation.
+  await page.getByRole("tab", { name: "Suppliers" }).click();
+  await expect(page.getByRole("region", { name: "Suppliers" }))
+    .toContainText("No supplier paperwork in this range");
+});
+
+test("a report tab a cashier cannot open is not there at all", async ({ page }) => {
+  // Reports live behind view_reports, and every new one is gated with the
+  // rest: the Manage door itself refuses, so the tabs are unreachable.
+  await pairAndSignIn(page, USERS.employee.pin);
+  await expect(page.getByRole("button", { name: /Manage/i })).toHaveCount(0);
+});

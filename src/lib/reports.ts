@@ -158,3 +158,211 @@ export const EXPORT_COLUMNS: (keyof ExportRow)[] = [
 
 /** Re-exported so the reports screen has one import for figures too. */
 export type { CashFigures };
+
+// --- 0063: the rest of the questions -----------------------------------------
+
+export interface DeliveryReportTotals {
+  count: number;
+  delivered: number;
+  outstanding: number;
+  late: number;
+  carriage: number;
+  carriage_free: number;
+  carriage_net: number;
+}
+
+export interface OutstandingDelivery {
+  id: string;
+  doc_number: string;
+  customer_name: string;
+  address: string;
+  deliver_on: string;
+  deliver_at: string | null;
+  charge: number;
+  sale_number: string | null;
+  cashier_name: string | null;
+  days_late: number;
+}
+
+export interface DeliveriesReport {
+  totals: DeliveryReportTotals;
+  outstanding: OutstandingDelivery[];
+}
+
+export async function deliveriesReport(
+  pin: string, from: Date, to: Date
+): Promise<DeliveriesReport> {
+  const { data, error } = await supabase.rpc("pos_deliveries_report", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: from.toISOString(), p_to: to.toISOString(),
+  });
+  if (error) throw error;
+  return data as DeliveriesReport;
+}
+
+export interface CashierRow {
+  cashier: string;
+  sales_count: number;
+  sales: number;
+  net: number;
+  average: number;
+  discount: number;
+  refunds_count: number;
+  refunds: number;
+}
+
+export async function salesByCashier(
+  pin: string, from: Date, to: Date
+): Promise<CashierRow[]> {
+  const { data, error } = await supabase.rpc("pos_sales_by_cashier", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: from.toISOString(), p_to: to.toISOString(),
+  });
+  if (error) throw error;
+  return (data as CashierRow[]) ?? [];
+}
+
+export interface MoneyBackRow {
+  kind: "return" | "cancelled";
+  at: string;
+  amount: number;
+  doc_number: string | null;
+  against: string | null;
+  who: string | null;
+  reason: string | null;
+  refund_method: string | null;
+}
+
+export async function moneyBack(
+  pin: string, from: Date, to: Date
+): Promise<MoneyBackRow[]> {
+  const { data, error } = await supabase.rpc("pos_money_back", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: from.toISOString(), p_to: to.toISOString(),
+  });
+  if (error) throw error;
+  return (data as MoneyBackRow[]) ?? [];
+}
+
+export interface ItemRow {
+  sku: string | null;
+  item: string;
+  department: string;
+  qty: number;
+  unit: string;
+  lines: number;
+  sales: number;
+  net: number;
+  cost: number | null;
+  uncosted_lines: number;
+  margin: number | null;
+  on_hand: number | null;
+}
+
+export async function itemMovement(
+  pin: string, from: Date, to: Date, limit = 200
+): Promise<ItemRow[]> {
+  const { data, error } = await supabase.rpc("pos_item_movement", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: from.toISOString(), p_to: to.toISOString(), p_limit: limit,
+  });
+  if (error) throw error;
+  return (data as ItemRow[]) ?? [];
+}
+
+export interface StockValueDept {
+  department: string;
+  lines: number;
+  units: number;
+  at_cost: number | null;
+  at_retail: number;
+  uncosted_lines: number;
+  negative_lines: number;
+}
+
+export interface StockValue {
+  departments: StockValueDept[];
+  totals: {
+    at_cost: number; at_retail: number; units: number; lines: number;
+    uncosted_lines: number; negative_lines: number;
+  };
+}
+
+export async function stockValue(pin: string): Promise<StockValue> {
+  const { data, error } = await supabase.rpc("pos_stock_value", {
+    p_register_token: requireToken(), p_pin: pin,
+  });
+  if (error) throw error;
+  return data as StockValue;
+}
+
+export interface MarginRow {
+  sku: string;
+  item: string;
+  department: string;
+  cost: number;
+  retail: number;
+  on_hand: number | null;
+  net_retail: number;
+  margin: number;
+  margin_percent: number | null;
+  below_cost: boolean;
+}
+
+export async function marginSlipped(pin: string, below = 15): Promise<MarginRow[]> {
+  const { data, error } = await supabase.rpc("pos_margin_slipped", {
+    p_register_token: requireToken(), p_pin: pin, p_below: below,
+  });
+  if (error) throw error;
+  return (data as MarginRow[]) ?? [];
+}
+
+export interface DebtorRow {
+  customer_id: string;
+  customer: string;
+  code: string | null;
+  phone: string | null;
+  current_due: number;
+  days30: number;
+  days60: number;
+  days90: number;
+  total_due: number;
+  oldest_unpaid: string | null;
+  credit_limit: number | null;
+}
+
+export interface DebtorsAgeing {
+  rows: DebtorRow[];
+  totals: {
+    current: number; days30: number; days60: number; days90: number;
+    total: number; accounts: number;
+  };
+}
+
+export async function debtorsAgeing(pin: string): Promise<DebtorsAgeing> {
+  const { data, error } = await supabase.rpc("pos_debtors_ageing", {
+    p_register_token: requireToken(), p_pin: pin,
+  });
+  if (error) throw error;
+  return data as DebtorsAgeing;
+}
+
+export interface SupplierSpendRow {
+  supplier: string;
+  documents: number;
+  received: number;
+  total: number | null;
+  quoted: number | null;
+  last_document: string | null;
+}
+
+export async function purchasesBySupplier(
+  pin: string, from: Date, to: Date
+): Promise<SupplierSpendRow[]> {
+  const { data, error } = await supabase.rpc("pos_purchases_by_supplier", {
+    p_register_token: requireToken(), p_pin: pin,
+    p_from: from.toISOString(), p_to: to.toISOString(),
+  });
+  if (error) throw error;
+  return (data as SupplierSpendRow[]) ?? [];
+}

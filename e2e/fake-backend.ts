@@ -54,12 +54,27 @@ export interface FakeProduct {
  */
 export const DELIVERY_LINE: FakeProduct = {
   id: "delivery-line", sku: "DELIVERY", barcode: null, name: "Delivery",
-  category_id: null, category_name: null, unit_code: "ea", unit_name: "Each",
+  category_id: "cat-delivery", category_name: "Delivery",
+  unit_code: "ea", unit_name: "Each",
   allows_fraction: false, price_retail: 0, price_trade: 0,
   tax_code: "standard", stock_qty: null, reorder_level: null, image_url: null,
   sort_order: 0, bin: null, max_discount_percent: null,
   max_discount_amount: null, kind: "delivery",
 };
+
+/**
+ * Every product the fake can sell, the delivery line included.
+ *
+ * It is deliberately not IN the catalogue — nobody scans it off a shelf — but
+ * it does turn up on sales, and the fake used to reach straight into PRODUCTS
+ * and find nothing. A sale with a delivery charge on it then threw on the way
+ * to any report, the reprint and the export.
+ */
+export function fakeProduct(id: string | null): FakeProduct | undefined {
+  if (!id) return undefined;
+  return PRODUCTS.find((p) => p.id === id)
+    ?? (id === DELIVERY_LINE.id ? DELIVERY_LINE : undefined);
+}
 
 export const PRODUCTS: FakeProduct[] = [
   mk("p1", "CEM-425-50", "6001234000015", "Cement 42.5N 50kg", "bag", "Bag", false, 115, 108, 240, 40),
@@ -110,6 +125,8 @@ export interface RecordedSale {
   items: {
     product_id: string;
     qty: number;
+    /** 0061: the price named at the counter, on an open line only. */
+    unit_price?: number;
     discount_amount?: number;
     discount_percent?: number | null;
     /** Kept as the server keeps it: trimmed, cut to 200, and only where there
@@ -717,18 +734,23 @@ export function fakeSaleLines(be: Backend, saleId: string) {
   const idx = Number(String(saleId).replace("s", ""));
   const sale = be.sales[idx];
   if (!sale) return [];
+  // An open line is worth what the counter said, as line_price() decides on
+  // the server; everything else is worth what the shop prices it at.
+  const unitOf = (it: (typeof sale.items)[number]) => {
+    const p = fakeProduct(it.product_id);
+    return p?.kind === "delivery" && it.unit_price != null
+      ? it.unit_price
+      : p?.price_retail ?? 0;
+  };
   const gross = (it: (typeof sale.items)[number]) =>
-    Math.round(
-      (PRODUCTS.find((p) => p.id === it.product_id)?.price_retail ?? 0) *
-        it.qty * 100
-    ) / 100;
+    Math.round(unitOf(it) * it.qty * 100) / 100;
   const own = (it: (typeof sale.items)[number]) =>
     it.discount_percent != null
       ? Math.round(gross(it) * (it.discount_percent / 100) * 100) / 100
       : Math.round((it.discount_amount ?? 0) * 100) / 100;
   const net = sale.items.reduce((t, it) => t + gross(it) - own(it), 0);
   return sale.items.map((it, n) => {
-    const prod = PRODUCTS.find((p) => p.id === it.product_id)!;
+    const prod = fakeProduct(it.product_id)!;
     const line_total =
       net > 0
         ? Math.round(((gross(it) - own(it)) * sale.total * 100) / net) / 100
@@ -738,7 +760,7 @@ export function fakeSaleLines(be: Backend, saleId: string) {
       product_id: prod.id,
       name: prod.name, sku: prod.sku, unit_code: prod.unit_code,
       allows_fraction: prod.allows_fraction,
-      qty: it.qty, unit_price: prod.price_retail,
+      qty: it.qty, unit_price: unitOf(it),
       line_total,
       tax_amount: Math.round((line_total - line_total / 1.15) * 100) / 100,
       discount_amount: own(it),
@@ -1908,6 +1930,14 @@ export async function installBackend(page: Page): Promise<Backend> {
       case "rpc/pos_day_close":
       case "rpc/pos_sales_by_department":
       case "rpc/pos_vat_by_month":
+      case "rpc/pos_deliveries_report":
+      case "rpc/pos_sales_by_cashier":
+      case "rpc/pos_money_back":
+      case "rpc/pos_item_movement":
+      case "rpc/pos_stock_value":
+      case "rpc/pos_margin_slipped":
+      case "rpc/pos_debtors_ageing":
+      case "rpc/pos_purchases_by_supplier":
       case "rpc/pos_export_sales": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: view_reports");
@@ -1966,7 +1996,7 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (path === "rpc/pos_sales_by_department") {
           const by: Record<string, { lines: number; qty: number; sales: number; vat: number; cost: number }> = {};
           for (const { line } of lines) {
-            const dept = PRODUCTS.find((p) => p.id === line.product_id)?.category_name ?? "—";
+            const dept = fakeProduct(line.product_id)?.category_name ?? "—";
             const d = (by[dept] ??= { lines: 0, qty: 0, sales: 0, vat: 0, cost: 0 });
             d.lines++; d.qty += line.qty; d.sales = r2(d.sales + line.line_total);
             d.vat = r2(d.vat + line.tax_amount); d.cost = r2(d.cost + 50 * line.qty);
@@ -1997,6 +2027,184 @@ export async function installBackend(page: Page): Promise<Backend> {
           })));
         }
 
+        // 0063 ------------------------------------------------------------
+        if (path === "rpc/pos_deliveries_report") {
+          const made = be.deliveries.filter((d) => {
+            // The fake stamps nothing on a note, so everything it holds counts
+            // as made in the window under test.
+            void d;
+            return true;
+          });
+          const today = new Date().toISOString().slice(0, 10);
+          const carriageNet = lines
+            .filter(({ line }) => line.product_id === DELIVERY_LINE.id)
+            .reduce((t, { line }) => r2(t + line.line_total - line.tax_amount), 0);
+          return json({
+            totals: {
+              count: made.length,
+              delivered: made.filter((d) => d.status === "delivered").length,
+              outstanding: made.filter((d) => d.status === "pending").length,
+              late: be.deliveries.filter(
+                (d) => d.status === "pending" && d.deliver_on < today).length,
+              carriage: r2(made.reduce((t, d) => t + d.charge, 0)),
+              carriage_free: made.filter((d) => d.charge === 0).length,
+              carriage_net: carriageNet,
+            },
+            outstanding: be.deliveries
+              .filter((d) => d.status === "pending")
+              .sort((a, b) => (a.deliver_on < b.deliver_on ? -1 : 1))
+              .map((d) => ({
+                id: d.id, doc_number: d.doc_number, customer_name: d.customer_name,
+                address: d.address, deliver_on: d.deliver_on, deliver_at: d.deliver_at,
+                charge: d.charge, cashier_name: d.cashier_name,
+                sale_number: "INV-" + String(
+                  Number(d.sale_id.replace(/^s/, "")) + 1).padStart(6, "0"),
+                days_late: Math.max(0, Math.round(
+                  (Date.parse(today) - Date.parse(d.deliver_on)) / 86400000)),
+              })),
+          });
+        }
+
+        if (path === "rpc/pos_sales_by_cashier") {
+          const by: Record<string, { n: number; sales: number; vat: number; disc: number }> = {};
+          for (const { sale } of done) {
+            const who = Object.values(USERS)
+              .find((u) => u.row.id === sale.cashier_id)?.row.name ?? "—";
+            const c = (by[who] ??= { n: 0, sales: 0, vat: 0, disc: 0 });
+            c.n++; c.sales = r2(c.sales + sale.total);
+            c.vat = r2(c.vat + (sale.total - sale.total / 1.15));
+            // As the server keeps it: sales.discount_amount is ALREADY the
+            // whole discount, lines included. Adding the lines again here
+            // would count every marked-down item twice.
+            c.disc = r2(c.disc + sale.discount_amount);
+          }
+          const rr = be.returns;
+          return json(Object.entries(by).map(([cashier, c]) => ({
+            cashier, sales_count: c.n, sales: c.sales, net: r2(c.sales - c.vat),
+            average: r2(c.sales / Math.max(c.n, 1)), discount: c.disc,
+            refunds_count: rr.length, refunds: r2(rr.reduce((t, x) => t + x.total, 0)),
+          })).sort((a, b) => b.sales - a.sales));
+        }
+
+        if (path === "rpc/pos_money_back") {
+          return json([
+            ...be.returns.filter((r) => inWin(r.created_at)).map((r) => ({
+              kind: "return", at: r.created_at, amount: r.total,
+              doc_number: r.doc_number, against: null,
+              who: r.by_name ?? null, reason: r.reason, refund_method: r.refund_method,
+            })),
+            ...be.sales.map((sale, i) => ({ sale, i }))
+              .filter(({ sale }) => sale.voided && inWin(sale.created_at))
+              .map(({ sale, i }) => ({
+                kind: "cancelled", at: sale.created_at ?? new Date().toISOString(),
+                amount: sale.total,
+                doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+                against: null,
+                who: Object.values(USERS).find((u) => u.row.id === sale.cashier_id)?.row.name ?? null,
+                reason: sale.void_reason ?? null, refund_method: sale.payment_method,
+              })),
+          ]);
+        }
+
+        if (path === "rpc/pos_item_movement") {
+          const by: Record<string, { item: string; dept: string; qty: number; unit: string;
+                                     lines: number; sales: number; vat: number; cost: number }> = {};
+          for (const { line } of lines) {
+            const prod = fakeProduct(line.product_id);
+            const k = line.sku ?? line.name;
+            const it = (by[k] ??= { item: line.name, dept: prod?.category_name ?? "—",
+              qty: 0, unit: line.unit_code, lines: 0, sales: 0, vat: 0, cost: 0 });
+            it.qty += line.qty; it.lines++;
+            it.sales = r2(it.sales + line.line_total);
+            it.vat = r2(it.vat + line.tax_amount);
+            it.cost = r2(it.cost + 50 * line.qty);
+          }
+          return json(Object.entries(by).map(([sku, it]) => ({
+            sku, item: it.item, department: it.dept, qty: it.qty, unit: it.unit,
+            lines: it.lines, sales: it.sales, net: r2(it.sales - it.vat),
+            cost: it.cost, uncosted_lines: 0, margin: r2(it.sales - it.vat - it.cost),
+            on_hand: PRODUCTS.find((p) => p.sku === sku)?.stock_qty ?? null,
+          })).sort((a, b) => b.sales - a.sales));
+        }
+
+        if (path === "rpc/pos_stock_value") {
+          // Tracked lines only, as the server does: a service has no shelf.
+          const tracked = PRODUCTS.filter((p) => p.stock_qty != null);
+          const by: Record<string, { lines: number; units: number; cost: number; retail: number }> = {};
+          for (const p of tracked) {
+            const d = (by[p.category_name ?? "—"] ??= { lines: 0, units: 0, cost: 0, retail: 0 });
+            d.lines++; d.units += p.stock_qty!;
+            d.cost = r2(d.cost + 50 * p.stock_qty!);
+            d.retail = r2(d.retail + p.price_retail * p.stock_qty!);
+          }
+          return json({
+            departments: Object.entries(by).map(([department, d]) => ({
+              department, lines: d.lines, units: d.units, at_cost: d.cost,
+              at_retail: d.retail, uncosted_lines: 0, negative_lines: 0,
+            })).sort((a, b) => b.at_cost - a.at_cost),
+            totals: {
+              at_cost: r2(tracked.reduce((t, p) => t + 50 * p.stock_qty!, 0)),
+              at_retail: r2(tracked.reduce((t, p) => t + p.price_retail * p.stock_qty!, 0)),
+              units: tracked.reduce((t, p) => t + p.stock_qty!, 0),
+              lines: tracked.length, uncosted_lines: 0,
+              negative_lines: tracked.filter((p) => p.stock_qty! < 0).length,
+            },
+          });
+        }
+
+        if (path === "rpc/pos_margin_slipped") {
+          const below = Number(body.p_below ?? 15);
+          // Cost is the catalogue fake's 50 throughout; retail less VAT is
+          // what it is measured against, as the server measures it.
+          return json(PRODUCTS.filter((p) => p.price_retail > 0)
+            .map((p) => {
+              const net = r2(p.price_retail / 1.15);
+              return { sku: p.sku, item: p.name, department: p.category_name ?? "—",
+                cost: 50, retail: p.price_retail, on_hand: p.stock_qty,
+                net_retail: net, margin: r2(net - 50),
+                margin_percent: Math.round(((net - 50) / net) * 1000) / 10,
+                below_cost: net < 50 };
+            })
+            .filter((r) => (r.margin_percent ?? 0) < below)
+            .sort((a, b) => (a.margin_percent ?? 0) - (b.margin_percent ?? 0)));
+        }
+
+        if (path === "rpc/pos_debtors_ageing") {
+          const rows = be.customers
+            .map((c) => ({ c, due: be.balance(c.id) }))
+            .filter(({ due }) => due > 0)
+            .map(({ c, due }) => ({
+              customer_id: c.id, customer: c.name, code: c.code, phone: c.phone,
+              current_due: due, days30: 0, days60: 0, days90: 0, total_due: due,
+              oldest_unpaid: null, credit_limit: c.credit_limit,
+            }));
+          return json({
+            rows,
+            totals: {
+              current: r2(rows.reduce((t, r) => t + r.current_due, 0)),
+              days30: 0, days60: 0, days90: 0,
+              total: r2(rows.reduce((t, r) => t + r.total_due, 0)),
+              accounts: rows.length,
+            },
+          });
+        }
+
+        if (path === "rpc/pos_purchases_by_supplier") {
+          const by: Record<string, { docs: number; received: number; total: number; quoted: number }> = {};
+          for (const d of be.supplierDocs) {
+            const name = be.suppliers.find((x) => x.id === d.supplier_id)?.name ?? "—";
+            const g = (by[name] ??= { docs: 0, received: 0, total: 0, quoted: 0 });
+            g.docs++;
+            if (d.status === "received") g.received++;
+            if (d.kind === "quote") g.quoted = r2(g.quoted + (d.total ?? 0));
+            else g.total = r2(g.total + (d.total ?? 0));
+          }
+          return json(Object.entries(by).map(([supplier, g]) => ({
+            supplier, documents: g.docs, received: g.received,
+            total: g.total, quoted: g.quoted, last_document: null,
+          })).sort((a, b) => b.total - a.total));
+        }
+
         // Export
         return json(lines.map(({ sale, line }, n) => ({
           doc_number: "INV-" + String(be.sales.indexOf(sale) + 1).padStart(6, "0"),
@@ -2006,7 +2214,7 @@ export async function installBackend(page: Page): Promise<Backend> {
           customer: be.customers.find((c) => c.id === sale.customer_id)?.name ?? null,
           payment_method: sale.payment_method,
           sku: line.sku, item: line.name,
-          department: PRODUCTS.find((p) => p.id === line.product_id)?.category_name ?? null,
+          department: fakeProduct(line.product_id)?.category_name ?? null,
           qty: line.qty, unit: line.unit_code, unit_price: line.unit_price,
           line_total: line.line_total, vat: line.tax_amount, discount: line.discount_amount,
           cost_at_sale: 50, _n: n,
