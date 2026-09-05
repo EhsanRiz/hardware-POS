@@ -49,6 +49,7 @@ export default function CustomerPicker({
     | { kind: "new" }
     | { kind: "history"; customer: Customer }>({ kind: "list" });
   const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
   const [newAddress, setNewAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +67,29 @@ export default function CustomerPicker({
     );
   }, [customers, q, phoneish, term]);
 
-  // Worth offering to record: it reads as a number, and nothing on file matches.
-  const canRecord = phoneish && shown.length === 0;
+  /*
+   * Worth offering to record: nothing on file matches what was typed.
+   *
+   * This used to require the term to READ as a phone number, which meant
+   * somebody who typed a name got "Nothing on file matches" and no way
+   * forward — the commonest way a customer introduces themselves, and a dead
+   * end. A name is now as good a starting point as a number; the number is
+   * then asked for rather than assumed, because it is the key that finds them
+   * again when they come back with a warranty claim.
+   */
+  const canRecord = shown.length === 0 && q !== "";
+  /** What the counter typed, read as whichever of the two it looks like. */
+  const typedPhone = phoneish ? term : "";
+  const typedName = phoneish ? "" : term.trim();
+  const phoneReady = looksLikePhone(newPhone);
+
+  function startRecording() {
+    setNewPhone(typedPhone);
+    setNewName(typedName);
+    setNewAddress("");
+    setError(null);
+    setView({ kind: "new" });
+  }
 
   async function record() {
     setBusy(true);
@@ -75,7 +97,7 @@ export default function CustomerPicker({
     try {
       const c = await quickCustomer(
         cashierId,
-        term,
+        newPhone,
         newName || null,
         null,
         newAddress || null
@@ -152,20 +174,14 @@ export default function CustomerPicker({
             </div>
           ))}
 
-          {shown.length === 0 && q !== "" && !canRecord && (
-            <p className="modal-row-meta" style={{ padding: "14px 4px" }}>
-              Nothing on file matches “{term}”.
-            </p>
-          )}
-
           {canRecord && view.kind === "list" && (
             <button
               className="modal-row"
-              onClick={() => setView({ kind: "new" })}
+              onClick={startRecording}
               disabled={!online}
             >
               <span className="modal-row-name">
-                Record {formatPhone(term) || term} as a new buyer
+                Add {formatPhone(term) || term} as a new buyer
               </span>
               <span className="modal-row-meta">
                 {online
@@ -178,17 +194,37 @@ export default function CustomerPicker({
           {canRecord && view.kind === "new" && (
             <div className="modal-field">
               <label className="modal-row-meta" htmlFor="buyer-name">
-                Their name, if they'll give it (optional)
+                Their name{phoneish ? ", if they'll give it (optional)" : ""}
               </label>
               <input
                 id="buyer-name"
-                autoFocus
+                autoFocus={phoneish}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. J. Mokoena"
                 className="modal-input"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !busy) void record();
+                  if (e.key === "Enter" && !busy && phoneReady) void record();
+                }}
+              />
+              {/* Asked for, not assumed. A name is how somebody introduces
+                  themselves; a number is what finds them again in March when
+                  they come back with a broken grinder and no slip. It is the
+                  key the record is kept under, so it is the one thing here
+                  that is not optional. */}
+              <label className="modal-row-meta" htmlFor="buyer-phone">
+                Their phone number
+              </label>
+              <input
+                id="buyer-phone"
+                autoFocus={!phoneish}
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="e.g. 082 123 4567"
+                inputMode="tel"
+                className="modal-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy && phoneReady) void record();
                 }}
               />
               <label className="modal-row-meta" htmlFor="buyer-address">
@@ -221,8 +257,13 @@ export default function CustomerPicker({
                 >
                   Back
                 </button>
-                <button className="btn-fill" onClick={() => void record()} disabled={busy}>
-                  {busy ? "Saving…" : `Save ${formatPhone(term) || term}`}
+                <button
+                  className="btn-fill"
+                  onClick={() => void record()}
+                  disabled={busy || !phoneReady}
+                  title={phoneReady ? undefined : "A phone number is how they are found again"}
+                >
+                  {busy ? "Saving…" : `Save ${newName || formatPhone(newPhone) || "this buyer"}`}
                 </button>
               </div>
             </div>

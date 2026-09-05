@@ -2267,13 +2267,15 @@ test("a buyer's address is kept, and the slip carries their name next time", asy
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: /Walk-in customer/i }).click();
   await page.getByPlaceholder(/Name, account code or phone/i).fill("083 555 0199");
-  await page.getByRole("button", { name: /Record .* as a new buyer/i }).click();
+  await page.getByRole("button", { name: /Add .* as a new buyer/i }).click();
 
   // All three optional, and all three worth having: the name puts them on the
   // invoice, the number finds them again, the address goes on a delivery note.
   await page.getByLabel(/Their name/i).fill("T. Mokoena");
   await page.getByLabel(/Delivery address/i).fill("14 Mabille Rd, Maseru");
-  await page.getByRole("button", { name: /^Save 083/ }).click();
+  // The button names the PERSON once there is a name to use — "Save 083 555
+  // 0199" told a cashier what they had typed, not who they were saving.
+  await page.getByRole("button", { name: /^Save T\. Mokoena/ }).click();
 
   const saved = be.customers.find((c) => c.name === "T. Mokoena");
   expect(saved).toBeTruthy();
@@ -2896,7 +2898,7 @@ test("a buyer's number is captured once and recognised however it is typed", asy
   await page.getByRole("button", { name: /Walk-in customer/i }).click();
   const picker = page.getByRole("dialog", { name: /Choose a customer/i });
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("082 555 0143");
-  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByText(/Add .* as a new buyer/i).click();
   await picker.getByLabel(/Their name/i).fill("T. Dlamini");
   await picker.getByRole("button", { name: /^Save/ }).click();
 
@@ -2911,7 +2913,7 @@ test("a buyer's number is captured once and recognised however it is typed", asy
   await page.getByRole("button", { name: /T. Dlamini/ }).click();
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("+27 82 555 0143");
   // Found, not offered as new — the whole point.
-  await expect(picker.getByText(/Record .* as a new buyer/i)).toHaveCount(0);
+  await expect(picker.getByText(/Add .* as a new buyer/i)).toHaveCount(0);
   // The row itself, not the "Purchases by…" button sitting beside it.
   await picker.locator(".modal-row", { hasText: "T. Dlamini" }).click();
 
@@ -2925,7 +2927,7 @@ test("a mistyped number is refused rather than stored as a buyer", async ({ page
   const picker = page.getByRole("dialog", { name: /Choose a customer/i });
   // Six digits reads as a phone number to the UI, but it is too short to be one.
   await picker.getByPlaceholder(/Name, account code or phone/i).fill("123456");
-  await picker.getByText(/Record .* as a new buyer/i).click();
+  await picker.getByText(/Add .* as a new buyer/i).click();
   await picker.getByRole("button", { name: /^Save/ }).click();
 
   await expect(picker.getByText(/does not look like a phone number/i)).toBeVisible();
@@ -5250,4 +5252,40 @@ test("a delivery costs the shop, and a free one costs it just the same", async (
   await expect(del).toContainText("-R 60.00");
   // And it does not tell the shop to go and set a cost it has already set.
   await expect(del).not.toContainText("No cost is recorded against a delivery");
+});
+
+test("a buyer given by name is added right there, with the number that finds them again", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+
+  // A NAME, which is how somebody actually introduces themselves. This used to
+  // dead-end at "Nothing on file matches": the offer to record a buyer was
+  // only made when what had been typed read as a phone number.
+  await picker.getByPlaceholder(/Name, account code or phone/i).fill("Ehsan");
+  await expect(picker.getByText(/Nothing on file matches/i)).toHaveCount(0);
+  await picker.getByRole("button", { name: /Add Ehsan as a new buyer/i }).click();
+
+  // The name is carried through, and the number is ASKED for rather than
+  // assumed — it is the key the record is kept under, so the save waits on it.
+  await expect(picker.getByLabel(/Their name/i)).toHaveValue("Ehsan");
+  await expect(picker.getByRole("button", { name: /^Save/ })).toBeDisabled();
+  await picker.getByLabel(/Their phone number/i).fill("082 555 0143");
+  await expect(picker.getByRole("button", { name: /^Save Ehsan/ })).toBeEnabled();
+  await picker.getByRole("button", { name: /^Save/ }).click();
+
+  await expect(page.getByText("Ehsan")).toBeVisible();
+  expect(be.customers).toHaveLength(1);
+  expect(be.customers[0].name).toBe("Ehsan");
+  // A cashier recording a buyer never grants credit — that is a back-office
+  // decision, and the server enforces it.
+  expect(be.customers[0].is_trade).toBe(false);
+  expect(be.customers[0].credit_limit).toBe(0);
+
+  // And the sale is theirs.
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("Ehsan");
 });
