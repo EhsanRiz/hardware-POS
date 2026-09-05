@@ -1176,8 +1176,13 @@ export async function installBackend(page: Page): Promise<Backend> {
       // 0061: deliveries.
       case "rpc/pos_delivery_product": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        return json([{ id: "delivery-line", sku: "DELIVERY", name: "Delivery",
-                       unit_code: "ea" }]);
+        // From the one definition, not a second copy of it: the till prints
+        // the unit this hands back, and the sale is priced off DELIVERY_LINE.
+        // With the two written out separately a wrong unit could sail through
+        // the printed slip while the pricing still looked right.
+        return json([{ id: DELIVERY_LINE.id, sku: DELIVERY_LINE.sku,
+                       name: DELIVERY_LINE.name,
+                       unit_code: DELIVERY_LINE.unit_code }]);
       }
       case "rpc/pos_create_delivery": {
         if (!tokenOk) return fail("Register not paired or revoked");
