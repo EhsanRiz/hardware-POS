@@ -2751,11 +2751,42 @@ begin
   select * into v_deliv from public.pos_delivery_product(v_tok);
   perform assert(v_deliv.id is not null, 'the shop gets a line to charge delivery on');
   perform assert_eq(v_deliv.sku, 'DELIVERY', 'named so a bookkeeper knows it');
+  -- 0062: NOT 'bag'. The till prints a plain "1x" and no rate line only for
+  -- 'ea' (lib/receipt.ts: unit_code !== "ea" || qty !== 1), so a delivery on
+  -- any other unit goes out on a customer's invoice as
+  --     1 bag Delivery   R50.00
+  --       @ R50.00/bag
+  -- which is what the first one charged in a real shop actually said. The
+  -- unit was picked with `order by code`, and alphabetically 'bag' beats 'ea'.
+  perform assert_eq(v_deliv.unit_code, 'ea',
+    'delivery is counted, not measured in sacks');
   select count(*) into v_n from public.products where kind = 'delivery';
   perform assert_eq(v_n, 1, 'and asking again does not make a second one');
   select * into v_deliv from public.pos_delivery_product(v_tok);
   select count(*) into v_n from public.products where kind = 'delivery';
   perform assert_eq(v_n, 1, 'still one');
+
+  -- And standard rated, whatever else the shop happens to sell. The tax code
+  -- used to be "the first non-null one on any product", unordered — which in a
+  -- shop whose scan hit a zero-rated line first would have quietly zero-rated
+  -- the carriage on every invoice.
+  --
+  -- Asked in a shop of its own, whose ONLY product is zero rated. In the
+  -- fixture's own org the careless query happens to hit a standard-rated row
+  -- first, so the test passed either way and proved nothing — which is how it
+  -- read the first time it was written.
+  declare v_org uuid; v_made public.products;
+  begin
+    insert into public.organizations (name) values ('Zero Rated Supplies')
+      returning id into v_org;
+    insert into public.products (org_id, sku, name, unit_code, price_retail,
+                                 cost, active, tax_code)
+    values (v_org, 'ZERO-1', 'Something zero rated', 'ea', 10, 5, true, 'zero');
+    v_made := public.delivery_product(v_org);
+    perform assert_eq(v_made.tax_code, 'standard',
+      'the carriage is standard rated, not whatever was scanned first');
+    perform assert_eq(v_made.unit_code, 'ea', 'and counted, not bagged');
+  end;
 
   -- THE PRICE THE COUNTER NAMED. Every other line is priced by the shop; this
   -- one is quoted per job, and the money has to land in the sale so it is

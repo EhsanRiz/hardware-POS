@@ -5001,6 +5001,17 @@ test("a delivery is arranged at the counter, charged on the invoice, and noted",
   await page.getByRole("button", { name: /Tender & print/i }).click();
   await expect(banner(page)).toContainText(/INV-000001/);
   expect(be.storedSales[0].total).toBe(200);
+  // And it reads as a delivery on the slip the customer takes away. The first
+  // one ever charged in a real shop printed "1 bag Delivery / @ R50.00/bag",
+  // because the line was given whatever unit came first alphabetically. The
+  // till prints a plain "1x" and no rate line only for 'ea'.
+  const deliverySlip = page.locator("#print-area");
+  await expect(deliverySlip).toContainText("1x Delivery");
+  await expect(deliverySlip).not.toContainText("bag Delivery");
+  // No rate line under it either. The cement above it legitimately says
+  // "@ R115.00/bag" — it IS sold by the bag — so this looks for the carriage's
+  // own rate, which only appears when the line is not counted in eaches.
+  await expect(deliverySlip).not.toContainText("@ R85.00");
   await page.getByLabel("Close", { exact: true }).click();
 
   // And the note is written against that sale.
