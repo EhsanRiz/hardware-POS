@@ -4821,3 +4821,67 @@ test("Email sends the A4 quotation as a PDF, not the till slip in the body", asy
   // And the person is told they still have to attach it.
   await expect(popup.getByText(/PDF saved/)).toBeVisible();
 });
+
+test("a quotation downloads as a PDF straight from its line in the list", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  const ask = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await ask.getByLabel("Quote for").fill("Morija Exp");
+  await ask.getByRole("button", { name: "Save quote" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+
+  // From the row itself. Nothing is opened, nothing is loaded onto the till —
+  // the document is built from the quote the database already holds.
+  const row = page.locator("tr.acc-row", { hasText: "QUO-000001" });
+  const download = page.waitForEvent("download");
+  await row.getByRole("button", { name: "PDF" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001.pdf");
+  const pdf = readFileSync((await file.path())!).toString("latin1");
+  expect(pdf.startsWith("%PDF-")).toBe(true);
+  expect(pdf).toContain("(Morija Exp) Tj");
+  expect(pdf).toContain("(Cement 42.5N 50kg) Tj");
+  // The row did not also open the quote: the button belongs to the button.
+  await expect(page.getByRole("dialog", { name: "Quote QUO-000001" })).toHaveCount(0);
+});
+
+test("the shop's uploaded logo is inside the PDF, not just on the screen", async ({ page }) => {
+  // The bucket answers slowly, as a shop's line does. A document built without
+  // waiting for it comes out with no mark on it, once, on a real quotation.
+  be.imageDelayMs = 900;
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await page.getByLabel("Upload a logo").setInputFiles([
+    { name: "logo.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
+
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+  await page.getByRole("dialog", { name: "Who is this quote for?" })
+    .getByRole("button", { name: "No name" }).click();
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "PDF" }).click();
+  const pdf = readFileSync((await (await download).path())!).toString("latin1");
+  // A PDF cannot point at a picture on a server — the image has to be in the
+  // file. The fake serves the upload back as the data URL it was given, which
+  // is enough for the canvas to turn it into the JPEG that goes in here.
+  expect(pdf).toContain("/Subtype /Image");
+  expect(pdf).toContain("/Filter /DCTDecode");
+  expect(pdf).toMatch(/\/Im1 Do/);
+  // And the shop's name is still set: a mark is not a name.
+  expect(pdf).toContain("(Ladybrand Hardware) Tj");
+});

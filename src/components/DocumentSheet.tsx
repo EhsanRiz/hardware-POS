@@ -4,16 +4,17 @@ import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
 import { SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
 import InnovaMark from "./InnovaMark";
-import { emailSheet, sheetMailto, type SendOutcome } from "../lib/sendSheet";
-import { useState } from "react";
+import { emailSheet, saveSheetPdf, sheetMailto, type SendOutcome } from "../lib/sendSheet";
+import { primeLogo } from "../lib/logoBytes";
+import { useEffect, useState } from "react";
 
 /**
  * An A4 quotation or tax invoice, on screen and on paper.
  *
- * Printed through the browser, which is also how it becomes a PDF: every
- * platform's print dialog offers Save as PDF, including the iPhone's. No
- * library, nothing to install, and the page a customer receives is exactly
- * the page the shop saw.
+ * Print goes through the browser; Download and Email hand over a PDF written
+ * by lib/pdf.ts. Both exist because they answer different questions: Print is
+ * for the copy that goes over the counter, and the PDF is the file that gets
+ * emailed, filed and forwarded.
  *
  * Email opens the device's own mail app with the document in the body. That
  * is deliberate rather than sending from a server: it goes out from the
@@ -41,6 +42,9 @@ export default function DocumentSheet({
   ].filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
 
   const [sent, setSent] = useState<SendOutcome | null>(null);
+  // The mark has to be bytes before anybody clicks: a PDF built inside a click
+  // cannot stop and fetch a picture.
+  useEffect(() => primeLogo(logo), [logo]);
 
   return (
     <div
@@ -77,10 +81,16 @@ export default function DocumentSheet({
               Email
             </a>
             <button
+              className="px-4 py-2 rounded-xl border border-stone-300"
+              onClick={() => void saveSheetPdf(sheet, s)}
+            >
+              Download
+            </button>
+            <button
               className="px-4 py-2 rounded-xl bg-colophon text-paper"
               onClick={() => window.print()}
             >
-              Print / PDF
+              Print
             </button>
             <button
               className="px-4 py-2 rounded-xl bg-stone-100"
