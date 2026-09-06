@@ -1561,8 +1561,10 @@ export async function installBackend(page: Page): Promise<Backend> {
             sku: p.sku, name: p.name, unit_code: p.unit_code,
             // The shortfall plus a month's selling, so it does not come
             // straight back onto the list.
-            qty: Math.ceil(Math.max(p.reorder_level - p.stock_qty, 0)
-                           + soldRecently(be, p.id)),
+            // At least one: a zero is not an order line, and on the server
+            // it violates `check (qty > 0)` and kills the whole insert.
+            qty: Math.max(1, Math.ceil(Math.max(p.reorder_level - p.stock_qty, 0)
+                                       + soldRecently(be, p.id))),
             unit_cost: p.cost ?? null, received_qty: 0,
           });
         }

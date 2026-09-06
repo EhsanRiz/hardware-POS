@@ -3984,4 +3984,55 @@ begin
   end;
 end $$;
 
+-- 0071: an order line of none is not an order line -------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_sup uuid; v_slow uuid; v_po public.purchase_orders;
+  v_row record;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id into v_sup from public.suppliers where org_id = v_org limit 1;
+  if v_sup is null then
+    v_sup := (public.pos_purchasing_save_supplier(v_tok, '1234', null, 'A Supplier')).id;
+  end if;
+
+  -- Sitting exactly AT its reorder level and not sold in a month, which is an
+  -- ordinary state for a slow item. Shortfall zero, sales zero.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, reorder_level, active, tax_code)
+  values (v_org, 'SLOW-1', 'Brass Gate Valve 100mm', 'ea', 1800, 1200, 2, 2,
+          true, 'standard')
+  returning id into v_slow;
+
+  -- THE WHOLE ORDER USED TO DIE ON THIS ONE ROW. The lines go in as a single
+  -- insert, qty is `check (qty > 0)`, and a zero takes every other line with
+  -- it — so the button reported a constraint violation and raised nothing.
+  v_po := public.pos_po_from_reorder(v_tok, '1234', v_sup);
+  perform assert(v_po.doc_number like 'PO-%',
+    'an order still gets raised when something is exactly at its level');
+
+  select * into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+   where product_id = v_slow;
+  perform assert(v_row.qty is not null, 'and the slow line is on it');
+  perform assert_eq(v_row.qty, 1::numeric,
+    'asking for one, because a line on the reorder list is wanted');
+
+  -- The lines that are genuinely short are unaffected.
+  declare v_cem uuid; v_short numeric; v_sold numeric;
+  begin
+    select id into v_cem from public.products where sku = 'CEM-425-50';
+    update public.products set reorder_level = stock_qty + 6 where id = v_cem;
+    perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'testing');
+    v_po := public.pos_po_from_reorder(v_tok, '1234', v_sup);
+    select * into v_row from public.pos_po_lines(v_tok, '1234', v_po.id)
+     where product_id = v_cem;
+    perform assert(v_row.qty >= 6,
+      'a line that is really short still asks for the shortfall and more');
+    update public.products set reorder_level = 0 where id = v_cem;
+    perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'testing');
+  end;
+end $$;
+
 select 'all database tests passed' as result;

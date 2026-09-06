@@ -70,26 +70,29 @@ export default function Buying({ pin, products }: { pin: string; products: Admin
   }
 
   return (
-    <div className="space-y-3">
+    // The same frame Reports and Cash-up sit in. Without it this screen ran
+    // flush to the left edge of the window with nothing to breathe against.
+    <div className="flex-1 overflow-auto p-4">
+      <div className="max-w-4xl space-y-3">
       {banner && <p className="acc-note is-good">{banner}</p>}
       {error && <p className="acc-note is-bad">{error}</p>}
 
       <div className="stock-receive-bar">
         <button
           className={`btn-line${tab === "toorder" ? " is-on" : ""}`}
-          onClick={() => setTab("toorder")}
+          onClick={() => { setTab("toorder"); setBanner(null); }}
         >
           To order
         </button>
         <button
           className={`btn-line${tab === "orders" ? " is-on" : ""}`}
-          onClick={() => setTab("orders")}
+          onClick={() => { setTab("orders"); setBanner(null); }}
         >
           Orders
         </button>
         <button
           className={`btn-line${tab === "owed" ? " is-on" : ""}`}
-          onClick={() => setTab("owed")}
+          onClick={() => { setTab("owed"); setBanner(null); }}
         >
           What you owe
         </button>
@@ -114,9 +117,13 @@ export default function Buying({ pin, products }: { pin: string; products: Admin
           products={products}
           openId={openId}
           setOpenId={setOpenId}
+          // Once the sheet has something of its own to say, "PO-000001
+          // raised" is stale and two banners stack up.
+          onActed={() => setBanner(null)}
         />
       )}
       {tab === "owed" && <Owed pin={pin} online={online} />}
+      </div>
     </div>
   );
 }
@@ -207,7 +214,9 @@ function ToOrder({
                 <td className="quiet">{r.supplier ?? "—"}</td>
                 <td className="num">{fmtQty(r.on_hand)} {r.unit}</td>
                 <td className="num quiet">{fmtQty(r.reorder_level)}</td>
-                <td className="num is-bad">{fmtQty(r.short)}</td>
+                <td className={`num${r.short > 0 ? " is-bad" : " quiet"}`}>
+                  {r.short > 0 ? fmtQty(r.short) : "at level"}
+                </td>
                 <td className="num quiet">{fmtQty(r.sold_30d)}</td>
               </tr>
             ))}
@@ -227,6 +236,7 @@ function Orders({
   products,
   openId,
   setOpenId,
+  onActed,
 }: {
   pin: string;
   online: boolean;
@@ -234,6 +244,7 @@ function Orders({
   products: AdminProduct[];
   openId: string | null;
   setOpenId: (id: string | null) => void;
+  onActed: () => void;
 }) {
   const [orders, setOrders] = useState<PurchaseOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -262,7 +273,7 @@ function Orders({
         po={open}
         products={products}
         onBack={() => { setOpenId(null); void load(); }}
-        onChanged={load}
+        onChanged={async () => { onActed(); await load(); }}
       />
     );
   }
@@ -498,6 +509,7 @@ function OrderSheet({
               <th>Item</th>
               <th className="num">Ordered</th>
               <th className="num">Each</th>
+              <th className="num">Amount</th>
               <th className="num">In so far</th>
               <th className="num">Still to come</th>
               {receivable && <th className="num">Arrived now</th>}
@@ -527,6 +539,9 @@ function OrderSheet({
                   )}
                 </td>
                 <td className="num quiet">{l.unit_cost == null ? "—" : money(l.unit_cost)}</td>
+                <td className="num">
+                  {l.unit_cost == null ? "—" : money(l.qty * l.unit_cost)}
+                </td>
                 <td className="num quiet">{fmtQty(l.received_qty)}</td>
                 <td className={`num${l.outstanding > 0 ? " is-bad" : ""}`}>
                   {l.outstanding > 0 ? fmtQty(l.outstanding) : "all in"}
@@ -568,6 +583,23 @@ function OrderSheet({
             ))}
           </tbody>
         </table>
+      )}
+
+      {lines && lines.length > 0 && (
+        <p className="acc-note">
+          <strong>{money(lines.reduce(
+            (t, l) => t + (l.unit_cost == null ? 0 : l.qty * l.unit_cost), 0))}</strong>{" "}
+          on this order
+          {lines.some((l) => l.unit_cost == null) && (
+            <>
+              {" "}· <span className="is-bad">
+                {lines.filter((l) => l.unit_cost == null).length} of these lines has no
+                price on it, so the total is lower than what you will be invoiced.
+                Put a cost against them before this goes out.
+              </span>
+            </>
+          )}
+        </p>
       )}
 
       {receivable && (
