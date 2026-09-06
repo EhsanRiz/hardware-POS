@@ -1321,12 +1321,14 @@ export async function poSetLine(
   if (error) throw error;
 }
 
+/** `productIds` null orders everything short; a list orders those lines only. */
 export async function poFromReorder(
-  pin: string, supplierId: string, expectedOn: string | null = null
+  pin: string, supplierId: string, expectedOn: string | null = null,
+  productIds: string[] | null = null
 ): Promise<PurchaseOrder> {
   const { data, error } = await supabase.rpc("pos_po_from_reorder", {
     p_register_token: requireToken(), p_pin: pin, p_supplier_id: supplierId,
-    p_expected_on: expectedOn,
+    p_expected_on: expectedOn, p_product_ids: productIds,
   });
   if (error) throw error;
   return data as PurchaseOrder;

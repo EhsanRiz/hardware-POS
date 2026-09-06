@@ -145,6 +145,16 @@ function ToOrder({
   const [error, setError] = useState<string | null>(null);
   const [supplier, setSupplier] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * Which lines go on the order.
+   *
+   * Nothing is ticked to begin with. Raising the whole list put allen keys, a
+   * ladder and 100m of twin-and-earth on one merchant's order, and the first
+   * thing anybody had to do was delete most of it — which is exactly where
+   * mistakes get made. The person doing the buying knows who sells what, so
+   * they say, deliberately, before anything is raised.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void reorderList(pin)
@@ -171,17 +181,24 @@ function ToOrder({
         </select>
         <button
           className="btn-fill"
-          disabled={busy || !online || !supplier || rows.length === 0}
+          disabled={busy || !online || !supplier || picked.size === 0}
           onClick={() => {
             setBusy(true);
             setError(null);
-            void poFromReorder(pin, supplier)
+            void poFromReorder(pin, supplier, null, [...picked])
               .then(onRaised)
               .catch((e) => setError(errorMessage(e, "That order could not be raised")))
               .finally(() => setBusy(false));
           }}
         >
-          Raise an order for all of it
+          {/* A dead button should say what is stopping it, not what it would
+              have done. Ticking two lines and finding it greyed out left you
+              to work out on your own that a supplier was missing. */}
+          {!supplier
+            ? "Choose a supplier"
+            : picked.size === 0
+              ? "Tick what to order"
+              : `Raise an order for ${picked.size} ${picked.size === 1 ? "line" : "lines"}`}
         </button>
       </div>
 
@@ -189,6 +206,7 @@ function ToOrder({
         {rows.length === 0
           ? "Nothing is below its reorder level."
           : `${rows.length} ${rows.length === 1 ? "line is" : "lines are"} at or below their reorder level. ` +
+            "Tick the ones this supplier sells — one merchant does not sell everything that is short. " +
             "The order asks for the shortfall plus a month's selling, so it does not come straight back onto this list."}
       </p>
 
@@ -196,6 +214,17 @@ function ToOrder({
         <table className="acc-table">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  aria-label="Tick every line"
+                  checked={picked.size === rows.length && rows.length > 0}
+                  onChange={(e) =>
+                    setPicked(e.target.checked
+                      ? new Set(rows.map((r) => r.product_id))
+                      : new Set())}
+                />
+              </th>
               <th>Item</th>
               <th>Last bought from</th>
               <th className="num">On hand</th>
@@ -206,7 +235,28 @@ function ToOrder({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.product_id} className="acc-row">
+              <tr
+                key={r.product_id}
+                className={`acc-row is-clickable${picked.has(r.product_id) ? " is-on" : ""}`}
+                onClick={() => setPicked((prev) => {
+                  const next = new Set(prev);
+                  if (!next.delete(r.product_id)) next.add(r.product_id);
+                  return next;
+                })}
+              >
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Order ${r.item}`}
+                    checked={picked.has(r.product_id)}
+                    onChange={() => setPicked((prev) => {
+                      const next = new Set(prev);
+                      if (!next.delete(r.product_id)) next.add(r.product_id);
+                      return next;
+                    })}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </td>
                 <td>
                   <span className="acc-name">{r.item}</span>
                   <span className="acc-sub">{r.sku ?? "—"} · {r.department}</span>
