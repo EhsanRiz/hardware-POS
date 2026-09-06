@@ -1929,21 +1929,31 @@ export async function installBackend(page: Page): Promise<Backend> {
         const custId = body.p_customer_id as string;
         let running = 0;
         const rows: unknown[] = [];
-        for (const s of be.sales.filter(
-          (x) => x.customer_id === custId && x.payment_method === "account")) {
+        be.sales.forEach((s, i) => {
+          if (s.customer_id !== custId || s.payment_method !== "account") return;
           running += s.total;
           rows.push({ kind: "charge", entry_at: s.created_at ?? new Date().toISOString(),
-            ref: "INV", detail: "Invoice", charge: s.total, payment: 0,
-            balance: Math.round(running * 100) / 100, entry_id: "c" + rows.length,
-            voided: false });
-        }
+            ref: `INV-${String(i + 1).padStart(6, "0")}`, detail: "Invoice",
+            charge: s.total, payment: 0,
+            balance: Math.round(running * 100) / 100,
+            // The sale's own id, or the line cannot open it (0073). It was
+            // "c0", "c1" — a row number, which opens nothing.
+            entry_id: "s" + i,
+            voided: false,
+            cashier_name: USERS.manager.row.name,
+            tax_amount: Math.round((s.total - s.total / 1.15) * 100) / 100,
+            status: "completed", payment_method: "account" });
+        });
         for (const p of be.accountPayments.filter((x) => x.customer_id === custId)) {
           if (!p.voided) running -= p.amount;
-          rows.push({ kind: "payment", entry_at: new Date().toISOString(),
+          rows.push({ kind: "payment", entry_at: p.created_at,
             ref: p.reference ?? "", detail: p.method, charge: 0,
             payment: p.voided ? 0 : p.amount,
             balance: Math.round(running * 100) / 100, entry_id: p.id,
-            voided: p.voided });
+            voided: p.voided,
+            // Nothing behind a payment to open.
+            cashier_name: null, tax_amount: null, status: null,
+            payment_method: null });
         }
         return json(rows.reverse());
       }

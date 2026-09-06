@@ -16,6 +16,7 @@ import { statementSheet } from "../../lib/statementSheet";
 import type { Sheet } from "../../lib/sheet";
 import type { AccountRow, LedgerEntry, User } from "../../lib/types";
 import DocumentSheet from "../DocumentSheet";
+import SaleDetail, { type SaleLike } from "../SaleDetail";
 import ManagerPinModal from "../ManagerPinModal";
 import { fmtDate } from "../../lib/dates";
 
@@ -55,6 +56,14 @@ export default function AccountDetail({
   const [voiding, setVoiding] = useState<LedgerEntry | null>(null);
   // The A4 statement, once it has been asked for.
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  /**
+   * The sale behind a charge, opened from its line.
+   *
+   * "What did we actually buy on that invoice?" is the first question anybody
+   * asks when a customer queries a statement, and answering it used to mean
+   * leaving Accounts for Manage, opening Sales and hunting the number.
+   */
+  const [openSale, setOpenSale] = useState<SaleLike | null>(null);
   const [monthsBack, setMonthsBack] = useState(1);
 
   const load = useCallback(async () => {
@@ -251,6 +260,7 @@ export default function AccountDetail({
         <section className="acc-ledger">
           <div className="acc-ledger-head">
             <h3>Account history</h3>
+            <span className="acc-sub">Tap an invoice to see what was bought</span>
             <select
               className="btn-line"
               value={monthsBack}
@@ -302,7 +312,29 @@ export default function AccountDetail({
                   </tr>
                 )}
                 {entries?.map((e) => (
-                  <tr key={e.entry_id + e.kind} className={e.voided ? "is-void" : ""}>
+                  <tr
+                    key={e.entry_id + e.kind}
+                    // Only a charge has a sale behind it. A payment and the
+                    // opening balance show everything they have on the line
+                    // already, so they are not made to look openable — a row
+                    // that opens nothing is worse than a row that does not
+                    // invite the tap.
+                    className={`${e.voided ? "is-void" : ""}${
+                      e.kind === "charge" ? " is-clickable" : ""}`}
+                    onClick={e.kind === "charge"
+                      ? () => setOpenSale({
+                          id: e.entry_id,
+                          doc_number: e.ref || null,
+                          created_at: e.entry_at,
+                          cashier_name: e.cashier_name ?? "—",
+                          customer_name: account.name,
+                          total: e.charge,
+                          tax_amount: e.tax_amount ?? 0,
+                          status: e.status ?? "completed",
+                          payment_method: e.payment_method ?? "account",
+                        })
+                      : undefined}
+                  >
                     <td className="quiet">{shortDate(e.entry_at)}</td>
                     <td>
                       <span className="acc-name">{e.ref || e.detail}</span>
@@ -316,7 +348,7 @@ export default function AccountDetail({
                       {e.kind === "payment" && !e.voided && can(user, "void_refund") && (
                         <button
                           className="btn-line quiet"
-                          onClick={() => setVoiding(e)}
+                          onClick={(ev) => { ev.stopPropagation(); setVoiding(e); }}
                         >
                           Void
                         </button>
@@ -349,6 +381,16 @@ export default function AccountDetail({
       )}
 
       {sheet && <DocumentSheet sheet={sheet} onClose={() => setSheet(null)} />}
+
+      {openSale && (
+        <SaleDetail
+          sale={openSale}
+          pin={null}
+          cashierId={user.id}
+          onClose={() => setOpenSale(null)}
+          onChanged={load}
+        />
+      )}
     </div>
   );
 }

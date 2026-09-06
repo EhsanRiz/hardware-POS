@@ -267,6 +267,34 @@ export function sheetAsPdf(
   const copies: (string | null)[] =
     sheet.kind === "delivery" ? ["CUSTOMER COPY", "SHOP COPY"] : [null];
 
+  /**
+   * The foot of the page: what this document is, the disclaimer, the mark.
+   *
+   * Hoisted out of the end of the copies loop because the statement branch
+   * leaves that loop early, and so shipped as the one document in the app
+   * with no footer at all. Every path now ends here.
+   */
+  const pageFoot = () => {
+    const foot = PAGE.h - FOOT;
+    if (p.y > foot) p.page();
+    p.y = foot;
+    p.rule(SIDE, RIGHT, 0.4, HAIR);
+    p.y += 9;
+    p.text(`${s.shop_name} · ${title} ${sheet.number}`, centre, 8, {
+      colour: GREY, align: "centre",
+    });
+    p.y += 11;
+    p.text(
+      "E&OE. This document is computer generated and is valid without a signature.",
+      centre, 8, { colour: GREY, align: "centre" }
+    );
+    p.y += 13;
+    p.text(
+      `InnovaPOS · a product of InnovaEarth · © ${new Date().getFullYear()} InnovaEarth · All rights reserved`,
+      centre, 7.5, { colour: GREY, align: "centre" }
+    );
+  };
+
   const letterhead = () => {
     if (logo) {
       // The same box the screen gives it: 20mm tall, 80mm wide, centred, and
@@ -362,9 +390,20 @@ export function sheetAsPdf(
     if (sheet.poNumber) meta.push(["Your order", sheet.poNumber]);
     if (sheet.servedBy) meta.push(["Served by", sheet.servedBy]);
     for (const [k, v] of meta) {
-      p.text(k, RIGHT - 110, 9.5, { colour: GREY });
-      p.text(v, RIGHT, 9.5, { align: "right" });
-      p.y += 13;
+      // Label and value sit on one line only while the value fits beside it.
+      // A statement's reference and its period are both far wider than the
+      // gap, and were drawn straight back over the label — "Number" and
+      // "STM-20260906-2F0B67" on top of each other.
+      if (widthOf(v, 9.5) <= 110 - 6) {
+        p.text(k, RIGHT - 110, 9.5, { colour: GREY });
+        p.text(v, RIGHT, 9.5, { align: "right" });
+        p.y += 13;
+      } else {
+        p.text(k, RIGHT, 8, { colour: GREY, align: "right" });
+        p.y += 10;
+        p.text(v, RIGHT, 9.5, { align: "right" });
+        p.y += 14;
+      }
     }
     p.y = Math.max(p.y, titleTop + 26) + 8;
 
@@ -488,6 +527,7 @@ export function sheetAsPdf(
         p.y += 11;
       }
       p.y = Math.max(p.y, stAfter);
+      pageFoot();
       continue;
     }
 
@@ -630,24 +670,7 @@ export function sheetAsPdf(
 
     // The foot goes at the foot of the page, as it does on screen.
     p.y = Math.max(p.y, afterTotals);
-    const foot = PAGE.h - FOOT;
-    if (p.y > foot) p.page();
-    p.y = foot;
-    p.rule(SIDE, RIGHT, 0.4, HAIR);
-    p.y += 9;
-    p.text(`${s.shop_name} · ${title} ${sheet.number}`, centre, 8, {
-      colour: GREY, align: "centre",
-    });
-    p.y += 11;
-    p.text(
-      "E&OE. This document is computer generated and is valid without a signature.",
-      centre, 8, { colour: GREY, align: "centre" }
-    );
-    p.y += 13;
-    p.text(
-      `InnovaPOS · a product of InnovaEarth · © ${new Date().getFullYear()} InnovaEarth · All rights reserved`,
-      centre, 7.5, { colour: GREY, align: "centre" }
-    );
+    pageFoot();
   }
 
   return assemble(p.done(), logo);

@@ -4112,4 +4112,60 @@ begin
   update public.products set active = false where sku in ('TICK-A','TICK-B','TICK-C');
 end $$;
 
+-- 0073: a ledger line carries the sale behind it ---------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_cust uuid; v_prod uuid;
+  v_sale public.sales; v_row record; v_pay uuid; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id into v_org, v_mgr from fixture;
+  select id into v_prod from public.products where sku = 'CEM-425-50';
+
+  insert into public.customers (org_id, name, credit_limit, active)
+  values (v_org, 'Ledger Test Builders', 50000, true) returning id into v_cust;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_mgr,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 3)),
+    p_payment_method => 'account', p_customer_id => v_cust);
+
+  select * into v_row from public.pos_customer_ledger(v_tok, v_cust)
+   where kind = 'charge';
+
+  -- ENOUGH OF THE SALE TO OPEN IT. "What did we buy on that invoice" was
+  -- three screens away because the ledger knew the sale and carried none of
+  -- it but the id.
+  perform assert_eq(v_row.entry_id, v_sale.id, 'the line knows which sale it is');
+  perform assert_eq(v_row.cashier_name, 'Manager', 'and who rang it up');
+  perform assert_eq(v_row.tax_amount, v_sale.tax_amount, 'and the VAT on it');
+  perform assert_eq(v_row.status, 'completed', 'and that it stands');
+  perform assert_eq(v_row.payment_method, 'account', 'and how it was paid');
+  perform assert_eq(v_row.charge, v_sale.total, 'with the money unchanged');
+
+  -- A PAYMENT HAS NO SALE BEHIND IT, and says so with nulls rather than
+  -- something invented — that is what stops the screen offering to open one.
+  select payment_id into v_pay from public.pos_take_account_payment(
+    v_tok, v_mgr, v_cust, 100, 'cash', 'receipt 9', null, null);
+  select * into v_row from public.pos_customer_ledger(v_tok, v_cust)
+   where kind = 'payment';
+  perform assert(v_row.cashier_name is null, 'a payment names no cashier to open');
+  perform assert(v_row.tax_amount is null, 'and carries no VAT of its own');
+  perform assert(v_row.status is null, 'and no sale status');
+  perform assert(v_row.payment_method is null, 'and no payment method of a sale');
+  perform assert_eq(v_row.payment, 100::numeric, 'while the money is still right');
+
+  -- The running balance is untouched by any of this.
+  select * into v_row from public.pos_customer_ledger(v_tok, v_cust)
+   order by entry_at desc limit 1;
+  perform assert_eq(v_row.balance, public.customer_balance(v_cust),
+    'and the newest line still lands on what the account stands at');
+
+  select count(*)::int into v_n from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_customer_ledger';
+  perform assert_eq(v_n, 1, 'pos_customer_ledger has exactly one signature');
+end $$;
+
 select 'all database tests passed' as result;
