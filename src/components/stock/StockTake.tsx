@@ -340,6 +340,14 @@ export default function StockTake({
     );
   }
 
+  const deptName = categories.find((c) => c.id === newDept)?.name ?? "";
+  // A select immediately above a table reads as that table's filter, and this
+  // one was not: it chose the department for the NEXT count, while the list
+  // below went on showing every sheet in the shop. It now means one thing —
+  // which department you are working on — and the list follows it too.
+  const shownCounts = (counts ?? []).filter(
+    (c) => !newDept || c.department === deptName);
+
   return (
     <div className="space-y-3">
       {banner && <p className="acc-note is-good">{banner}</p>}
@@ -350,7 +358,7 @@ export default function StockTake({
           className="acc-search"
           value={newDept}
           onChange={(e) => setNewDept(e.target.value)}
-          aria-label="Department to count"
+          aria-label="Department"
         >
           <option value="">Everything</option>
           {categories.map((c) => (
@@ -369,14 +377,18 @@ export default function StockTake({
               .finally(() => setBusy(false));
           }}
         >
-          Start a count
+          {/* The button names what it is about to do. A control that says
+              only "Start a count" beside a list of other departments' sheets
+              gives no clue which of the two the box above belongs to. */}
+          {deptName ? `Start a count in ${deptName}` : "Start a count of everything"}
         </button>
       </div>
       <p className="acc-note">
         One department at a time is how it is actually done: somebody walks
         Plumbing with the tablet on a Tuesday morning. Nothing on the shelves
         moves until the sheet is posted, and a sale rung up while you count
-        still counts.
+        still counts. Only one sheet can be open over the same shelves at a
+        time — two would take the same shortage off twice.
       </p>
 
       <table className="acc-table">
@@ -391,12 +403,14 @@ export default function StockTake({
         </thead>
         <tbody>
           {counts === null && <tr><td colSpan={5} className="acc-empty">Looking…</td></tr>}
-          {counts !== null && counts.length === 0 && (
+          {counts !== null && shownCounts.length === 0 && (
             <tr><td colSpan={5} className="acc-empty">
-              No stock take yet. Start one above.
+              {counts.length === 0
+                ? "No stock take yet. Start one above."
+                : `No stock take in ${deptName} yet. Start one above.`}
             </td></tr>
           )}
-          {(counts ?? []).map((c) => (
+          {shownCounts.map((c) => (
             <tr
               key={c.id}
               className={`acc-row${c.status !== "open" ? " is-quiet" : ""}`}
@@ -429,6 +443,28 @@ export default function StockTake({
                 )}
               </td>
               <td className="num">
+                {c.status === "open" && (
+                  <button
+                    className="btn-line quiet"
+                    disabled={busy || !online}
+                    aria-label={`Abandon ${c.doc_number}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBusy(true);
+                      setError(null);
+                      void abandonStockCount(pin, c.id)
+                        .then(async () => {
+                          setBanner(`${c.doc_number} abandoned. Nothing moved.`);
+                          await load();
+                        })
+                        .catch((err) =>
+                          setError(errorMessage(err, "That count could not be abandoned")))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Abandon
+                  </button>
+                )}{" "}
                 {c.status === "open" && (
                   <button className="btn-line" onClick={() => void loadLines(c)}>
                     Continue
