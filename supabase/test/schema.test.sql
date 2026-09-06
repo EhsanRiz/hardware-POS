@@ -3916,4 +3916,72 @@ begin
     'a department holding only untracked lines still has nothing to count');
 end $$;
 
+-- 0070: a loss nobody can value is not a loss of nothing -------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_user public.app_users;
+  v_free uuid; v_rep jsonb; v_e jsonb; v_before numeric; v_lines int;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id into v_org, v_mgr from fixture;
+  select * into v_user from public.app_users where id = v_mgr;
+
+  v_rep := public.pos_shrinkage(v_tok, '1234', current_date - 1, current_date);
+  v_before := (v_rep->'totals'->>'at_cost')::numeric;
+  v_lines := (v_rep->'totals'->>'uncosted_lines')::int;
+  perform assert_eq(v_lines, 0, 'nothing is unvaluable to begin with');
+
+  -- A product the shop has never recorded a cost against. Real tills have
+  -- them: something added in a hurry, or imported without a cost column.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, active, tax_code)
+  values (v_org, 'NOCOST-1', 'Plastic Water Meter 15mm', 'ea', 240, null, 12,
+          true, 'standard')
+  returning id into v_free;
+
+  perform public.apply_stock(v_free, -1, 'stocktake', 'test', null, v_user,
+                             'Counted 11, expected 12', null);
+
+  v_rep := public.pos_shrinkage(v_tok, '1234', current_date - 1, current_date);
+  select e into v_e from jsonb_array_elements(v_rep->'rows') e
+   where e->>'sku' = 'NOCOST-1';
+  perform assert(v_e is not null, 'a loss nobody can value is still a loss');
+  perform assert_eq((v_e->>'qty')::numeric, 1::numeric, 'one of them gone');
+
+  -- IT IS NOT AN ESTIMATE. "R 0.00, estimated" reads as "worth nothing", and
+  -- a shop reading that concludes it lost nothing. It has to say the shop
+  -- does not know what it lost.
+  perform assert((v_e->>'uncosted')::boolean,
+    'and it is marked as something the shop cannot value');
+  perform assert((v_e->>'estimated')::boolean = false,
+    'not as an estimate, which would claim a figure it does not have');
+
+  -- Counted, and counted apart from the money.
+  perform assert_eq((v_rep->'totals'->>'uncosted_lines')::int, v_lines + 1,
+    'the unvaluable line is counted');
+  perform assert_eq((v_rep->'totals'->>'uncosted_units')::numeric, 1::numeric,
+    'with how many units nobody can put a price on');
+  perform assert_eq((v_rep->'totals'->>'at_cost')::numeric, v_before,
+    'and it adds nothing to a total that would otherwise be a lie');
+
+  -- A product WITH a cost is still an estimate when the movement carried none.
+  declare v_cem uuid; v_cost numeric;
+  begin
+    select id, cost into v_cem, v_cost
+      from public.products where sku = 'CEM-425-50';
+    perform public.apply_stock(v_cem, -1, 'adjustment', 'test', null, v_user,
+                               'Bag split', null);
+    v_rep := public.pos_shrinkage(v_tok, '1234', current_date - 1, current_date);
+    select e into v_e from jsonb_array_elements(v_rep->'rows') e
+     where e->>'sku' = 'CEM-425-50' and e->>'reason' = 'adjustment';
+    perform assert((v_e->>'estimated')::boolean,
+      'a movement with no cost against a product that has one is an estimate');
+    perform assert((v_e->>'uncosted')::boolean = false,
+      'and is valued, not counted apart');
+    perform assert_eq((v_e->>'at_cost')::numeric, round(v_cost, 2),
+      'at what the shop pays for it today');
+  end;
+end $$;
+
 select 'all database tests passed' as result;

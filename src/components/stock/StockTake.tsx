@@ -225,7 +225,7 @@ export default function StockTake({
                 setError(`${typed.trim()} is not on this sheet.`);
               }
             }}
-            placeholder="Scan a barcode, or find a line by name, code or bin"
+            placeholder="Scan a barcode, or search"
             aria-label="Scan or find a line on this sheet"
           />
           <label className="btn-line" style={{ display: "flex", gap: 8, alignItems: "center" }}>

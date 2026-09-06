@@ -379,6 +379,8 @@ export interface ShrinkageRow {
   at_cost: number;
   /** True where this is today's cost, not the cost on the day it was lost. */
   estimated: boolean;
+  /** True where the shop has no cost for it at all, so it cannot be valued. */
+  uncosted: boolean;
 }
 
 export interface Shrinkage {
@@ -389,6 +391,9 @@ export interface Shrinkage {
     written_off: number;
     lines: number;
     any_estimated: boolean;
+    /** Counted, not valued — they add nothing to at_cost, deliberately. */
+    uncosted_lines: number;
+    uncosted_units: number;
   };
   from: string;
   to: string;

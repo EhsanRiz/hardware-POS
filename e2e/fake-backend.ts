@@ -1426,20 +1426,20 @@ export async function installBackend(page: Page): Promise<Backend> {
                  && m.qty_delta < 0);
         const key = (m: typeof lost[number]) => `${m.product_id}|${m.reason}`;
         const groups = new Map<string, { qty: number; at_cost: number;
-                                         estimated: boolean; reason: string;
-                                         product_id: string }>();
+                                         estimated: boolean; uncosted: boolean;
+                                         reason: string; product_id: string }>();
         for (const m of lost) {
           const p = fakeProduct(m.product_id);
-          // Valued at the cost on the movement where there is one, and at
-          // today's cost where there is not — marked, never dropped.
-          const cost = m.unit_cost ?? p?.cost ?? 0;
+          // Three states: the cost on the movement, today's cost, or no idea.
+          const known = m.unit_cost ?? p?.cost ?? null;
           const g = groups.get(key(m)) ?? {
-            qty: 0, at_cost: 0, estimated: false,
+            qty: 0, at_cost: 0, estimated: false, uncosted: false,
             reason: m.reason, product_id: m.product_id,
           };
           g.qty += -m.qty_delta;
-          g.at_cost += -m.qty_delta * cost;
-          g.estimated = g.estimated || m.unit_cost == null;
+          g.at_cost += -m.qty_delta * (known ?? 0);
+          g.estimated = g.estimated || (m.unit_cost == null && p?.cost != null);
+          g.uncosted = g.uncosted || known == null;
           groups.set(key(m), g);
         }
         const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -1449,6 +1449,7 @@ export async function installBackend(page: Page): Promise<Backend> {
             department: p?.category_name ?? "—", item: p?.name ?? "—",
             sku: p?.sku ?? null, reason: g.reason, qty: g.qty,
             at_cost: r2(g.at_cost), estimated: g.estimated,
+            uncosted: g.uncosted,
           };
         }).sort((a, b) => b.at_cost - a.at_cost);
         return json({
@@ -1461,6 +1462,9 @@ export async function installBackend(page: Page): Promise<Backend> {
               .reduce((t, r) => t + r.at_cost, 0)),
             lines: rows.length,
             any_estimated: rows.some((r) => r.estimated),
+            uncosted_lines: rows.filter((r) => r.uncosted).length,
+            uncosted_units: r2(rows.filter((r) => r.uncosted)
+              .reduce((t, r) => t + r.qty, 0)),
           },
           from: body.p_from, to: body.p_to,
         });
