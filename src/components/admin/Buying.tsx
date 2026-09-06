@@ -703,12 +703,115 @@ function OrderSheet({
   );
 }
 
+/**
+ * A date, chosen from a calendar.
+ *
+ * This was a window.prompt asking for "YYYY-MM-DD", which is fine for a
+ * developer and useless for somebody standing at a counter with a tablet:
+ * no calendar, no validation, and a typo becomes a due date nobody notices.
+ * `input type="date"` gives every platform its own native picker.
+ */
+function AskDate({
+  title, subtitle, value, onSave, onCancel,
+}: {
+  title: string;
+  subtitle?: string;
+  value: string | null;
+  onSave: (iso: string | null) => void;
+  onCancel: () => void;
+}) {
+  const [when, setWhen] = useState(value ?? "");
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div
+        className="modal-card"
+        role="dialog"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 380 }}
+      >
+        <h2 className="modal-title">{title}</h2>
+        {subtitle && <p className="acc-note">{subtitle}</p>}
+        <input
+          autoFocus
+          type="date"
+          className="modal-input"
+          value={when}
+          aria-label="Due date"
+          onChange={(e) => setWhen(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSave(when || null); }}
+        />
+        <div className="modal-actions">
+          <button className="btn-line" onClick={onCancel}>Cancel</button>
+          {/* A bill can lose its date as well as gain one. */}
+          <button className="btn-line quiet" onClick={() => onSave(null)}>
+            No date
+          </button>
+          <button className="btn-fill" onClick={() => onSave(when || null)}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** An amount, on a keypad-friendly field rather than a browser prompt. */
+function AskAmount({
+  title, subtitle, value, onSave, onCancel,
+}: {
+  title: string;
+  subtitle?: string;
+  value: number;
+  onSave: (amount: number) => void;
+  onCancel: () => void;
+}) {
+  const [typed, setTyped] = useState(String(value));
+  const amount = Number(typed.replace(",", "."));
+  const ok = Number.isFinite(amount) && amount > 0;
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div
+        className="modal-card"
+        role="dialog"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 430 }}
+      >
+        <h2 className="modal-title">{title}</h2>
+        {subtitle && <p className="acc-note">{subtitle}</p>}
+        <input
+          autoFocus
+          inputMode="decimal"
+          className="modal-input"
+          value={typed}
+          aria-label="Amount paid"
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && ok) onSave(amount); }}
+        />
+        <div className="modal-actions">
+          <button className="btn-line" onClick={onCancel}>Cancel</button>
+          {/* The common case is settling it, one tap. */}
+          <button className="btn-line" onClick={() => setTyped(String(value))}>
+            Pay it all
+          </button>
+          <button className="btn-fill" disabled={!ok} onClick={() => onSave(amount)}>
+            Record payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- What you owe -----------------------------------------------------------
 
 function Owed({ pin, online }: { pin: string; online: boolean }) {
   const [data, setData] = useState<Payables | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState<PayableRow | null>(null);
+  const [dating, setDating] = useState<PayableRow | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -723,17 +826,8 @@ function Owed({ pin, online }: { pin: string; online: boolean }) {
     void load();
   }, [load]);
 
-  async function pay(r: PayableRow) {
-    const raw = window.prompt(
-      `How much is being paid to ${r.supplier}?`,
-      String(r.outstanding)
-    );
-    if (raw == null) return;
-    const amount = Number(raw.replace(",", "."));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setError("A payment has to be for something.");
-      return;
-    }
+  async function pay(r: PayableRow, amount: number) {
+    setPaying(null);
     setBusy(true);
     try {
       await supplierMarkPaid(pin, r.id, amount);
@@ -745,12 +839,11 @@ function Owed({ pin, online }: { pin: string; online: boolean }) {
     }
   }
 
-  async function setDue(r: PayableRow) {
-    const raw = window.prompt("When is it due? (YYYY-MM-DD)", r.due_date ?? "");
-    if (raw == null) return;
+  async function setDue(r: PayableRow, iso: string | null) {
+    setDating(null);
     setBusy(true);
     try {
-      await supplierSetDue(pin, r.id, raw.trim() === "" ? null : raw.trim());
+      await supplierSetDue(pin, r.id, iso);
       await load();
     } catch (e) {
       setError(errorMessage(e, "That date could not be set"));
@@ -805,10 +898,18 @@ function Owed({ pin, online }: { pin: string; online: boolean }) {
                 <td className="num quiet">{r.paid > 0 ? money(r.paid) : "—"}</td>
                 <td className="num">{money(r.outstanding)}</td>
                 <td className="num">
-                  <button className="btn-line" disabled={busy || !online} onClick={() => void setDue(r)}>
+                  <button
+                    className="btn-line"
+                    disabled={busy || !online}
+                    onClick={() => setDating(r)}
+                  >
                     Due date
                   </button>{" "}
-                  <button className="btn-line" disabled={busy || !online} onClick={() => void pay(r)}>
+                  <button
+                    className="btn-line"
+                    disabled={busy || !online}
+                    onClick={() => setPaying(r)}
+                  >
                     Pay
                   </button>
                 </td>
@@ -816,6 +917,26 @@ function Owed({ pin, online }: { pin: string; online: boolean }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {dating && (
+        <AskDate
+          title={`When is ${dating.doc_number ?? "this invoice"} due?`}
+          subtitle={`${dating.supplier} · ${money(dating.outstanding)} still owed`}
+          value={dating.due_date}
+          onSave={(iso) => void setDue(dating, iso)}
+          onCancel={() => setDating(null)}
+        />
+      )}
+
+      {paying && (
+        <AskAmount
+          title={`Pay ${paying.supplier}`}
+          subtitle={`${paying.doc_number ?? "Invoice"} · ${money(paying.outstanding)} still owed`}
+          value={paying.outstanding}
+          onSave={(amount) => void pay(paying, amount)}
+          onCancel={() => setPaying(null)}
+        />
       )}
     </div>
   );

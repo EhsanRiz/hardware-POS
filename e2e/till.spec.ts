@@ -5499,20 +5499,54 @@ test("a part payment leaves the balance where somebody can still see it", async 
   const bill = page.locator("tr.acc-row", { hasText: "VX-7781" });
   await expect(bill).toBeVisible();
   await expect(bill).toContainText("15 days late");
+
+  // A DATE IS PICKED FROM A CALENDAR, not typed into a browser prompt as
+  // "YYYY-MM-DD" — which is fine for a developer and useless for somebody
+  // standing at a counter with a tablet.
+  await bill.getByRole("button", { name: "Due date" }).click();
+  const dater = page.getByRole("dialog", { name: /When is VX-7781 due/ });
+  const dueBox = dater.getByLabel("Due date");
+  await expect(dueBox).toHaveAttribute("type", "date");
+  await expect(dueBox).toHaveValue(due);
+  await dueBox.fill("2026-09-01");
+  await dater.getByRole("button", { name: "Save" }).click();
+  await expect(bill).toContainText("days late");
+  // And it can lose a date as well as gain one.
+  await bill.getByRole("button", { name: "Due date" }).click();
+  await page.getByRole("dialog", { name: /When is VX-7781 due/ })
+    .getByRole("button", { name: "No date" }).click();
+  await expect(bill).toContainText("no date");
+  await bill.getByRole("button", { name: "Due date" }).click();
+  await page.getByRole("dialog", { name: /When is VX-7781 due/ })
+    .getByLabel("Due date").fill(due);
+  await page.getByRole("dialog", { name: /When is VX-7781 due/ })
+    .getByRole("button", { name: "Save" }).click();
+  await expect(bill).toContainText("15 days late");
   await expect(bill).toContainText(/R\s?4\s?300\.00/);
   // A quote is not a bill.
   await expect(page.locator("tr.acc-row", { hasText: "VX-Q2" })).toHaveCount(0);
 
   // R1000 against R4300. The other R3300 is the number that must not vanish.
-  page.once("dialog", (d) => void d.accept("1000"));
+  // A browser prompt asking for a figure is no use on a tablet at a counter,
+  // so this is a proper field with the outstanding amount already in it.
   await bill.getByRole("button", { name: "Pay" }).click();
+  const payment = page.getByRole("dialog", { name: /Pay Voltex/ });
+  await expect(payment).toContainText(/R\s?4\s?300\.00 still owed/);
+  const amount = payment.getByLabel("Amount paid");
+  await expect(amount).toHaveValue("4300");
+  await amount.fill("1000");
+  await payment.getByRole("button", { name: "Record payment" }).click();
   await expect(bill).toContainText(/R\s?3\s?300\.00/);
   await expect(bill).toContainText(/R\s?1\s?000\.00/);
   expect(be.supplierDocs[0].paid_at).toBeNull();
 
-  // Settled, and it leaves the list.
-  page.once("dialog", (d) => void d.accept("3300"));
+  // Settled, and it leaves the list. "Pay it all" fills in what is left.
   await bill.getByRole("button", { name: "Pay" }).click();
+  await page.getByRole("dialog", { name: /Pay Voltex/ })
+    .getByRole("button", { name: "Pay it all" }).click();
+  await expect(page.getByLabel("Amount paid")).toHaveValue("3300");
+  await page.getByRole("dialog", { name: /Pay Voltex/ })
+    .getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("tr.acc-row", { hasText: "VX-7781" })).toHaveCount(0);
   await expect(page.getByText("Nothing is owed to a supplier.")).toBeVisible();
   expect(be.supplierDocs[0].paid_amount).toBe(4300);
