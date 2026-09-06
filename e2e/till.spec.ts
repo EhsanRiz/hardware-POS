@@ -5403,6 +5403,14 @@ test("what is short becomes an order, and half a load is booked in against it", 
   expect(be.poLines).toHaveLength(1);
   expect(be.poLines[0].qty).toBe(1);
 
+  // AN ORDER WITH NO MONEY ON IT IS NOT A DOCUMENT ANYBODY CAN SEND. One
+  // roll at R50 is R50, and the sheet has to say so.
+  // The Amount cell specifically: asserting on the row matched the unit price
+  // in the column beside it, and stayed green with the amount deleted.
+  await expect(line.locator("td").nth(3)).toHaveText(/R\s?50\.00/);
+  await expect(page.locator(".acc-note").filter({ hasText: "on this order" }))
+    .toContainText(/R\s?50\.00/);
+
   // Ordering more than the bare shortfall, because one roll is not a delivery.
   await line.getByLabel(/Ordered Twin & Earth/i).fill("6");
   await line.getByLabel(/Ordered Twin & Earth/i).blur();
@@ -5410,8 +5418,14 @@ test("what is short becomes an order, and half a load is booked in against it", 
   expect(be.poLines).toHaveLength(1);
   expect(be.poLines[0].qty).toBe(6);
 
+  // Six at R50 is R300, on the line and on the order.
+  await expect(page.locator(".acc-note").filter({ hasText: "on this order" }))
+    .toContainText(/R\s?300\.00/);
+
   await page.getByRole("button", { name: "It has gone to the supplier" }).click();
   await expect(page.getByText("Marked as with the supplier.")).toBeVisible();
+  // And the banner from raising it does not stack on top of that.
+  await expect(page.getByText(/PO-000001 raised/)).toHaveCount(0);
 
   // HALF A LOAD IS THE NORMAL CASE. Four turn up, at a price that has moved.
   await line.getByLabel(/Arrived Twin & Earth/i).fill("4");
