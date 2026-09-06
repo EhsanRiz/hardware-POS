@@ -756,7 +756,15 @@ function AskDate({
   );
 }
 
-/** An amount, on a keypad-friendly field rather than a browser prompt. */
+/**
+ * An amount, on a keypad-friendly field rather than a browser prompt.
+ *
+ * There was a "Pay it all" button here and it was a dead control: the field
+ * already opens on the full outstanding figure, so pressing it set the value
+ * to what the box already said and nothing happened. The useful thing is not
+ * another way to type the number — it is being told what the number DOES, so
+ * the button names the payment and the line above it says what will be left.
+ */
 function AskAmount({
   title, subtitle, value, onSave, onCancel,
 }: {
@@ -769,6 +777,7 @@ function AskAmount({
   const [typed, setTyped] = useState(String(value));
   const amount = Number(typed.replace(",", "."));
   const ok = Number.isFinite(amount) && amount > 0;
+  const left = Math.round((value - amount) * 100) / 100;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div
@@ -789,14 +798,19 @@ function AskAmount({
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && ok) onSave(amount); }}
         />
+        <p className="acc-note" role="status">
+          {!ok
+            ? "A payment has to be for something."
+            : left > 0
+              ? `${money(left)} will still be owed.`
+              : left === 0
+                ? "This settles it."
+                : `${money(-left)} more than is owed.`}
+        </p>
         <div className="modal-actions">
           <button className="btn-line" onClick={onCancel}>Cancel</button>
-          {/* The common case is settling it, one tap. */}
-          <button className="btn-line" onClick={() => setTyped(String(value))}>
-            Pay it all
-          </button>
           <button className="btn-fill" disabled={!ok} onClick={() => onSave(amount)}>
-            Record payment
+            {ok ? `Pay ${money(amount)}` : "Pay"}
           </button>
         </div>
       </div>
