@@ -368,6 +368,29 @@ check("the reference does not run back over its own label",
   "label and value share a line and overlap");
 check("nor does the period",
   !overlaps("Period", "1 Jul 2026 to 5 Sep 2026"));
+// A REFERENCE OFF A REAL STATEMENT. The fixture's happened to be a hair wider
+// than the shop's, so the fixture wrapped and the shop's did not — the check
+// above passed over a document that overlapped in the field.
+const realRef = Buffer.from(sheetAsPdf(
+  { ...stSheet([]), number: "STM-20260906-2F0B67" }, shop)).toString("latin1");
+const stacked = (pdf, label, value) => {
+  const at = (needle) => {
+    const m = pdf.match(new RegExp(
+      `\\/(F\\d) ([\\d.]+) Tf [\\d. ]+rg 1 0 0 1 (-?[\\d.]+) (-?[\\d.]+) Tm \\(${needle}\\) Tj`));
+    return m ? { x: Number(m[3]), y: Number(m[4]),
+                 end: Number(m[3]) + widthOf(needle, Number(m[2]), m[1] === "F2") } : null;
+  };
+  const a = at(label), b = at(value);
+  if (!a || !b) return "one of them was never drawn";
+  if (Math.abs(a.y - b.y) < 2 && b.x < a.end) return "they overlap on one line";
+  return null;
+};
+check("a real statement's reference clears its label",
+  stacked(realRef, "Number", "STM-20260906-2F0B67") === null,
+  stacked(realRef, "Number", "STM-20260906-2F0B67") ?? "");
+check("and so does the shorter one",
+  stacked(stmt, "Number", "STM-20260905-A1B2C3") === null,
+  stacked(stmt, "Number", "STM-20260905-A1B2C3") ?? "");
 // No quantities and no unit prices: those columns belong to an item table.
 check("it does not pretend to be an item table",
   !stmt.includes("(UNIT PRICE) Tj") && !stmt.includes("(QTY) Tj")
