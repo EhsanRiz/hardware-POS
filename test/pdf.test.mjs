@@ -341,6 +341,33 @@ check("it says how old the money is",
   stmt.includes("(HOW OLD THIS IS) Tj") && stmt.includes("(R 1 100.00) Tj"));
 // A statement is a request for money, so it has to say where to send it.
 check("and where to pay it", stmt.includes("(62012345678) Tj"));
+// THE FOOT. The statement branch left the page loop before the code that
+// draws it, so this was the one document in the app with no footer at all —
+// no disclaimer, no mark, nothing saying which document the page belongs to.
+// Every other check here passed over it, because they only ever looked for
+// things the statement DOES carry.
+check("it has the same foot as every other document",
+  stmt.includes("(E&OE. This document is computer generated and is valid without a signature.) Tj")
+  && stmt.includes("(5 Star Hardware Store \\267 Statement STM-20260905-A1B2C3) Tj")
+  && /InnovaPOS \\267 a product of InnovaEarth/.test(stmt));
+// A LABEL AND ITS VALUE MUST NOT BE DRAWN ON TOP OF EACH OTHER. The value is
+// right-aligned from the margin and the label sits 110pt back from it; a
+// reference or a period is wider than that and ran straight over it.
+const overlaps = (label, value) => {
+  const at = (needle, size, bold) => {
+    const m = stmt.match(new RegExp(
+      `\\/(F\\d) ([\\d.]+) Tf [\\d. ]+rg 1 0 0 1 (-?[\\d.]+) (-?[\\d.]+) Tm \\(${needle}\\) Tj`));
+    return m ? { x: Number(m[3]), y: Number(m[4]),
+                 end: Number(m[3]) + widthOf(needle.replace(/\\\\/g, ""), Number(m[2]), m[1] === "F2") } : null;
+  };
+  const a = at(label), b = at(value);
+  return a && b && Math.abs(a.y - b.y) < 2 && b.x < a.end;
+};
+check("the reference does not run back over its own label",
+  !overlaps("Number", "STM-20260905-A1B2C3"),
+  "label and value share a line and overlap");
+check("nor does the period",
+  !overlaps("Period", "1 Jul 2026 to 5 Sep 2026"));
 // No quantities and no unit prices: those columns belong to an item table.
 check("it does not pretend to be an item table",
   !stmt.includes("(UNIT PRICE) Tj") && !stmt.includes("(QTY) Tj")

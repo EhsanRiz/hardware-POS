@@ -5888,3 +5888,45 @@ test("the department drives the list, and two sheets cannot be open over the sam
   await page.getByLabel("Department").selectOption({ label: "Everything" });
   await expect(page.locator("tr.acc-row")).toHaveCount(2);
 });
+
+test("an invoice on an account opens the sale behind it", async ({ page }) => {
+  be.customers.push({
+    id: "k7", code: "TRD-007", name: "Ledger Builders",
+    phone: "051 924 2222", is_trade: false, credit_limit: 40000,
+    balance: 0, available: 40000,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // A sale on the account, rung up properly so the ledger has a real sale.
+  await addBySearch(page, "cement", "Cement 42.5N 50kg", "3");
+  const account = page.getByRole("button", { name: /^Account$/ });
+  await account.click();
+  await page.locator(".modal-row", { hasText: "Ledger Builders" }).click();
+  await account.click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Accounts" }).click();
+  await page.locator("tr.acc-row", { hasText: "Ledger Builders" }).click();
+
+  // "WHAT DID WE ACTUALLY BUY ON THAT INVOICE" was three screens away: out of
+  // Accounts, into Manage, open Sales, hunt the number.
+  const charge = page.locator("tr", { hasText: "Invoice" }).first();
+  await charge.click();
+  const sale = page.getByRole("dialog", { name: /INV-/ });
+  await expect(sale).toBeVisible();
+  await expect(sale).toContainText("Cement 42.5N 50kg");
+  await expect(sale).toContainText("Ledger Builders");
+  await sale.getByLabel("Close").click();
+  await expect(sale).toHaveCount(0);
+
+  // A payment has no sale behind it, so its line does not pretend to open one.
+  await page.getByLabel(/amount/i).first().fill("100");
+  await page.getByRole("button", { name: /^Receive R/ }).click();
+  const paid = page.locator("tr", { hasText: "Cash" }).first();
+  await expect(paid).not.toHaveClass(/is-clickable/);
+  await paid.click();
+  await expect(page.getByRole("dialog", { name: /INV-/ })).toHaveCount(0);
+});

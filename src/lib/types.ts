@@ -194,6 +194,12 @@ export interface LedgerEntry {
   entry_id: string;
   /** A voided payment stays on the ledger but stops counting. */
   voided: boolean;
+  // 0073: enough of the sale behind a charge to open it from here. Null on a
+  // payment and on the opening balance, which have no sale behind them.
+  cashier_name: string | null;
+  tax_amount: number | null;
+  status: string | null;
+  payment_method: string | null;
 }
 
 /** An account and how old the money owed on it is. */
