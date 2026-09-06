@@ -390,11 +390,12 @@ export function sheetAsPdf(
     if (sheet.poNumber) meta.push(["Your order", sheet.poNumber]);
     if (sheet.servedBy) meta.push(["Served by", sheet.servedBy]);
     for (const [k, v] of meta) {
-      // Label and value sit on one line only while the value fits beside it.
-      // A statement's reference and its period are both far wider than the
-      // gap, and were drawn straight back over the label — "Number" and
-      // "STM-20260906-2F0B67" on top of each other.
-      if (widthOf(v, 9.5) <= 110 - 6) {
+      // Label and value share a line only when BOTH fit in the gap. Measuring
+      // the value alone was the first fix and it was wrong: the label lives in
+      // that same 110pt, so a reference needing 99pt "fitted" beside a label
+      // needing 33 and was drawn straight back over it. Only the period
+      // wrapped, and only because its value alone happened to exceed the gap.
+      if (widthOf(k, 9.5) + 8 + widthOf(v, 9.5) <= 110) {
         p.text(k, RIGHT - 110, 9.5, { colour: GREY });
         p.text(v, RIGHT, 9.5, { align: "right" });
         p.y += 13;
