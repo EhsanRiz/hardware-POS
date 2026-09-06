@@ -1289,6 +1289,20 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
         const cat = (body.p_category_id as string) ?? null;
+        // 0069: two open sheets over the same shelves both snapshot the same
+        // expected figure, so posting both takes the shortage off twice.
+        const clash = be.stockCounts.find(
+          (x) => x.status === "open"
+              && (x.category_id === null || cat === null || x.category_id === cat));
+        if (clash) {
+          return fail(`A count of these shelves is already open (${clash.doc_number}). `
+                      + "Finish it or abandon it first.");
+        }
+        // And a sheet with nothing on it is not a stock take.
+        if (!PRODUCTS.some((p) => p.stock_qty != null
+                                  && (!cat || p.category_id === cat))) {
+          return fail("There is nothing on a shelf in there to count");
+        }
         const row = {
           id: `sc${be.stockCounts.length + 1}`,
           doc_number: `CNT-${String(be.stockCounts.length + 1).padStart(6, "0")}`,

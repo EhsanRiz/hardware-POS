@@ -3849,4 +3849,71 @@ begin
   perform assert_eq(v_n, 1, 'and so does pos_stock_counts');
 end $$;
 
+-- 0069: one open sheet per shelf, and no sheet with nothing on it -----------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_cat uuid; v_empty uuid; v_c1 public.stock_counts;
+  v_cem uuid; v_before numeric; v_after numeric; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id, stock_qty into v_cem, v_before
+    from public.products where sku = 'CEM-425-50';
+  select category_id into v_cat from public.products where id = v_cem;
+
+  -- Nothing open to start with: the blocks above post or abandon what they open.
+  perform assert(not exists (
+    select 1 from public.stock_counts where org_id = v_org and status = 'open'),
+    'no sheet is left open by the time this runs');
+
+  v_c1 := public.pos_stock_count_open(v_tok, '1234', v_cat, 'The first one');
+
+  -- TWO SHEETS OVER THE SAME SHELVES DOUBLE-APPLY THE SAME DIFFERENCE. Both
+  -- snapshot the same expected figure at open; posting both takes the shortage
+  -- off twice, and the shop writes off six having lost three.
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L, %L)', v_tok, '1234', v_cat),
+    'a second sheet over the same department cannot be opened');
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L)', v_tok, '1234'),
+    'nor a whole-shop sheet while a department is being walked');
+
+  -- Abandoning it clears the way, without touching a single quantity.
+  perform public.pos_stock_count_abandon(v_tok, '1234', v_c1.id);
+  perform assert_eq((select stock_qty from public.products where id = v_cem), v_before,
+    'abandoning a sheet moves nothing');
+  v_c1 := public.pos_stock_count_open(v_tok, '1234', v_cat, 'The one that counts');
+  perform assert(v_c1.id is not null, 'and the next sheet opens once it is gone');
+
+  -- The other direction: a whole-shop sheet blocks a department one.
+  perform public.pos_stock_count_abandon(v_tok, '1234', v_c1.id);
+  v_c1 := public.pos_stock_count_open(v_tok, '1234', null, 'Everything');
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L, %L)', v_tok, '1234', v_cat),
+    'and a department cannot be walked underneath a whole-shop count');
+  perform public.pos_stock_count_abandon(v_tok, '1234', v_c1.id);
+
+  -- A DEPARTMENT WITH NOTHING ON A SHELF IS NOT A STOCK TAKE. It filled the
+  -- list with "0 of 0" rows nobody could act on or get rid of.
+  insert into public.categories (org_id, name, sort_order)
+  values (v_org, 'Nothing On A Shelf', 99) returning id into v_empty;
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L, %L)', v_tok, '1234', v_empty),
+    'a department with nothing tracked in it cannot be counted');
+  -- And nothing was left behind by the attempt.
+  select count(*)::int into v_n from public.stock_counts
+   where org_id = v_org and category_id = v_empty;
+  perform assert_eq(v_n, 0, 'and no empty sheet is left behind by the attempt');
+
+  -- A count that is not tracked does not block one that is: an untracked
+  -- product in the department is not a shelf.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               stock_qty, active, tax_code, category_id)
+  values (v_org, 'SVC-1', 'Key cutting', 'ea', 25, null, true, 'standard', v_empty);
+  perform assert_refuses(
+    format('select public.pos_stock_count_open(%L, %L, %L)', v_tok, '1234', v_empty),
+    'a department holding only untracked lines still has nothing to count');
+end $$;
+
 select 'all database tests passed' as result;

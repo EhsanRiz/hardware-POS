@@ -5734,3 +5734,57 @@ test("what walked out of the door without being sold is a number the owner can s
     .toContainText("estimated");
   await expect(view).toContainText(/valued at today/i);
 });
+
+test("the department drives the list, and two sheets cannot be open over the same shelves", async ({ page }) => {
+  const cement = PRODUCTS.find((p) => p.sku === "CEM-425-50")!;
+  const before = cement.stock_qty!;
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.getByRole("dialog", { name: "Stock" })
+      .locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: "Stock take" }).click();
+
+  // The button says what it is about to do. "Start a count" beside a list of
+  // other departments' sheets gave no clue which of the two the box above
+  // belonged to — and it belonged to neither, it chose the next count while
+  // the list showed everything.
+  const start = page.getByRole("button", { name: /^Start a count/ });
+  await expect(start).toHaveText("Start a count of everything");
+  await start.click();
+  await expect(page.locator("tr.acc-row", { hasText: "CNT-000001" })).toBeVisible();
+
+  // TWO SHEETS OVER THE SAME SHELVES TAKE THE SAME SHORTAGE OFF TWICE: both
+  // snapshot the same expected figure at open, and both post the difference.
+  await start.click();
+  await expect(page.locator(".acc-note.is-bad")).toContainText("CNT-000001");
+
+  // Choosing a department now moves the list as well as the next count.
+  await page.getByLabel("Department").selectOption({ label: "Building" });
+  await expect(start).toHaveText("Start a count in Building");
+  await expect(page.locator("tr.acc-row", { hasText: "CNT-000001" })).toHaveCount(0);
+  await expect(page.getByText("No stock take in Building yet")).toBeVisible();
+  // A whole-shop sheet covers Building too, so this is refused as well.
+  await start.click();
+  await expect(page.locator(".acc-note.is-bad")).toContainText("CNT-000001");
+
+  // Clearing a half-started sheet no longer means opening it first, which is
+  // why they piled up.
+  await page.getByLabel("Department").selectOption({ label: "Everything" });
+  await page.getByRole("button", { name: "Abandon CNT-000001" }).click();
+  await expect(page.getByText("CNT-000001 abandoned. Nothing moved.")).toBeVisible();
+  expect(cement.stock_qty).toBe(before);
+
+  // And now the department sheet opens.
+  await page.getByLabel("Department").selectOption({ label: "Building" });
+  await page.getByRole("button", { name: "Start a count in Building" }).click();
+  const second = page.locator("tr.acc-row", { hasText: "CNT-000002" });
+  await expect(second).toBeVisible();
+  await expect(second).toContainText("Building");
+  // The abandoned whole-shop sheet is still not a Building sheet.
+  await expect(page.locator("tr.acc-row", { hasText: "CNT-000001" })).toHaveCount(0);
+  await page.getByLabel("Department").selectOption({ label: "Everything" });
+  await expect(page.locator("tr.acc-row")).toHaveCount(2);
+});
