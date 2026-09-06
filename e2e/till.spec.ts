@@ -5534,19 +5534,30 @@ test("a part payment leaves the balance where somebody can still see it", async 
   await expect(payment).toContainText(/R\s?4\s?300\.00 still owed/);
   const amount = payment.getByLabel("Amount paid");
   await expect(amount).toHaveValue("4300");
+  // The box says what the figure DOES. There used to be a "Pay it all" button
+  // here that set the field to what it already said and so did nothing at all.
+  await expect(payment).toContainText("This settles it.");
+  // A payment of nothing is not a payment, and the box says so rather than
+  // leaving a dead button to be puzzled over.
+  await amount.fill("");
+  await expect(payment).toContainText("A payment has to be for something.");
+  await expect(payment.getByRole("button", { name: /^Pay/ })).toBeDisabled();
+  await amount.fill("0");
+  await expect(payment.getByRole("button", { name: /^Pay/ })).toBeDisabled();
+
   await amount.fill("1000");
-  await payment.getByRole("button", { name: "Record payment" }).click();
+  await expect(payment).toContainText(/R\s?3\s?300\.00 will still be owed/);
+  await payment.getByRole("button", { name: /^Pay R\s?1\s?000\.00$/ }).click();
   await expect(bill).toContainText(/R\s?3\s?300\.00/);
   await expect(bill).toContainText(/R\s?1\s?000\.00/);
   expect(be.supplierDocs[0].paid_at).toBeNull();
 
-  // Settled, and it leaves the list. "Pay it all" fills in what is left.
+  // Settled, and it leaves the list. The box opens on what is actually left.
   await bill.getByRole("button", { name: "Pay" }).click();
-  await page.getByRole("dialog", { name: /Pay Voltex/ })
-    .getByRole("button", { name: "Pay it all" }).click();
-  await expect(page.getByLabel("Amount paid")).toHaveValue("3300");
-  await page.getByRole("dialog", { name: /Pay Voltex/ })
-    .getByRole("button", { name: "Record payment" }).click();
+  const rest = page.getByRole("dialog", { name: /Pay Voltex/ });
+  await expect(rest.getByLabel("Amount paid")).toHaveValue("3300");
+  await expect(rest).toContainText("This settles it.");
+  await rest.getByRole("button", { name: /^Pay R\s?3\s?300\.00$/ }).click();
   await expect(page.locator("tr.acc-row", { hasText: "VX-7781" })).toHaveCount(0);
   await expect(page.getByText("Nothing is owed to a supplier.")).toBeVisible();
   expect(be.supplierDocs[0].paid_amount).toBe(4300);
