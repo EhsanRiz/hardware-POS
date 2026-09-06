@@ -4035,4 +4035,81 @@ begin
   end;
 end $$;
 
+-- 0072: order what you ticked ----------------------------------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_sup uuid; v_a uuid; v_b uuid;
+  v_po public.purchase_orders; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id into v_sup from public.suppliers where org_id = v_org limit 1;
+
+  -- Two short lines a real shop buys from two different merchants.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, reorder_level, active, tax_code)
+  values (v_org, 'TICK-A', 'Allen Key Set 8pce', 'ea', 120, 70, 1, 8, true, 'standard')
+  returning id into v_a;
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, reorder_level, active, tax_code)
+  values (v_org, 'TICK-B', 'Step Ladder 2.2m', 'ea', 900, 640, 0, 2, true, 'standard')
+  returning id into v_b;
+
+  -- ONE SUPPLIER DOES NOT SELL EVERYTHING THAT IS SHORT. Ticking one line
+  -- must put one line on the order, not the whole list for somebody to
+  -- delete back down — deleting lines off a document is where mistakes live.
+  v_po := public.pos_po_from_reorder(v_tok, '1234', v_sup, null, array[v_a]);
+  select count(*)::int into v_n from public.purchase_order_lines where po_id = v_po.id;
+  perform assert_eq(v_n, 1, 'ticking one line orders one line');
+  perform assert(exists (
+    select 1 from public.pos_po_lines(v_tok, '1234', v_po.id) l
+     where l.product_id = v_a), 'the one that was ticked');
+  perform assert(not exists (
+    select 1 from public.pos_po_lines(v_tok, '1234', v_po.id) l
+     where l.product_id = v_b), 'and not the one that was not');
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'testing');
+
+  -- Both, when both are ticked.
+  v_po := public.pos_po_from_reorder(v_tok, '1234', v_sup, null, array[v_a, v_b]);
+  select count(*)::int into v_n from public.purchase_order_lines where po_id = v_po.id;
+  perform assert_eq(v_n, 2, 'ticking two orders two');
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'testing');
+
+  -- Null still means the lot, which is what the whole-list button did.
+  v_po := public.pos_po_from_reorder(v_tok, '1234', v_sup);
+  select count(*)::int into v_n from public.purchase_order_lines where po_id = v_po.id;
+  perform assert(v_n >= 2, 'no selection still means everything that is short');
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'testing');
+
+  -- THIS FUNCTION MEANS "FROM THE REORDER LIST". Ticking cannot smuggle on a
+  -- line that is not short; that is what adding by hand is for.
+  declare v_full uuid; v_drafts int;
+  begin
+    insert into public.products (org_id, sku, name, unit_code, price_retail,
+                                 cost, stock_qty, reorder_level, active, tax_code)
+    values (v_org, 'TICK-C', 'Wheelbarrow', 'ea', 800, 500, 40, 2, true, 'standard')
+    returning id into v_full;
+    -- Counted before and after, not against zero: an earlier block leaves a
+    -- draft of its own, and an absolute count would have been measuring that.
+    select count(*)::int into v_drafts from public.purchase_orders
+     where org_id = v_org and status = 'draft';
+    perform assert_refuses(
+      format('select public.pos_po_from_reorder(%L, %L, %L, null, %L::uuid[])',
+             v_tok, '1234', v_sup, array[v_full]),
+      'a line that is not short cannot be ordered off the reorder list');
+    -- And the refusal leaves nothing behind, not even a burnt document.
+    select count(*)::int into v_n from public.purchase_orders
+     where org_id = v_org and status = 'draft';
+    perform assert_eq(v_n, v_drafts, 'and no empty order is left behind by the refusal');
+  end;
+
+  perform assert_refuses(
+    format('select public.pos_po_from_reorder(%L, %L, %L, null, %L::uuid[])',
+           v_tok, '1234', v_sup, array[]::uuid[]),
+    'and ticking nothing raises nothing');
+
+  update public.products set active = false where sku in ('TICK-A','TICK-B','TICK-C');
+end $$;
+
 select 'all database tests passed' as result;

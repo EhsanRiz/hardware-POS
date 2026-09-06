@@ -127,6 +127,10 @@ export const REGISTER_TOKEN = "test-register-token";
 const SEED_RETAIL = new Map(PRODUCTS.map((p) => [p.id, p.price_retail]));
 const SEED_STOCK = new Map(PRODUCTS.map((p) => [p.id, p.stock_qty]));
 const SEED_COST = new Map(PRODUCTS.map((p) => [p.id, p.cost ?? null]));
+// Reorder levels are module state too, and a test that moves one to put a
+// line on the reorder list left it moved for every test after it in the same
+// worker — an order of the pass, not of the code.
+const SEED_REORDER = new Map(PRODUCTS.map((p) => [p.id, p.reorder_level]));
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -876,6 +880,7 @@ export async function installBackend(page: Page): Promise<Backend> {
     p.stock_qty = SEED_STOCK.get(p.id) ?? null;
     // Booking a delivery in against an order writes cost onto module state too.
     p.cost = SEED_COST.get(p.id) ?? null;
+    p.reorder_level = SEED_REORDER.get(p.id) ?? null;
   }
 
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
@@ -1544,6 +1549,16 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
         const sup = be.suppliers.find((x) => x.id === body.p_supplier_id);
         if (!sup) return fail("Unknown supplier");
+        // 0072: null means everything short; a list means those lines only,
+        // and only where they are genuinely on the reorder list.
+        const picked = (body.p_product_ids as string[] | null) ?? null;
+        const wanted = PRODUCTS.filter(
+          (p) => p.stock_qty != null && p.reorder_level != null
+              && p.stock_qty <= p.reorder_level
+              && (picked === null || picked.includes(p.id)));
+        if (wanted.length === 0) {
+          return fail("Nothing on the reorder list was selected");
+        }
         const row = {
           id: `po${be.purchaseOrders.length + 1}`,
           doc_number: `PO-${String(be.purchaseOrders.length + 1).padStart(6, "0")}`,
@@ -1553,9 +1568,8 @@ export async function installBackend(page: Page): Promise<Backend> {
           created_by_name: USERS.manager.row.name, sent_at: null,
         };
         be.purchaseOrders.push(row);
-        for (const p of PRODUCTS) {
+        for (const p of wanted) {
           if (p.stock_qty == null || p.reorder_level == null) continue;
-          if (p.stock_qty > p.reorder_level) continue;
           be.poLines.push({
             id: `pol${be.poLines.length + 1}`, po_id: row.id, product_id: p.id,
             sku: p.sku, name: p.name, unit_code: p.unit_code,

@@ -5382,6 +5382,10 @@ test("what is short becomes an order, and half a load is booked in against it", 
   });
   const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
   const before = cable.stock_qty!;
+  // A SECOND SHORT LINE, or ticking one and ordering the lot look identical
+  // and the selection proves nothing.
+  const padlock = PRODUCTS.find((p) => p.sku === "PDL-50")!;
+  padlock.reorder_level = padlock.stock_qty!;
 
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
@@ -5391,16 +5395,33 @@ test("what is short becomes an order, and half a load is booked in against it", 
   // it goes — "short 1" and "short 1, sells 30 a month" are different problems.
   const short = page.locator("tr.acc-row", { hasText: "Twin & Earth 2.5mm 100m" });
   await expect(short).toBeVisible();
+  await expect(page.locator("tr.acc-row", { hasText: "Padlock 50mm Brass" })).toBeVisible();
+
+  // A dead button says what is stopping it, not what it would have done.
+  const raise = page.getByRole("button",
+    { name: /Choose a supplier|Tick what to order|Raise an order/ });
+  await expect(raise).toHaveText("Choose a supplier");
+  await expect(raise).toBeDisabled();
 
   await page.getByLabel("Supplier to order from").selectOption("sup1");
-  await page.getByRole("button", { name: "Raise an order for all of it" }).click();
+  // ONE MERCHANT DOES NOT SELL EVERYTHING THAT IS SHORT. Nothing is ticked to
+  // begin with, so the button cannot raise a list somebody then has to delete
+  // back down.
+  await expect(raise).toHaveText("Tick what to order");
+  await expect(raise).toBeDisabled();
+
+  await page.getByLabel("Order Twin & Earth 2.5mm 100m").check();
+  await expect(raise).toHaveText("Raise an order for 1 line");
+  await raise.click();
   await expect(page.getByText(/PO-000001 raised/)).toBeVisible();
 
   // It lands as a draft, on the order it was raised from.
   const line = page.locator("tr.acc-row", { hasText: "Twin & Earth 2.5mm 100m" });
   await expect(line).toBeVisible();
   await expect(page.getByText(/PO-000001 · Voltex · Draft/)).toBeVisible();
+  // Only what was ticked: the padlock is short too and is NOT on the order.
   expect(be.poLines).toHaveLength(1);
+  expect(be.poLines[0].product_id).toBe(cable.id);
   expect(be.poLines[0].qty).toBe(1);
 
   // AN ORDER WITH NO MONEY ON IT IS NOT A DOCUMENT ANYBODY CAN SEND. One
