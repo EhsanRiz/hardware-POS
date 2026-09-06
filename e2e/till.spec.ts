@@ -5701,11 +5701,18 @@ test("what walked out of the door without being sold is a number the owner can s
   be.stockMoves.push({
     product_id: "p1", qty_delta: -8, reason: "sale", note: null, unit_cost: 50,
   });
-  // And an old movement with no cost against it is valued at today's and said
-  // to be an estimate, rather than being quietly left out of the total.
+  // An old movement with no cost against it is valued at today's and said to
+  // be an estimate, rather than quietly left out of the total.
   be.stockMoves.push({
-    product_id: "p5", qty_delta: -1, reason: "adjustment",
+    product_id: "p3", qty_delta: -1, reason: "adjustment",
     note: "Old movement", unit_cost: null,
+  });
+  // And a product the shop has NO cost for at all is the third case. Real
+  // tills have them — something added in a hurry, or imported with no cost.
+  PRODUCTS.find((p) => p.sku === "PDL-50")!.cost = null;
+  be.stockMoves.push({
+    product_id: "p5", qty_delta: -2, reason: "stocktake",
+    note: "Counted 43, expected 45", unit_cost: null,
   });
 
   await pairAndSignIn(page, USERS.manager.pin);
@@ -5715,7 +5722,8 @@ test("what walked out of the door without being sold is a number the owner can s
 
   const view = page.getByRole("region", { name: "Losses" });
   await expect(view).toBeVisible();
-  // 3 × 50 counted short, plus 2 × 20 and 1 × 50 written off = 240.
+  // 3 × 50 counted short, plus 2 × 20 and 1 × 50 written off = 240. The two
+  // padlocks are NOT in it: nobody can say what they were worth.
   // Scoped to the summary: "Counted short" is also a value in the table below,
   // and an assertion that matches either proves neither.
   const glance = view.getByRole("group", { name: "Losses at a glance" });
@@ -5730,9 +5738,21 @@ test("what walked out of the door without being sold is a number the owner can s
   await expect(off).toContainText("Written off");
 
   // The estimate is marked where it is one.
-  await expect(view.locator("tr", { hasText: "Padlock 50mm Brass" }))
+  await expect(view.locator("tr", { hasText: "Wire Nails 100mm loose" }))
     .toContainText("estimated");
   await expect(view).toContainText(/valued at today/i);
+
+  // A LOSS NOBODY CAN VALUE IS NOT A LOSS OF NOTHING. "R 0.00, estimated"
+  // reads as "worth nothing", and a shop reading that concludes it lost
+  // nothing. It is listed, said to have no cost, and kept out of the totals
+  // under a warning that the real figure is higher than the one shown.
+  const unknown = view.locator("tr", { hasText: "Padlock 50mm Brass" });
+  await expect(unknown).toContainText("no cost recorded");
+  await expect(unknown).not.toContainText("estimated");
+  await expect(unknown).not.toContainText("0.00");
+  await expect(glance).toContainText(/1 line has no cost recorded at all/);
+  await expect(glance).toContainText(/2 units the shop cannot put a price on/);
+  await expect(glance).toContainText(/the real loss is higher than it says/);
 });
 
 test("the department drives the list, and two sheets cannot be open over the same shelves", async ({ page }) => {

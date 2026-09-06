@@ -997,6 +997,15 @@ function LossesView({ report }: { report: Shrinkage }) {
             as estimates below.
           </p>
         )}
+        {t.uncosted_lines > 0 && (
+          <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg" role="status">
+            {t.uncosted_lines} {t.uncosted_lines === 1 ? "line has" : "lines have"} no
+            cost recorded at all — {t.uncosted_units} units the shop cannot put a
+            price on. They are listed below but add nothing to the figures above,
+            so the real loss is higher than it says. Put a cost on those items and
+            this report gets it right.
+          </p>
+        )}
       </div>
 
       <Card title="What went missing">
@@ -1028,7 +1037,12 @@ function LossesView({ report }: { report: Shrinkage }) {
                 </td>
                 <td className={TDN}>{r.qty}</td>
                 <td className={TDN}>
-                  {money(r.at_cost)}
+                  {/* "R 0.00, estimated" reads as "worth nothing", and a shop
+                      reading that concludes it lost nothing. */}
+                  {r.uncosted ? "—" : money(r.at_cost)}
+                  {r.uncosted && (
+                    <div className="text-xs text-amber-700">no cost recorded</div>
+                  )}
                   {r.estimated && (
                     <div className="text-xs text-stone-500">estimated</div>
                   )}
