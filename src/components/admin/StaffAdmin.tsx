@@ -423,14 +423,23 @@ function EnrolPhone({
               </p>
               <ol className="text-sm text-stone-700 list-decimal pl-5 space-y-2">
                 <li>
+                  {/* THE APP, not the staff PIN site.
+                      ENROL_URL (pos.innovaearth.com/enrol/) is where somebody
+                      with no PIN proves their number and chooses one — which
+                      is what the OTHER dialog on this screen is about. A
+                      manager sent here followed it to a "Set your PIN" page
+                      and there was nothing on it about a device. The device
+                      question lives on the till app itself, so the link is
+                      this app's own origin: right in production, right on a
+                      preview build, and nothing to keep in step. */}
                   On their own phone, open{" "}
                   <a
-                    href={ENROL_URL}
+                    href={window.location.origin}
                     target="_blank"
                     rel="noreferrer"
                     className="font-medium text-blue-700 underline break-all"
                   >
-                    {ENROL_URL}
+                    {window.location.host}
                   </a>
                 </li>
                 <li>Tap <span className="font-medium">This is my phone</span></li>

@@ -6012,7 +6012,14 @@ test("an enrolment code works once", async ({ page }) => {
 test("Look it up answers price, stock and bin with the line down", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
   // The catalogue is cached by now; the yard has no signal.
+  //
+  // Both halves, as every other offline test here does it: be.offline stops the
+  // server answering, and setOffline fires the browser's own event so the app
+  // re-probes at once. Without the second the app does not notice until its
+  // next 15-second heartbeat, and a 10-second assertion was racing it — which
+  // is exactly how this failed once in a full run having passed on its own.
   be.offline = true;
+  await page.context().setOffline(true);
 
   await page.getByRole("button", { name: /Look it up/ }).click();
   await page.getByPlaceholder(/Scan a barcode/i).fill("cement");
@@ -6043,6 +6050,17 @@ test("a manager issues a code for somebody's phone from the staff list", async (
   // read down a telephone by somebody in a hurry.
   const shown = page.locator(".font-mono").first();
   await expect(shown).toHaveText(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/);
+
+  // And the address is THIS APP, where "This is my phone" lives.
+  //
+  // It pointed at ENROL_URL — pos.innovaearth.com/enrol/, the staff PIN site,
+  // which is right for the "they have no PIN yet" dialog and wrong here. A
+  // manager followed it and landed on "Set your PIN", a page with nothing on
+  // it about a device, holding a code it could not accept.
+  const origin = new URL(page.url()).origin;
+  const link = page.getByRole("link").first();
+  await expect(link).toHaveAttribute("href", origin);
+  await expect(page.getByRole("link", { name: /enrol/i })).toHaveCount(0);
 });
 
 test("a tile opens the back office on its own screen, behind the PIN", async ({ page }) => {
