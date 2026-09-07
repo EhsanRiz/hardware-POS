@@ -13,6 +13,18 @@ import { cacheGet, cacheSet } from "./localCache";
 const TOKEN_KEY = "device.registerToken";
 const NAME_KEY = "device.registerName";
 const ID_KEY = "device.registerId";
+/**
+ * What kind of device this is (0074).
+ *
+ * A till is the counter screen: it takes money and anybody on the staff can
+ * sign in on it. A personal device is somebody's own phone, for the work that
+ * happens away from the counter — photographing a supplier's quotation,
+ * approving a discount, deciding what to buy. It belongs to one person, only
+ * that person can sign in on it, and the DATABASE refuses money on it. This
+ * value only decides which screen to show; it is not what makes any of that
+ * true, so a tampered cache buys nothing.
+ */
+const KIND_KEY = "device.kind";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -39,10 +51,20 @@ export function registerId(): string | null {
   return cacheGet<string | null>(ID_KEY, null);
 }
 
-export function savePairing(id: string, token: string, name: string): void {
+export type DeviceKind = "till" | "personal";
+
+/** Which shape of app this device gets. Defaults to a till, as it always was. */
+export function deviceKind(): DeviceKind {
+  return cacheGet<DeviceKind>(KIND_KEY, "till");
+}
+
+export function savePairing(
+  id: string, token: string, name: string, kind: DeviceKind = "till"
+): void {
   cacheSet(ID_KEY, id);
   cacheSet(TOKEN_KEY, token);
   cacheSet(NAME_KEY, name);
+  cacheSet(KIND_KEY, kind);
   listeners.forEach((l) => l());
 }
 
@@ -55,5 +77,6 @@ export function clearPairing(): void {
   cacheSet(ID_KEY, null);
   cacheSet(TOKEN_KEY, null);
   cacheSet(NAME_KEY, "Till");
+  cacheSet(KIND_KEY, "till");
   listeners.forEach((l) => l());
 }

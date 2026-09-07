@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   approveSale,
+  approvalCodes,
   checkApprovalCode,
   closeQuote,
   createDelivery,
@@ -20,10 +21,15 @@ import {
 import SaleDetail from "../components/SaleDetail";
 import CancelSale, { type CancellableSale } from "../components/CancelSale";
 import type { SaleRow } from "../lib/sales";
-import { adminListProducts, shelfLookup, stockMovements } from "../lib/adminApi";
+import {
+  adminListProducts,
+  purchasingSuppliers,
+  shelfLookup,
+  stockMovements,
+} from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
-import { isPaired } from "../lib/device";
+import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
   cartLineCap,
   saleDiscountCeiling,
@@ -56,7 +62,9 @@ import type {
 import Accounts from "../components/accounts/Accounts";
 import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quotes";
 import Stock from "../components/stock/Stock";
-import Admin from "../components/Admin";
+import Admin, { type TabKey } from "../components/Admin";
+import PhoneHome from "../components/PhoneHome";
+import PhoneLookup from "../components/PhoneLookup";
 import Calculator from "../components/Calculator";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
@@ -240,7 +248,15 @@ export default function POS() {
   // A slip scanned back into the till: the sale it names, opened for a
   // reprint or a return.
   const [docSale, setDocSale] = useState<SaleRow | null>(null);
-  const [adminTab, setAdminTab] = useState<"cashup" | undefined>(undefined);
+  const [adminTab, setAdminTab] = useState<TabKey | undefined>(undefined);
+  // Where a personal device is standing. The tiles are doorways into the
+  // back office, so "home" is where it returns whenever one closes; only
+  // Look it up is a screen of its own.
+  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup">("home");
+  // Read once. It cannot change without the app reloading, and the till
+  // re-renders on every keystroke in the scan box — no reason to parse it
+  // out of local storage each time.
+  const [kind] = useState(deviceKind);
 
   // A trade customer prices off the trade list. Resolved server-side too — this
   // is only so the cashier sees the same numbers the invoice will show.
@@ -918,8 +934,13 @@ export default function POS() {
             // catalogue alone locked shelf-only staff out of the one screen
             // their permission exists to open. Either call fails loudly on a
             // wrong PIN.
+            // The phone widens who reaches this modal: a buyer with no
+            // catalogue or shelf right taps Buying and must still be able to
+            // prove a PIN. Each branch is a call that signer is entitled to.
             if (can(user, "manage_catalogue")) await adminListProducts(entered);
-            else await shelfLookup(entered, "0");
+            else if (can(user, "shelf_capture")) await shelfLookup(entered, "0");
+            else if (can(user, "manage_purchasing")) await purchasingSuppliers(entered);
+            else await approvalCodes(entered);
             setAdminPin(entered);
             setAskAdminPin(false);
           }}
@@ -944,6 +965,60 @@ export default function POS() {
       {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
     </>
   );
+
+  /**
+   * A personal device does not get the till.
+   *
+   * The counter is a 17" touch screen and the till belongs to it. A phone is
+   * for the work done away from the counter, so it lands on a short list of
+   * errands instead — and it must not be able to sell, which is not enforced
+   * here but in the database (0074): a personal register is refused a sale, a
+   * drawer, a customer payment or a return outright, whatever the client asks.
+   * This branch only decides what to show.
+   */
+  if (kind === "personal" && user) {
+    if (phoneScreen === "lookup") {
+      return (
+        <>
+          <PhoneLookup
+            products={products}
+            online={online}
+            onBack={() => setPhoneScreen("home")}
+          />
+          {overlays}
+        </>
+      );
+    }
+    return (
+      <>
+        <PhoneHome
+          user={user}
+          online={online}
+          deviceName={registerName()}
+          onSignOut={logout}
+          onPick={(key) => {
+            if (key === "lookup") {
+              setPhoneScreen("lookup");
+              return;
+            }
+            // Everything else is a doorway into a back-office screen that
+            // already exists, opened straight onto its own tab. The PIN is
+            // asked for the same way it is on the till — held in memory only,
+            // re-checked server-side by every call behind it.
+            const tab: TabKey =
+              key === "scan" ? "suppliers"
+              : key === "approvals" ? "approvals"
+              : key === "shelf" ? "shelf"
+              : key === "today" ? "reports"
+              : "buying"; // "buying" and "low" both
+            setAdminTab(tab);
+            setAskAdminPin(true);
+          }}
+        />
+        {overlays}
+      </>
+    );
+  }
 
   // Accounts and Stock replace the counter, not the frame: the header keeps
   // the sync state and the way back, and a parked sale stays parked underneath.

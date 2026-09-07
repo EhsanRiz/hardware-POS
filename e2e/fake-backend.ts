@@ -297,6 +297,42 @@ export class Backend {
   /** Wrong PINs per person, so the lockout can be asserted on. */
   failedLogins: Record<string, number> = {};
   /**
+   * 0074: the devices on this shop. The paired till is here from the start; a
+   * phone joins it when somebody redeems an enrolment code.
+   *
+   * Modelled rather than assumed because the rules the migration enforces —
+   * one owner, no money, a single-use code — are all things the browser can
+   * ask for and be wrongly given. A fake that answered every token identically
+   * would have shown the phone selling.
+   */
+  registers: {
+    id: string; token: string; name: string;
+    kind: "till" | "personal"; assigned_to: string | null;
+  }[] = [
+    { id: "reg1", token: REGISTER_TOKEN, name: "Front Counter", kind: "till", assigned_to: null },
+  ];
+  /** Live enrolment codes, as device_enrolments holds them minus the hashing. */
+  enrolments: {
+    code: string; app_user_id: string; expires_at: number; used_at: string | null;
+  }[] = [];
+
+  /**
+   * Seed a code without going through Manage -> Staff.
+   *
+   * A test about what a phone can do should not have to re-prove how a code is
+   * issued; the test that IS about issuing one drives the screen instead.
+   */
+  issueEnrolmentCode(appUserId: string, code = "PHONE123"): string {
+    for (const e of this.enrolments) {
+      if (e.app_user_id === appUserId && !e.used_at) e.expires_at = Date.now();
+    }
+    this.enrolments.push({
+      code, app_user_id: appUserId, expires_at: Date.now() + 15 * 60 * 1000,
+      used_at: null,
+    });
+    return code;
+  }
+  /**
    * Single-use approval codes, as 0039 stores them — minus the hashing, which
    * is the server's business and not something a browser test can observe.
    */
@@ -1104,7 +1140,34 @@ export async function installBackend(page: Page): Promise<Backend> {
     // The real till RPCs resolve the org from the register token before
     // anything else; the fake enforces the same so a client that forgets the
     // token fails the suite instead of only failing in production.
-    const tokenOk = body.p_register_token === REGISTER_TOKEN;
+    // Which device is asking. Was `token === REGISTER_TOKEN`; a shop can now
+    // have more than one device, and which one it is decides both who may sign
+    // in and whether money may be taken at all.
+    const reg = be.registers.find((r) => r.token === body.p_register_token) ?? null;
+    const tokenOk = !!reg;
+
+    /**
+     * 0074's trigger, in the fake.
+     *
+     * The migration puts it on the four tables rather than in each RPC, so
+     * that a money function written next year is covered without anybody
+     * remembering. The fake has no tables, so the list is written out — and it
+     * is exactly the four INSERTs the trigger guards: a sale, a drawer, an
+     * account payment, a credit note.
+     */
+    const MONEY_RPCS = new Set([
+      "rpc/pos_create_sale",
+      "rpc/pos_cash_session_open",
+      "rpc/pos_take_account_payment",
+      "rpc/pos_return_sale",
+    ]);
+    if (reg?.kind === "personal" && MONEY_RPCS.has(path)) {
+      const who = be.staff.find((u) => u.id === reg.assigned_to)?.name ?? reg.name;
+      return fail(
+        `A phone is not a till: money cannot be taken on ${who}'s personal device`
+      );
+    }
+
     const purchasing = (pin: unknown) =>
       Object.values(USERS).some((u) => u.pin === pin && u.row.permissions.includes("manage_purchasing"));
 
@@ -1117,6 +1180,11 @@ export async function installBackend(page: Page): Promise<Backend> {
       }
       case "rpc/pos_login": {
         if (!tokenOk) return fail("Register not paired or revoked");
+        // Refused, not hidden: leaving this to pos_staff_for_login would mean
+        // the owner's PIN on a shelf hand's phone still let them in.
+        if (reg!.kind === "personal" && body.p_user_id !== reg!.assigned_to) {
+          return fail("This phone is not yours to sign in on");
+        }
         // The PIN confirms an identity now; it does not choose one. A PIN that
         // is right for somebody else is simply wrong here, which is the whole
         // point of naming who is signing in.
@@ -3180,12 +3248,81 @@ export async function installBackend(page: Page): Promise<Backend> {
         }]);
       }
 
+      // --- 0074: a phone is a personal device --------------------------
+      case "rpc/pos_staff_enrolment_code": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // manage_staff, as pos_admin_org_for demands. Only the manager holds
+        // it in this fixture.
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const target = be.staff.find((u) => u.id === body.p_app_user_id);
+        if (!target || !target.active || target.status !== "active") {
+          return fail("Unknown or inactive staff member");
+        }
+        // One live code per person: a code read out and thought better of is
+        // dead the moment the next one is made.
+        for (const e of be.enrolments) {
+          if (e.app_user_id === target.id && !e.used_at) e.expires_at = Date.now();
+        }
+        const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        let code = "";
+        for (let i = 0; i < 8; i++) {
+          code += alphabet[Math.floor(Math.random() * alphabet.length)];
+        }
+        const expires = Date.now() + 15 * 60 * 1000;
+        be.enrolments.push({
+          code, app_user_id: target.id, expires_at: expires, used_at: null,
+        });
+        return json([{
+          code,
+          expires_at: new Date(expires).toISOString(),
+          staff_name: target.name,
+        }]);
+      }
+
+      case "rpc/pos_enrol_device": {
+        // No token: the phone has none yet. The code is the whole credential.
+        const typed = String(body.p_code ?? "").trim().toUpperCase();
+        const found = be.enrolments.find(
+          (e) => e.code === typed && !e.used_at && e.expires_at > Date.now()
+        );
+        if (!found) return fail("That code is not valid. Ask for a new one.");
+        const owner = be.staff.find((u) => u.id === found.app_user_id);
+        if (!owner || !owner.active || owner.status !== "active") {
+          return fail("That person is no longer on the staff");
+        }
+        found.used_at = new Date().toISOString();
+        const id = `reg${be.registers.length + 1}`;
+        const token = `personal-token-${id}`;
+        const name =
+          String(body.p_device_name ?? "").trim() || `${owner.name}'s phone`;
+        be.registers.push({
+          id, token, name, kind: "personal", assigned_to: owner.id,
+        });
+        return json([{
+          register_id: id, token, user_id: owner.id, user_name: owner.name,
+        }]);
+      }
+
+      case "rpc/pos_device_info": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json([{
+          register_id: reg!.id,
+          name: reg!.name,
+          kind: reg!.kind,
+          assigned_to: reg!.assigned_to,
+          assigned_name:
+            be.staff.find((u) => u.id === reg!.assigned_to)?.name ?? null,
+        }]);
+      }
+
       case "rpc/pos_staff_for_login":
         if (!tokenOk) return fail("Register not paired or revoked");
-        // Only people who can actually sign in: active, with a PIN set.
+        // Only people who can actually sign in: active, with a PIN set — and
+        // on a personal device, exactly one name: its owner's.
         return json(
           be.staff
             .filter((u) => u.active && u.status === "active")
+            .filter((u) => reg!.kind !== "personal" || u.id === reg!.assigned_to)
             .map((u) => ({ id: u.id, name: u.name, role: u.role }))
             .sort((a, b) => a.name.localeCompare(b.name))
         );
@@ -3300,6 +3437,9 @@ export async function installBackend(page: Page): Promise<Backend> {
 /** Pair the till and sign in, which every till test needs first. */
 export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.goto("/");
+  // 0074 asks what the device is before it asks anything else: a till and
+  // somebody's phone are not the same thing and must not be set up alike.
+  await page.getByRole("button", { name: "This is a till" }).click();
   await page.locator('input[type=tel]').fill(USERS.manager.phone);
   await page.locator('input[type=password]').fill(USERS.manager.pin);
   await page.getByRole("button", { name: /Pair this till/i }).click();
@@ -3310,6 +3450,31 @@ export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}
+
+/**
+ * Put a named person's phone on the shop, the way the shop does it: a manager
+ * issues a code from Manage -> Staff, the person types it into their own
+ * handset, and then signs in with their own PIN.
+ *
+ * Deliberately goes through the real screens rather than seeding a register,
+ * because the code changing hands is the part with rules on it.
+ */
+export async function enrolPhoneAndSignIn(
+  page: Page, be: Backend, pin = USERS.manager.pin
+) {
+  const person = Object.values(USERS).find((u) => u.pin === pin)!;
+  const code = be.issueEnrolmentCode(person.row.id);
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is my phone" }).click();
+  await page.getByPlaceholder("ABCD2345").fill(code);
+  await page.getByPlaceholder("Sam's phone").fill(`${person.row.name}'s phone`);
+  await page.getByRole("button", { name: /Set up my phone/i }).click();
+  // One name is offered on a personal device, and it is the owner's.
+  await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
+  await page.waitForSelector('button:text-is("1")');
+  for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
+  await page.waitForSelector(".phone-home");
 }
 
 /**

@@ -1,6 +1,8 @@
 import { readFileSync } from "fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { Backend, installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
+import {
+  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, USERS,
+} from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
 const banner = (page: import("@playwright/test").Page) =>
@@ -41,6 +43,11 @@ test.beforeEach(async ({ page }) => {
 
 test("a till must be paired before anyone can sign in", async ({ page }) => {
   await page.goto("/");
+  // 0074: what the device IS comes first. A till and somebody's own phone are
+  // set up differently and are allowed different things, so the question is
+  // asked before either path starts.
+  await expect(page.getByText("What is this device?")).toBeVisible();
+  await page.getByRole("button", { name: "This is a till" }).click();
   await expect(page.getByText("Set up this till")).toBeVisible();
   // No PIN pad until the device is a till — a cashier should never sign in to
   // a tablet that turns out to be unable to sell.
@@ -49,6 +56,7 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
 
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
   await page.locator("input[type=tel]").fill(USERS.manager.phone);
   await page.locator("input[type=password]").fill("999999");
   await page.getByRole("button", { name: /Pair this till/i }).click();
@@ -58,6 +66,7 @@ test("pairing is refused with the wrong PIN", async ({ page }) => {
 
 test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
   await page.locator("input[type=tel]").fill(USERS.manager.phone);
   await page.locator("input[type=password]").fill(USERS.manager.pin);
   await page.getByRole("button", { name: /Pair this till/i }).click();
@@ -1488,6 +1497,7 @@ test("the sixth digit signs you in, and there is no OK to find", async ({ page }
   // on the sixth. The OK button it used to wait for was a seventh tap that
   // read as a broken keypad to anyone who has used a bank card.
   await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
   await page.locator("input[type=tel]").fill(USERS.manager.phone);
   await page.locator("input[type=password]").fill(USERS.manager.pin);
   await page.getByRole("button", { name: /Pair this till/i }).click();
@@ -5929,4 +5939,128 @@ test("an invoice on an account opens the sale behind it", async ({ page }) => {
   await expect(paid).not.toHaveClass(/is-clickable/);
   await paid.click();
   await expect(page.getByRole("dialog", { name: /INV-/ })).toHaveCount(0);
+});
+
+/* -------------------------------------------------------------------------
+   0074 — a phone is not a till.
+
+   The counter is a 17" touch screen. A phone is the work done away from it,
+   and the four things that must hold are all things a browser can ask for and
+   be wrongly given: only its owner signs in on it, it cannot take money, the
+   code that enrols it works once, and the errands it offers follow the
+   permissions of whoever is holding it.
+   ------------------------------------------------------------------------- */
+
+test("a phone lands on its errands, not on the till", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  // The thing that would cost money if it were wrong: no sale screen.
+  await expect(page.locator('input[placeholder*="Scan barcode"]')).toHaveCount(0);
+  await expect(page.locator(".totals")).toHaveCount(0);
+
+  // What it offers instead, and whose phone it says it is.
+  await expect(page.locator(".phone-home-who h1")).toHaveText("Manager");
+  await expect(page.getByRole("button", { name: /Look it up/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Approve a discount/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Buying/ })).toBeVisible();
+
+  // Said out loud, so nobody hunts for a till that is never coming.
+  await expect(page.getByText(/a phone cannot take money/i)).toBeVisible();
+});
+
+test("a phone offers only the errands that person may run", async ({ page }) => {
+  // Sam sells and discounts; Sam does not buy, approve, or read reports.
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+
+  await expect(page.locator(".phone-home-who h1")).toHaveText("Sam");
+  await expect(page.getByRole("button", { name: /Look it up/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Approve a discount/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Buying/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Today/ })).toHaveCount(0);
+});
+
+test("only its owner can sign in on a phone", async ({ page }) => {
+  const code = be.issueEnrolmentCode(USERS.employee.row.id);
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is my phone" }).click();
+  await page.getByPlaceholder("ABCD2345").fill(code);
+  await page.getByRole("button", { name: /Set up my phone/i }).click();
+
+  // One name on the list, and it is Sam's — the manager is not offered at all.
+  await expect(page.getByRole("button", { name: /^Sam\b/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Manager\b/ })).toHaveCount(0);
+});
+
+test("an enrolment code works once", async ({ page }) => {
+  const code = be.issueEnrolmentCode(USERS.employee.row.id);
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is my phone" }).click();
+  await page.getByPlaceholder("ABCD2345").fill(code);
+  await page.getByRole("button", { name: /Set up my phone/i }).click();
+  await expect(page.getByRole("button", { name: /^Sam\b/ })).toBeVisible();
+
+  // The same code on a second handset. A code read out over the phone and
+  // overheard must not enrol the person who overheard it.
+  await page.evaluate(() => localStorage.clear());
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is my phone" }).click();
+  await page.getByPlaceholder("ABCD2345").fill(code);
+  await page.getByRole("button", { name: /Set up my phone/i }).click();
+  await expect(page.getByText(/code is not valid/i)).toBeVisible();
+});
+
+test("Look it up answers price, stock and bin with the line down", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  // The catalogue is cached by now; the yard has no signal.
+  be.offline = true;
+
+  await page.getByRole("button", { name: /Look it up/ }).click();
+  await page.getByPlaceholder(/Scan a barcode/i).fill("cement");
+
+  const hit = page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" });
+  await expect(hit).toBeVisible();
+  await expect(hit.locator(".phone-hit-price")).toHaveText(/R\s?115\.00/);
+  await expect(hit.locator(".phone-hit-stock")).toHaveText("240 bag on hand");
+  // Where the thing physically is — the reason somebody in the aisle opened
+  // this rather than walking back to the counter to ask.
+  await expect(hit.locator(".phone-hit-bin")).toHaveText("Bin A1");
+  // And it says so rather than showing yesterday's figure as today's.
+  await expect(page.getByText(/as the phone last saw it/i)).toBeVisible();
+});
+
+test("a manager issues a code for somebody's phone from the staff list", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) {
+    await dialog.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: "Staff" }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.getByRole("button", { name: /Set up their phone/i }).click();
+
+  // Eight characters, from an alphabet with no I, O, 0 or 1 in it: this is
+  // read down a telephone by somebody in a hurry.
+  const shown = page.locator(".font-mono").first();
+  await expect(shown).toHaveText(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/);
+});
+
+test("a tile opens the back office on its own screen, behind the PIN", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await page.getByRole("button", { name: /Buying/ }).click();
+
+  // The PIN is asked for on a phone exactly as it is at the counter: held in
+  // memory only, re-checked server-side by every call behind it.
+  const dialog = page.getByRole("dialog", { name: "Manage" });
+  await expect(dialog).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await dialog.locator(`button:text-is("${d}")`).first().click();
+  }
+
+  // Straight onto Buying, not onto the first tab of a nav the phone never
+  // showed. Closing it comes back to the errands.
+  await expect(page.getByRole("button", { name: /What to order/i })).toBeVisible();
+  // And the way out says where it goes: there is no till behind this.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator(".phone-home")).toBeVisible();
 });

@@ -4,6 +4,7 @@ import {
   adminInviteUser,
   adminListUsers,
   adminUpdateUser,
+  staffEnrolmentCode,
   type StaffUser,
 } from "../../lib/adminApi";
 import { CURRENCY, ENROL_URL } from "../../lib/config";
@@ -55,6 +56,10 @@ export default function StaffAdmin({
   // whoever a manager has since tapped on the staff list because that person
   // still has no PIN.
   const [invited, setInvited] = useState<StaffUser | null>(null);
+  // Whose phone is being set up. Separate from `invited`: that dialog is about
+  // somebody who cannot sign in ANYWHERE yet; this one is about giving
+  // somebody who already signs in at the counter their own device as well.
+  const [enrolling, setEnrolling] = useState<StaffUser | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -227,10 +232,17 @@ export default function StaffAdmin({
             await load();
           }}
           onRemove={remove}
+          onEnrol={(u) => {
+            setEditing(null);
+            setEnrolling(u);
+          }}
         />
       )}
 
       {invited && <WhatHappensNext staff={invited} onClose={() => setInvited(null)} />}
+      {enrolling && (
+        <EnrolPhone pin={pin} staff={enrolling} onClose={() => setEnrolling(null)} />
+      )}
     </div>
   );
 }
@@ -356,6 +368,99 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
 }
 
 /**
+ * A one-time code that puts somebody's own phone on the shop.
+ *
+ * Issued here rather than sent, for the same reason nobody is ever sent an
+ * unsolicited SMS: the person is standing in front of you. It lasts fifteen
+ * minutes, works once, and issuing a second one kills the first — so a code
+ * read out over the phone and then thought better of is dead the moment the
+ * next one is made.
+ *
+ * The code is fetched on open rather than behind a button, because there is no
+ * second decision to make: the manager has already decided by getting here,
+ * and a dialog whose only content is a button to reveal its content is a
+ * dialog with an extra tap in it.
+ */
+function EnrolPhone({
+  pin, staff, onClose,
+}: { pin: string; staff: StaffUser; onClose: () => void }) {
+  const [code, setCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(true);
+
+  const issue = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setCode((await staffEnrolmentCode(pin, staff.id)).code);
+    } catch (e) {
+      setError(errorMessage(e, "That code could not be issued."));
+    } finally {
+      setBusy(false);
+    }
+  }, [pin, staff.id]);
+
+  useEffect(() => {
+    void issue();
+  }, [issue]);
+
+  return (
+    <div className="vv-fixed bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-5 space-y-4 overflow-auto">
+          <h3 className="font-semibold">{staff.name}’s phone</h3>
+
+          {busy && <p className="text-sm text-stone-500">Making a code…</p>}
+          {error && <p className="text-sm text-red-700">{error}</p>}
+
+          {code && (
+            <>
+              <p
+                className="text-center font-mono text-3xl tracking-[0.3em] py-4 rounded-lg"
+                style={{ background: "var(--color-surface)" }}
+              >
+                {code}
+              </p>
+              <ol className="text-sm text-stone-700 list-decimal pl-5 space-y-2">
+                <li>
+                  On their own phone, open{" "}
+                  <a
+                    href={ENROL_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-blue-700 underline break-all"
+                  >
+                    {ENROL_URL}
+                  </a>
+                </li>
+                <li>Tap <span className="font-medium">This is my phone</span></li>
+                <li>Type the code above, then sign in with their own PIN</li>
+              </ol>
+              <p className="text-xs text-stone-500">
+                Good for fifteen minutes, once. That phone can then do the work
+                away from the counter — it cannot take money, wherever it is
+                signed in.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-stone-200 flex gap-2 justify-end">
+          {!busy && (
+            <button className="px-4 py-2 text-stone-600" onClick={() => void issue()}>
+              {code ? "New code" : "Try again"}
+            </button>
+          )}
+          <button className="px-4 py-2 rounded-lg bg-colophon text-paper" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * How much this person may take off before a manager is needed, in a phrase.
  *
  * Empty for anybody a limit does not apply to — somebody who can approve
@@ -456,6 +561,7 @@ function StaffEditor({
   onClose,
   onSaved,
   onRemove,
+  onEnrol,
 }: {
   pin: string;
   staff: StaffUser | null;
@@ -465,6 +571,8 @@ function StaffEditor({
   /** Called with the new row after an invite, and with null after an edit. */
   onSaved: (invited: StaffUser | null) => Promise<void>;
   onRemove: (u: StaffUser) => Promise<void>;
+  /** Hand this person a one-time code for their own phone. */
+  onEnrol: (u: StaffUser) => void;
 }) {
   const [name, setName] = useState(staff?.name ?? "");
   const [phone, setPhone] = useState(staff?.phone ?? "");
@@ -729,6 +837,19 @@ function StaffEditor({
               onClick={() => (confirmRemove ? void onRemove(staff) : setConfirmRemove(true))}
             >
               {confirmRemove ? "Tap again to remove" : "Remove"}
+            </button>
+          )}
+          {/* Only for somebody who already signs in. A phone is a second
+              device for a person the till knows, not a way around setting a
+              PIN — enrolling first and having no PIN would leave them holding
+              a device they cannot open. */}
+          {staff && staff.active && staff.status === "active" && (
+            <button
+              className="px-3 py-2 text-sm"
+              style={{ color: "var(--color-accent-700)" }}
+              onClick={() => onEnrol(staff)}
+            >
+              Set up their phone
             </button>
           )}
           <button className="ml-auto px-4 py-2 text-stone-600" onClick={onClose}>

@@ -10,6 +10,7 @@ import {
   type ImportResult,
   type ProductInput,
 } from "../lib/adminApi";
+import { deviceKind } from "../lib/device";
 import { errorMessage } from "../lib/errors";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
@@ -45,7 +46,7 @@ import Shelf from "./admin/Shelf";
 import Buying from "./admin/Buying";
 import Suppliers from "./admin/Suppliers";
 
-type TabKey =
+export type TabKey =
   | "catalogue"
   | "import"
   | "shelf"
@@ -312,12 +313,14 @@ export default function Admin({
             </button>
           ))}
         </nav>
-        {/* Never inside the menu: the way out must not need finding. */}
+        {/* Never inside the menu: the way out must not need finding. And it
+            says where it goes — on a phone there is no till behind this, so
+            "Back to till" would be pointing at a screen that does not exist. */}
         <button
           onClick={onClose}
           className="ml-auto shrink-0 text-white/70 px-2 py-1.5 text-sm whitespace-nowrap"
         >
-          Back to till
+          {deviceKind() === "personal" ? "Back" : "Back to till"}
         </button>
       </header>
 

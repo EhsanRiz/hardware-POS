@@ -4168,4 +4168,144 @@ begin
   perform assert_eq(v_n, 1, 'pos_customer_ledger has exactly one signature');
 end $$;
 
+-- 0074: the phone is a personal device, and not a till --------------------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_mgr uuid; v_emp uuid; v_prod uuid;
+  v_code text; v_exp timestamptz; v_name text;
+  v_phone text; v_phone_id uuid; v_row record; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id, employee_id into v_org, v_mgr, v_emp from fixture;
+  select id into v_prod from public.products where sku = 'CEM-425-50';
+
+  -- A code for the counter hand's own phone.
+  select code, expires_at, staff_name into v_code, v_exp, v_name
+    from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+  perform assert_eq(length(v_code), 8, 'the code is eight characters');
+  perform assert(v_code !~ '[IO01]',
+    'with no I, O, 0 or 1 in it — these are read aloud and typed in a hurry');
+  perform assert(v_exp > now() and v_exp < now() + interval '20 minutes',
+    'and it does not last the week');
+
+  -- The phone enrols with no token of its own, because it has none yet.
+  declare v_who uuid;
+  begin
+    select register_id, token, user_id into v_phone_id, v_phone, v_who
+      from public.pos_enrol_device(v_code, 'Sam''s phone');
+    perform assert_eq(v_who, v_emp, 'enrolled as the person the code was for');
+  end;
+  perform assert(v_phone is not null, 'the phone gets a token of its own');
+
+  select * into v_row from public.registers where id = v_phone_id;
+  perform assert_eq(v_row.kind, 'personal', 'and is a personal device');
+  perform assert_eq(v_row.assigned_to, v_emp, 'belonging to one named person');
+
+  -- RULE 4: single use, and dead once used.
+  perform assert_refuses(
+    format('select * from public.pos_enrol_device(%L, %L)', v_code, 'another phone'),
+    'a code cannot enrol a second device');
+  perform assert_refuses(
+    format('select * from public.pos_enrol_device(%L, %L)', 'ZZZZZZZZ', 'a stranger'),
+    'and a code nobody issued enrols nothing');
+
+  -- Issuing a new code kills the old one, so a code read out and forgotten
+  -- cannot still enrol a device tomorrow.
+  declare v_first text; v_second text;
+  begin
+    select code into v_first from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+    select code into v_second from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+    perform assert_refuses(
+      format('select * from public.pos_enrol_device(%L, %L)', v_first, 'stale'),
+      'the older code is dead the moment a new one is issued');
+    perform assert(
+      (select count(*) from public.pos_enrol_device(v_second, 'live')) = 1,
+      'and the newer one still works');
+  end;
+
+  -- RULE 1: ONLY ITS OWNER SIGNS IN. A shelf hand's handset plus the owner's
+  -- PIN would otherwise be an owner's device, off the premises.
+  select count(*)::int into v_n from public.pos_staff_for_login(v_phone);
+  perform assert_eq(v_n, 1, 'a personal device offers exactly one name');
+  select * into v_row from public.pos_staff_for_login(v_phone);
+  perform assert_eq(v_row.id, v_emp, 'its owner''s');
+  perform assert(
+    (select count(*) from public.pos_staff_for_login(v_tok)) > 1,
+    'while the till still offers everybody');
+  perform assert_refuses(
+    format('select * from public.pos_login(%L, %L, %L)', v_phone, v_mgr, '1234'),
+    'and the manager cannot sign in on somebody else''s phone');
+  perform assert(
+    (select count(*) from public.pos_login(v_phone, v_emp, '2222')) = 1,
+    'while its owner can');
+
+  -- RULE 2: NO MONEY ON A PHONE. Refused by the database, not hidden by the
+  -- screen — money taken on a device with no drawer lands in no cash-up and
+  -- shows up as a shortfall against an honest cashier.
+  perform assert_refuses(
+    format('select public.pos_create_sale(%L, %L, %L::jsonb, null, %L)',
+           v_phone, v_emp,
+           jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1))::text,
+           'cash'),
+    'a sale cannot be rung up on a phone');
+  perform assert_refuses(
+    format('select public.pos_cash_session_open(%L, %L, 500)', v_phone, '2222'),
+    'nor a drawer opened on one');
+
+  declare v_cust uuid;
+  begin
+    insert into public.customers (org_id, name, credit_limit, active)
+    values (v_org, 'Phone Test Buyer', 10000, true) returning id into v_cust;
+    perform assert_refuses(
+      format('select * from public.pos_take_account_payment(%L, %L, %L, 100)',
+             v_phone, v_emp, v_cust),
+      'nor an account settled on one');
+  end;
+
+  -- The till is untouched by any of this.
+  perform assert(
+    (select public.pos_create_sale(
+       p_register_token => v_tok, p_cashier_id => v_mgr,
+       p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+       p_payment_method => 'cash')).id is not null,
+    'and the till still takes money exactly as before');
+
+  -- What kind of device am I? The screen shape follows this answer.
+  select * into v_row from public.pos_device_info(v_phone);
+  perform assert_eq(v_row.kind, 'personal', 'a phone knows it is a phone');
+  perform assert_eq(v_row.assigned_name,
+    (select name from public.app_users where id = v_emp), 'and whose it is');
+  select * into v_row from public.pos_device_info(v_tok);
+  perform assert_eq(v_row.kind, 'till', 'and a till knows it is a till');
+
+  -- RULE 3: revoking the device ends it.
+  perform public.pos_revoke_register(v_tok, '1234', v_phone_id);
+  perform assert_refuses(
+    format('select * from public.pos_staff_for_login(%L)', v_phone),
+    'a revoked phone is a stranger again');
+
+  -- A till may not be turned into a personal device by halves, nor a personal
+  -- device left without an owner: the two states cannot drift apart.
+  -- Aimed at a TILL, which has no owner: setting the kind on the phone was no
+  -- test at all, because the phone already had one.
+  declare v_till_id uuid;
+  begin
+    select id into v_till_id from public.registers
+     where org_id = v_org and kind = 'till' limit 1;
+    perform assert_refuses(
+      format('update public.registers set kind = ''personal'' where id = %L', v_till_id),
+      'a personal device cannot exist without a person');
+    perform assert_refuses(
+      format('update public.registers set assigned_to = %L where id = %L', v_mgr, v_till_id),
+      'and a till cannot quietly acquire one');
+  end;
+
+  -- Only somebody who manages staff can put a phone on the shop.
+  perform assert_refuses(
+    format('select * from public.pos_staff_enrolment_code(%L, %L, %L)',
+           v_tok, '2222', v_emp),
+    'a counter hand cannot enrol devices');
+end $$;
+
 select 'all database tests passed' as result;

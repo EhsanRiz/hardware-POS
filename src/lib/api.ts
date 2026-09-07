@@ -88,6 +88,45 @@ export async function login(userId: string, pin: string): Promise<User | null> {
  * it), the PIN proves it. Returns the token, which is shown exactly once —
  * the server only ever stores its hash.
  */
+/**
+ * Put this phone on the shop, with a code from Manage → Staff.
+ *
+ * No register token: the phone has none yet, which is the whole point. The
+ * code is the credential, so the server makes it single use, short lived and
+ * throttled against guessing.
+ */
+export async function enrolDevice(
+  code: string, deviceName: string
+): Promise<{ register_id: string; token: string; user_id: string; user_name: string }> {
+  const { data, error } = await supabase.rpc("pos_enrol_device", {
+    p_code: code, p_device_name: deviceName,
+  });
+  if (error) throw error;
+  const rows = data as { register_id: string; token: string;
+                         user_id: string; user_name: string }[];
+  if (!rows?.[0]) throw new Error("That code is not valid");
+  return rows[0];
+}
+
+export interface DeviceInfo {
+  register_id: string;
+  name: string;
+  kind: "till" | "personal";
+  assigned_to: string | null;
+  assigned_name: string | null;
+}
+
+/** What kind of device this is, asked of the server rather than the cache. */
+export async function deviceInfo(): Promise<DeviceInfo> {
+  const { data, error } = await supabase.rpc("pos_device_info", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  const rows = data as DeviceInfo[];
+  if (!rows?.[0]) throw new Error("This device is not paired");
+  return rows[0];
+}
+
 export async function pairRegister(
   managerPhone: string,
   managerPin: string,

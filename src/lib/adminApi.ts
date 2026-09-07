@@ -1412,3 +1412,16 @@ export async function supplierSetDue(
   });
   if (error) throw error;
 }
+
+/** A one-time code that puts a named person's phone on the shop (0074). */
+export async function staffEnrolmentCode(
+  pin: string, appUserId: string
+): Promise<{ code: string; expires_at: string; staff_name: string }> {
+  const { data, error } = await supabase.rpc("pos_staff_enrolment_code", {
+    p_register_token: requireToken(), p_pin: pin, p_app_user_id: appUserId,
+  });
+  if (error) throw error;
+  const rows = data as { code: string; expires_at: string; staff_name: string }[];
+  if (!rows?.[0]) throw new Error("That code could not be issued");
+  return rows[0];
+}
