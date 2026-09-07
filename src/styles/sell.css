@@ -2144,3 +2144,68 @@ tr.is-void td:last-child { text-decoration: none; }
      and the bin are what was asked for. */
   .phone-hit-img { display: none; }
 }
+
+/* ---- A phone put away asks again -------------------------------------- */
+/*
+ * Deliberately not a modal over the tiles: what is behind this must not be
+ * readable, because the point of it is that somebody who is not the owner may
+ * be holding the handset. Opaque ground, nothing showing through.
+ */
+.phone-lock {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--color-colophon);
+}
+.phone-lock-card {
+  width: 100%;
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.phone-lock-card h1 {
+  font-size: 22px;
+  margin: 6px 0 0;
+  color: var(--color-bg);
+}
+.phone-lock-why {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--color-neutral-400);
+}
+/* The keypad sits on green here rather than on cream, and two of its parts
+   are coloured for cream: the "Enter PIN" kicker and the backspace key are
+   both --color-neutral-700, which on this ground is all but invisible. The
+   keys themselves are already light-on-dark and need nothing. */
+.phone-lock .kicker { color: var(--color-neutral-400); }
+.phone-lock .pin-key-quiet { color: var(--color-neutral-400); }
+.phone-lock .pin-key-quiet:hover { color: var(--color-bg); }
+
+.phone-lock-offline {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider-dark);
+  width: 100%;
+}
+.phone-lock-offline p {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--color-neutral-400);
+}
+.phone-lock-offline .btn-line {
+  border-color: rgba(245, 242, 234, 0.28);
+  color: var(--color-bg);
+}
+.phone-lock-out {
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--color-neutral-400);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}

@@ -29,6 +29,7 @@ import {
 } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
+import { useAwayLock } from "../lib/awayLock";
 import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
   cartLineCap,
@@ -64,6 +65,7 @@ import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quot
 import Stock from "../components/stock/Stock";
 import Admin, { type TabKey } from "../components/Admin";
 import PhoneHome from "../components/PhoneHome";
+import PhoneLock from "../components/PhoneLock";
 import PhoneLookup from "../components/PhoneLookup";
 import Calculator from "../components/Calculator";
 import DiscountModal from "../components/DiscountModal";
@@ -257,6 +259,12 @@ export default function POS() {
   // re-renders on every keystroke in the scan box — no reason to parse it
   // out of local storage each time.
   const [kind] = useState(deviceKind);
+  // A phone that has been put away asks for its owner's PIN again. The
+  // till does not: it is watched, shared, and takes money all day.
+  const [locked, unlock] = useAwayLock(kind === "personal");
+  // The one screen a locked phone will still show, and only when the PIN
+  // cannot be proved for want of a line.
+  const [lockedPeek, setLockedPeek] = useState(false);
 
   // A trade customer prices off the trade list. Resolved server-side too — this
   // is only so the cashier sees the same numbers the invoice will show.
@@ -977,6 +985,28 @@ export default function POS() {
    * This branch only decides what to show.
    */
   if (kind === "personal" && user) {
+    if (locked) {
+      // Look it up, with the lock still on: coming back from it returns here,
+      // not to the errands.
+      if (lockedPeek) {
+        return (
+          <PhoneLookup
+            products={products}
+            online={online}
+            onBack={() => setLockedPeek(false)}
+          />
+        );
+      }
+      return (
+        <PhoneLock
+          user={user}
+          online={online}
+          onUnlock={unlock}
+          onLookup={() => setLockedPeek(true)}
+          onSignOut={logout}
+        />
+      );
+    }
     if (phoneScreen === "lookup") {
       return (
         <>

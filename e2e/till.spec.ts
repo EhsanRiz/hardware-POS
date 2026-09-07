@@ -6117,3 +6117,93 @@ test("the shop's own model refuses money on a phone", async ({ page }) => {
   expect(refusal.status).toBeGreaterThanOrEqual(400);
   expect(refusal.body).toContain("money cannot be taken");
 });
+
+/**
+ * Put the phone away for `seconds`, then pick it back up.
+ *
+ * The browser has no "screen went off" event; visibilitychange is what iOS
+ * fires when the handset locks and again when it wakes, so that is what the
+ * app listens to and what this drives. The clock is faked because nobody
+ * should wait a real minute for a test.
+ */
+async function putAway(page: Page, seconds: number) {
+  await page.clock.install();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(seconds * 1000);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
+test("a phone put away asks for its owner's PIN before anything else", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await putAway(page, 90);
+
+  // Not a panel over the errands — they must not be readable, because somebody
+  // who is not the owner may be holding the handset.
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+  await expect(page.getByText(/put away/i)).toBeVisible();
+
+  // Somebody else's PIN is not a way in, even a real one.
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByText(/not recognised/i)).toBeVisible();
+  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+
+  // Their own PIN puts them back where they were.
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".phone-tiles")).toBeVisible();
+});
+
+test("a phone glanced away from does not lock", async ({ page }) => {
+  // Scan a document and Photograph shelf items both send the browser to the
+  // camera. A lock that fired on every one of those would be a PIN after every
+  // picture, which is how a security measure gets switched off.
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await putAway(page, 10);
+
+  await expect(page.locator(".phone-lock")).toHaveCount(0);
+  await expect(page.locator(".phone-tiles")).toBeVisible();
+});
+
+test("a till is not locked by being left alone", async ({ page }) => {
+  // The counter is watched, shared, and takes money all day. A PIN prompt in
+  // front of a queue because nobody touched it for a minute is not security,
+  // it is a jam.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await putAway(page, 300);
+
+  await expect(page.locator(".phone-lock")).toHaveCount(0);
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+});
+
+test("a locked phone with no line still answers a price", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await putAway(page, 90);
+
+  // The PIN cannot be proved without the line, and nothing on the device is
+  // kept to prove it against. Refusing everything would brick the phone in the
+  // one place Look it up was built for.
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.locator(".phone-lock-offline")).toBeVisible();
+  await page.getByRole("button", { name: /Look something up/i }).click();
+
+  await page.getByPlaceholder(/Scan a barcode/i).fill("cement");
+  const hit = page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" });
+  await expect(hit.locator(".phone-hit-price")).toHaveText(/R\s?115\.00/);
+
+  // And it is still locked: Back returns to the PIN, not to the errands.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+});
