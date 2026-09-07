@@ -6059,8 +6059,43 @@ test("a tile opens the back office on its own screen, behind the PIN", async ({ 
 
   // Straight onto Buying, not onto the first tab of a nav the phone never
   // showed. Closing it comes back to the errands.
-  await expect(page.getByRole("button", { name: /What to order/i })).toBeVisible();
+  //
+  // Exact names, and the catalogue checked for by its absence: PhoneHome stays
+  // mounted UNDER the back office, so a loose /What to order/ matched the
+  // Buying tile's own hint ("What to order, orders out, what you owe") and
+  // passed with the routing broken.
+  await expect(page.getByRole("button", { name: "What you owe", exact: true }))
+    .toBeVisible();
+  await expect(page.getByRole("button", { name: /New product/i })).toHaveCount(0);
   // And the way out says where it goes: there is no till behind this.
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.locator(".phone-home")).toBeVisible();
+});
+
+test("the shop's own model refuses money on a phone", async ({ page }) => {
+  // The real rule is 0074's trigger, and supabase/test/schema.test.sql proves
+  // it against a database. This proves the FAKE refuses too — which matters
+  // because the browser suite runs against the model, and a model that would
+  // let a phone ring up a sale is a model that would let somebody build the
+  // screen for it and watch the tests go green.
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  const refusal = await page.evaluate(async () => {
+    // localCache namespaces everything under "pos." and JSON-encodes it.
+    const token = JSON.parse(localStorage.getItem("pos.device.registerToken")!);
+    const res = await fetch("/rest/v1/rpc/pos_create_sale", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        p_register_token: token,
+        p_cashier_id: "u1",
+        p_items: [{ product_id: "p1", qty: 1 }],
+        p_payment_method: "cash",
+      }),
+    });
+    return { status: res.status, body: await res.text() };
+  });
+
+  expect(refusal.status).toBeGreaterThanOrEqual(400);
+  expect(refusal.body).toContain("money cannot be taken");
 });
