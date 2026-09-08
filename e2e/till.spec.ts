@@ -3267,25 +3267,37 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
   // fold at all.
   await page.setViewportSize({ width: 360, height: 740 });
 
+  // The dialog scales in from 96% over a fifth of a second, and a measurement
+  // taken mid-way is of a shrunken slip. This test passed for a year on that
+  // accident: a blank line the preview drew under the barcode made the real
+  // count one too many, and the 4% shrink rounded it back down — whenever the
+  // timing landed. Measure only once nothing is moving.
+  await page
+    .locator(".animate-scale-in")
+    .evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+
   // Measured rather than asserted on a class name: count how many lines the
   // browser actually laid out and compare it with how many the text has.
   const folded = await page.evaluate(() => {
     const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre");
     if (!pre) return { drawn: -1, real: -1 };
     const lh = parseFloat(getComputedStyle(pre).lineHeight);
-    // A barcode is one line of the slip drawn taller on purpose; count it as
-    // the one line it is, not as the wrapping this test exists to catch.
+    // A barcode is a block of its own, not a line of text: take its height
+    // out of the measurement and it contributes no line to the text either.
     const bars = Array.from(pre.querySelectorAll<HTMLElement>("[data-barcode]"));
     const barHeight = bars.reduce((t, b) => t + b.getBoundingClientRect().height, 0);
     return {
-      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh) + bars.length,
+      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh),
       real: (pre.textContent ?? "").replace(/\n$/, "").split("\n").length,
+      bars: bars.length,
     };
   });
   expect(folded.real, "the preview was found and has content").toBeGreaterThan(5);
+  expect(folded.bars, "the document number is drawn as a barcode").toBe(1);
   // Drawn may come in a line under the text's own count — a trailing newline
   // does not get a line box of its own. It may never come in ABOVE it: that
-  // can only mean the browser folded something.
+  // can only mean the browser folded something, or drew a line the slip does
+  // not have (the blank under the barcode was exactly that).
   expect(
     folded.drawn,
     "lines drawn on screen vs lines in the slip — more means it wrapped"
@@ -3294,6 +3306,24 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
     folded.drawn,
     "the preview is laid out at all, rather than collapsed or hidden"
   ).toBeGreaterThanOrEqual(folded.real - 2);
+
+  // The count above cannot see a blank line the preview invents, because the
+  // newline that draws it is counted on both sides. So look at it directly:
+  // whatever follows the barcode must start on the line under it. A gap of a
+  // line is the blank the paper never prints.
+  const gap = await page.evaluate(() => {
+    const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre")!;
+    const bar = pre.querySelector<HTMLElement>("[data-barcode]")!;
+    const range = document.createRange();
+    range.setStartAfter(bar);
+    range.setEnd(pre, pre.childNodes.length);
+    const first = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0)!;
+    return {
+      gap: first.top - bar.getBoundingClientRect().bottom,
+      lh: parseFloat(getComputedStyle(pre).lineHeight),
+    };
+  });
+  expect(gap.gap, "space between the barcode and the next line").toBeLessThan(gap.lh / 2);
 });
 
 test("a quote adds up: the line shows what came off it, and so does the total", async ({ page }) => {
