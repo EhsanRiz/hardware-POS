@@ -94,6 +94,11 @@ export default function Login() {
           back to a band above the names, drawing gone, so the list is what
           the thumb lands on. */}
       <div className="login-scene">
+        {/* The aisle behind the bench: racks of blister packs and a trolley,
+            pulled into the identity as a green-and-amber duotone rather than
+            left as a colour photograph. It ships with the app and is
+            precached, so the door looks the same with the line down. */}
+        <img className="login-photo" src="/door.jpg" alt="" decoding="async" />
         <div className="login-head">
           <div className="sell-lockup">
             <InnovaMark size={30} onGreen />

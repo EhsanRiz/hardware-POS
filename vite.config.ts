@@ -25,7 +25,9 @@ export default defineConfig({
       workbox: {
         // Fonts are part of the app shell: a till that loses the line before
         // they are cached would fall back to a system serif.
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // jpg is here for the one photograph on the sign-in screen (door.jpg,
+        // 61 KB); the catalogue's JPEGs are kept out by globIgnores below.
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2,jpg}"],
         // Supplier catalogue photographs (public/catalogue) are ~10 MB of
         // JPEGs. Precaching them would balloon first install on a shop line;
         // they are picked up lazily by the runtime cache below instead.
