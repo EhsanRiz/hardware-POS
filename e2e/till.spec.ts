@@ -170,6 +170,15 @@ test("the sign-in screen says what day it is and whether the till is talking to 
   await expect(status).toContainText(today);
   await expect(status).toContainText("Online");
 
+  // Behind the bench, the aisle: a photograph that has actually loaded, and
+  // is worn as a duotone rather than shown as a colour picture — greyed and
+  // screened onto the green, which is what keeps it inside the identity.
+  const photo = page.locator(".login-photo");
+  await expect(photo).toBeVisible();
+  expect(await photo.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  expect(await photo.evaluate((el) => getComputedStyle(el).filter)).toContain("grayscale(1)");
+  expect(await photo.evaluate((el) => getComputedStyle(el).mixBlendMode)).toBe("screen");
+
   // A sale taken with the line down, then the operator signs out. The door
   // must say the sale is still on the till, in the header chip's own words.
   await page.getByRole("button", { name: /^Sam\b/ }).click();
@@ -220,6 +229,17 @@ test("the engraving draws itself in once, and not at all for someone who asked f
   expect(await stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset)).toBe("0px");
 });
 
+test("the door's photograph is part of the app shell, so it is there with the line down", async ({ page }) => {
+  // The service worker precaches the shell at install. The photograph has to
+  // be in that list, or a till that loses the line before its first sign-in
+  // opens on a green panel with a hole in it. Read from the built worker
+  // rather than exercised through it, because the suite blocks the worker
+  // to keep the fake backend in charge of every request.
+  const sw = await page.request.get("/sw.js");
+  expect(sw.ok()).toBe(true);
+  expect(await sw.text()).toMatch(/door\.jpg/);
+});
+
 test.describe("sign-in on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -230,6 +250,8 @@ test.describe("sign-in on a phone", () => {
 
     // No engraving on a phone: it would only push the list below the fold.
     await expect(page.locator(".login-engraving")).toBeHidden();
+    // The aisle photograph stays, in the band: it costs no height.
+    await expect(page.locator(".login-photo")).toBeVisible();
     // The day and the line still show, in the band above the names.
     await expect(page.locator(".login-status")).toContainText("Online");
 
