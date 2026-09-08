@@ -144,6 +144,108 @@ test("a handover puts the next operator on their own name", async ({ page }) => 
   expect(be.storedSales[0].cashier_id).toBe(USERS.employee.row.id);
 });
 
+/**
+ * The sign-in screen as a front door.
+ *
+ * It was a green band, an empty middle and three names. Now the green takes
+ * the left of a wide screen — a hairline engraving of the bench, with the day
+ * and the state of the line over it — and the names take the right. The
+ * drawing is decoration and is tested only for staying out of the way; the
+ * status is not decoration, because "Offline · 3 queued" on the door is how a
+ * manager opening up learns that last night's sales have not left the till.
+ */
+test("the sign-in screen says what day it is and whether the till is talking to the server", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+  // Wide screen: the scene has its drawing, and the day is written out the
+  // way a person would say it, not as digits.
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  const today = await page.evaluate(() => {
+    const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", o).format(new Date());
+    return `${part({ weekday: "long" })} ${part({ day: "numeric" })} ${part({ month: "long" })} ${part({ year: "numeric" })}`;
+  });
+  const status = page.locator(".login-status");
+  await expect(status).toContainText(today);
+  await expect(status).toContainText("Online");
+
+  // A sale taken with the line down, then the operator signs out. The door
+  // must say the sale is still on the till, in the header chip's own words.
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(status).toContainText("Offline · 1 queued");
+
+  // The line returns while the screen is still on the door: the queue drains
+  // and the door says so without anyone signing in to make it happen.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 45_000 }).toBe(1);
+  await expect(status).toHaveText(/Online$/);
+  await expect(status).not.toContainText("queued");
+});
+
+test("the engraving draws itself in once, and not at all for someone who asked for less motion", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  const stroke = page.locator(".login-engraving rect").first();
+  await expect(stroke).toBeVisible();
+
+  // One run to completion: the stroke ends fully drawn (offset 0) and the
+  // animation does not repeat — a till idles on this screen all day and must
+  // not spend a core on it.
+  await expect
+    .poll(() => stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset), { timeout: 8_000 })
+    .toBe("0px");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("login-draw");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationIterationCount)).toBe("1");
+
+  // Reduced motion: the plate is simply there, nothing moves.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset)).toBe("0px");
+});
+
+test.describe("sign-in on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the drawing gets out of the way of the names", async ({ page }) => {
+    await pairAndSignIn(page);
+    await page.getByRole("button", { name: /Sign out/i }).click();
+    await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+    // No engraving on a phone: it would only push the list below the fold.
+    await expect(page.locator(".login-engraving")).toBeHidden();
+    // The day and the line still show, in the band above the names.
+    await expect(page.locator(".login-status")).toContainText("Online");
+
+    // Every name is on screen without scrolling, and nothing spills sideways.
+    const names = page.locator(".login-who button");
+    await expect(names).toHaveCount(3);
+    for (const box of await names.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom))) {
+      expect(box).toBeLessThanOrEqual(844);
+    }
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
 test("scanning a barcode rings the item straight through", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
