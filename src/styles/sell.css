@@ -1052,7 +1052,7 @@
 .login-engraving {
   display: none;
   width: 100%;
-  max-width: 560px;
+  max-width: 640px;
   height: auto;
   color: var(--color-accent-400);
   opacity: 0.9;

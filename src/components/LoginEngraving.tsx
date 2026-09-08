@@ -11,8 +11,10 @@
  * its wide lead; a hex nut in three-quarter view beside a threaded bolt; a
  * tape with its belt clip, thumb lock and riveted hook; a claw hammer whose
  * claw curves back toward a handle that swells at the grip; a screwdriver
- * with a fluted handle. The first version was six outlines and looked like a
- * clip-art sheet. What makes a line drawing read as the object is the second
+ * with a fluted handle. Under them the stock: a 50 kg cement bag with its
+ * pinched ends and printed panel, a stack of bricks in three-quarter view
+ * with the hidden edges left out, and a paint tin with its wire handle. The
+ * first version was six outlines and looked like a clip-art sheet. What makes a line drawing read as the object is the second
  * contour — the flange, the neck, the collar — so each tool carries those.
  *
  * Motion is one gesture, once: the strokes draw themselves in over about two
@@ -32,7 +34,7 @@ export default function LoginEngraving({ className = "" }: { className?: string 
   return (
     <svg
       className={`login-engraving ${className}`}
-      viewBox="0 0 640 460"
+      viewBox="0 0 640 570"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.5"
@@ -153,6 +155,60 @@ export default function LoginEngraving({ className = "" }: { className?: string 
       <line x1="494" y1="428" x2="550" y2="428" pathLength={1} />
       <rect x="566" y="411" width="9" height="18" rx="2" pathLength={1} />
       <path d="M 575 417 h 50 l 10 -3 v 12 l -10 -3 h -50" pathLength={1} />
+    </g>
+
+    {/* CEMENT BAG: a 50 kg paper sack lying flat, bulged, with its pinched
+         sealed ends, a printed panel and the creases where the paper folds */}
+    <g style={{ "--d": "1.7s" } as CSSProperties}>
+      <path d="M 62 474 Q 150 464 238 474 L 240 550 Q 150 560 60 550 Z" pathLength={1} />
+      <path d="M 62 478 L 48 484 L 48 544 L 60 550" pathLength={1} />
+      <path d="M 238 478 L 252 484 L 252 544 L 240 550" pathLength={1} />
+      <path d="M 68 488 Q 74 512 68 538" pathLength={1} />
+      <path d="M 232 488 Q 226 512 232 538" pathLength={1} />
+      <rect x="84" y="488" width="132" height="48" rx="3" pathLength={1} />
+      <circle cx="106" cy="512" r="11" pathLength={1} />
+      <circle cx="106" cy="512" r="4" pathLength={1} />
+      <line x1="126" y1="502" x2="204" y2="502" pathLength={1} />
+      <line x1="126" y1="512" x2="196" y2="512" pathLength={1} />
+      <line x1="126" y1="522" x2="184" y2="522" pathLength={1} />
+    </g>
+
+    {/* BRICKS: two side by side and one across the top, three-quarter view,
+         with the hidden edges left out */}
+    <g style={{ "--d": "1.9s" } as CSSProperties}>
+      {/* lower left */}
+      <rect x="290" y="526" width="70" height="24" pathLength={1} />
+      <path d="M 290 526 L 308 516 L 322 516" pathLength={1} />
+      {/* lower right */}
+      <path d="M 392 526 L 438 526 L 438 550 L 368 550 L 368 526" pathLength={1} />
+      <line x1="368" y1="526" x2="374" y2="526" pathLength={1} />
+      <path d="M 368 526 L 386 516 L 392 516" pathLength={1} />
+      <path d="M 410 516 L 456 516 L 438 526" pathLength={1} />
+      <path d="M 438 526 L 456 516 L 456 540 L 438 550" pathLength={1} />
+      {/* the one on top */}
+      <rect x="322" y="502" width="70" height="24" pathLength={1} />
+      <path d="M 322 502 L 340 492 L 410 492 L 392 502" pathLength={1} />
+      <path d="M 392 502 L 410 492 L 410 516 L 392 526" pathLength={1} />
+      {/* the frog, a shallow hollow in the top face */}
+      <path d="M 340 499 L 352 494 L 398 494 L 386 499 Z" pathLength={1} />
+    </g>
+
+    {/* PAINT TIN: a cylinder with its lid rim, a label band, and a wire
+         handle with a grip, hung from ears on the rim */}
+    <g style={{ "--d": "2.1s" } as CSSProperties}>
+      <ellipse cx="545" cy="486" rx="40" ry="10" pathLength={1} />
+      <ellipse cx="545" cy="486" rx="33" ry="7" pathLength={1} />
+      <line x1="505" y1="486" x2="505" y2="548" pathLength={1} />
+      <line x1="585" y1="486" x2="585" y2="548" pathLength={1} />
+      <path d="M 505 548 A 40 10 0 0 0 585 548" pathLength={1} />
+      <path d="M 505 494 A 40 10 0 0 0 585 494" pathLength={1} />
+      <path d="M 505 512 A 40 10 0 0 0 585 512" pathLength={1} />
+      <path d="M 505 538 A 40 10 0 0 0 585 538" pathLength={1} />
+      <circle cx="545" cy="526" r="7" pathLength={1} />
+      <path d="M 507 485 C 507 460 583 460 583 485" pathLength={1} />
+      <rect x="535" y="464" width="20" height="7" rx="3.5" pathLength={1} />
+      <circle cx="507" cy="486" r="2" pathLength={1} />
+      <circle cx="583" cy="486" r="2" pathLength={1} />
     </g>
     </svg>
   );
