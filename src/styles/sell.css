@@ -1189,7 +1189,7 @@
    into the marks. Under reduced-motion none of this applies and the plate is
    simply there. */
 @media (prefers-reduced-motion: no-preference) {
-  .login-engraving :is(path, line, rect, circle) {
+  .login-engraving :is(path, line, rect, circle, ellipse) {
     stroke-dasharray: 1;
     stroke-dashoffset: 1;
     animation: login-draw 1.6s cubic-bezier(0.4, 0, 0.2, 1) var(--d, 0s) forwards;
