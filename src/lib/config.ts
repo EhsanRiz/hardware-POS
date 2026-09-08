@@ -54,3 +54,11 @@ export const VAT_RATE = 0.15;
  */
 export const ENROL_URL =
   import.meta.env.VITE_ENROL_URL ?? "https://pos.innovaearth.com/enrol/";
+
+/**
+ * Where a shop that is not on InnovaPOS yet asks to be. The first-run screen
+ * points here, because a stranger who types the app's address must be given
+ * somewhere to go rather than a form they cannot fill in.
+ */
+export const REQUEST_URL =
+  import.meta.env.VITE_REQUEST_URL ?? "https://pos.innovaearth.com/request/";

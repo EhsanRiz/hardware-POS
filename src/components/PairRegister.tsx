@@ -1,3 +1,4 @@
+import { ENROL_URL, REQUEST_URL } from "../lib/config";
 import { useState } from "react";
 import { enrolDevice, pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
@@ -83,20 +84,54 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   );
 
   if (mode === "ask") {
-    return shell(
-      <>
-        <h1 className="text-xl font-semibold text-center">What is this device?</h1>
-        <p className="text-sm text-center" style={{ color: "var(--color-neutral-700)" }}>
-          A till takes money at the counter. A phone is your own, for the work
-          away from it.
-        </p>
-        <button className="btn-tender" onClick={() => setMode("till")}>
-          This is a till
-        </button>
-        <button className="btn-line w-full" onClick={() => setMode("phone")}>
-          This is my phone
-        </button>
-      </>
+    // The front door of InnovaPOS. One address serves every shop, and it is
+    // the pairing below, not the address, that decides which shop a device
+    // belongs to — so this screen is what anybody sees who is not paired yet:
+    // a manager with a new tablet, a colleague with their own phone, and a
+    // stranger who typed the address. Each of them needs somewhere to go.
+    return (
+      <div className="firstrun">
+        <div className="firstrun-head">
+          <div className="sell-lockup">
+            <InnovaMark size={30} onGreen />
+            <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+              Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+            </span>
+          </div>
+          <h1 className="firstrun-title">The till for hardware shops</h1>
+          <p className="firstrun-sub">
+            This device is not set up for a shop yet. The shop is decided when
+            a manager pairs it, so there is nothing to type in the address.
+          </p>
+        </div>
+        <div className="firstrun-body">
+          <h2 className="firstrun-ask">What is this device?</h2>
+          <p className="firstrun-hint">
+            A till takes money at the counter. A phone is your own, for the work
+            away from it.
+          </p>
+          <button className="btn-tender" onClick={() => setMode("till")}>
+            This is a till
+          </button>
+          <button className="btn-line w-full" onClick={() => setMode("phone")}>
+            This is my phone
+          </button>
+          <div className="firstrun-outs">
+            <p>
+              Invited to a shop but no PIN yet?{" "}
+              <a href={ENROL_URL} target="_blank" rel="noreferrer">Set your PIN</a>
+            </p>
+            <p>
+              Not on InnovaPOS yet?{" "}
+              <a href={REQUEST_URL} target="_blank" rel="noreferrer">Request it for your shop</a>
+            </p>
+          </div>
+        </div>
+        <footer className="firstrun-foot">
+          InnovaPOS · a product of InnovaEarth
+          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+        </footer>
+      </div>
     );
   }
 
