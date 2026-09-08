@@ -54,6 +54,39 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
   await expect(page.locator('button:text-is("1")')).toHaveCount(0);
 });
 
+/**
+ * The front door. One address serves every shop, and a device that is not
+ * paired yet is the only thing that ever sees this screen — so it has to work
+ * for a stranger who typed the address as well as for the manager with the
+ * new tablet. Nobody may be left with a form they cannot fill in.
+ */
+test("an unpaired device is the front door of InnovaPOS, with a way out for everyone", async ({ page }) => {
+  await page.goto("/");
+  const door = page.locator(".firstrun");
+  await expect(door).toBeVisible();
+  // It says why there is no shop on screen, rather than presenting a form.
+  await expect(door).toContainText(/not set up for a shop yet/i);
+  await expect(door.getByRole("button", { name: "This is a till" })).toBeVisible();
+  await expect(door.getByRole("button", { name: "This is my phone" })).toBeVisible();
+
+  // A manager who was invited but has not chosen a PIN cannot pair anything:
+  // they are sent to where the PIN is set. A shop that is not on InnovaPOS
+  // is sent to where it asks to be. Both open beside the app, not over it.
+  const pin = door.getByRole("link", { name: /Set your PIN/i });
+  await expect(pin).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
+  await expect(pin).toHaveAttribute("target", "_blank");
+  const request = door.getByRole("link", { name: /Request it for your shop/i });
+  await expect(request).toHaveAttribute("href", "https://pos.innovaearth.com/request/");
+  await expect(request).toHaveAttribute("target", "_blank");
+
+  // Nothing spills sideways on a phone: a stranger's first look is a phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "This is a till" }).click();
