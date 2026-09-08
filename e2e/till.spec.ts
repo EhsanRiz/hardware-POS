@@ -144,6 +144,108 @@ test("a handover puts the next operator on their own name", async ({ page }) => 
   expect(be.storedSales[0].cashier_id).toBe(USERS.employee.row.id);
 });
 
+/**
+ * The sign-in screen as a front door.
+ *
+ * It was a green band, an empty middle and three names. Now the green takes
+ * the left of a wide screen — a hairline engraving of the bench, with the day
+ * and the state of the line over it — and the names take the right. The
+ * drawing is decoration and is tested only for staying out of the way; the
+ * status is not decoration, because "Offline · 3 queued" on the door is how a
+ * manager opening up learns that last night's sales have not left the till.
+ */
+test("the sign-in screen says what day it is and whether the till is talking to the server", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+  // Wide screen: the scene has its drawing, and the day is written out the
+  // way a person would say it, not as digits.
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  const today = await page.evaluate(() => {
+    const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", o).format(new Date());
+    return `${part({ weekday: "long" })} ${part({ day: "numeric" })} ${part({ month: "long" })} ${part({ year: "numeric" })}`;
+  });
+  const status = page.locator(".login-status");
+  await expect(status).toContainText(today);
+  await expect(status).toContainText("Online");
+
+  // A sale taken with the line down, then the operator signs out. The door
+  // must say the sale is still on the till, in the header chip's own words.
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(status).toContainText("Offline · 1 queued");
+
+  // The line returns while the screen is still on the door: the queue drains
+  // and the door says so without anyone signing in to make it happen.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 45_000 }).toBe(1);
+  await expect(status).toHaveText(/Online$/);
+  await expect(status).not.toContainText("queued");
+});
+
+test("the engraving draws itself in once, and not at all for someone who asked for less motion", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  const stroke = page.locator(".login-engraving rect").first();
+  await expect(stroke).toBeVisible();
+
+  // One run to completion: the stroke ends fully drawn (offset 0) and the
+  // animation does not repeat — a till idles on this screen all day and must
+  // not spend a core on it.
+  await expect
+    .poll(() => stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset), { timeout: 8_000 })
+    .toBe("0px");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("login-draw");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationIterationCount)).toBe("1");
+
+  // Reduced motion: the plate is simply there, nothing moves.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset)).toBe("0px");
+});
+
+test.describe("sign-in on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the drawing gets out of the way of the names", async ({ page }) => {
+    await pairAndSignIn(page);
+    await page.getByRole("button", { name: /Sign out/i }).click();
+    await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+    // No engraving on a phone: it would only push the list below the fold.
+    await expect(page.locator(".login-engraving")).toBeHidden();
+    // The day and the line still show, in the band above the names.
+    await expect(page.locator(".login-status")).toContainText("Online");
+
+    // Every name is on screen without scrolling, and nothing spills sideways.
+    const names = page.locator(".login-who button");
+    await expect(names).toHaveCount(3);
+    for (const box of await names.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom))) {
+      expect(box).toBeLessThanOrEqual(844);
+    }
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
 test("scanning a barcode rings the item straight through", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
@@ -2152,11 +2254,16 @@ test("a Sales row opens the sale, and the list is striped", async ({ page }) => 
   await openManage(page);
   await page.getByRole("button", { name: /^Sales$/ }).click();
 
-  // Neighbouring rows differ, so the eye can follow one across.
-  const [first, second] = await page.evaluate(() => {
-    const rows = document.querySelectorAll("li:has(button)");
-    return [getComputedStyle(rows[0]).backgroundColor, getComputedStyle(rows[1]).backgroundColor];
-  });
+  // Neighbouring rows differ, so the eye can follow one across. The list is
+  // fetched, so wait for the second row to exist before measuring anything:
+  // measured straight after the click, this read two rows that were not there
+  // yet on a runner slower than a laptop, and CI was red on main for it.
+  const rows = page.locator("li:has(button)");
+  await expect(rows.nth(1)).toBeVisible();
+  const [first, second] = await rows.evaluateAll((els) => [
+    getComputedStyle(els[0]).backgroundColor,
+    getComputedStyle(els[1]).backgroundColor,
+  ]);
   expect(first).not.toBe(second);
 
   // The row itself is the door; the buttons on it still do their own jobs.
@@ -3165,25 +3272,37 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
   // fold at all.
   await page.setViewportSize({ width: 360, height: 740 });
 
+  // The dialog scales in from 96% over a fifth of a second, and a measurement
+  // taken mid-way is of a shrunken slip. This test passed for a year on that
+  // accident: a blank line the preview drew under the barcode made the real
+  // count one too many, and the 4% shrink rounded it back down — whenever the
+  // timing landed. Measure only once nothing is moving.
+  await page
+    .locator(".animate-scale-in")
+    .evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+
   // Measured rather than asserted on a class name: count how many lines the
   // browser actually laid out and compare it with how many the text has.
   const folded = await page.evaluate(() => {
     const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre");
     if (!pre) return { drawn: -1, real: -1 };
     const lh = parseFloat(getComputedStyle(pre).lineHeight);
-    // A barcode is one line of the slip drawn taller on purpose; count it as
-    // the one line it is, not as the wrapping this test exists to catch.
+    // A barcode is a block of its own, not a line of text: take its height
+    // out of the measurement and it contributes no line to the text either.
     const bars = Array.from(pre.querySelectorAll<HTMLElement>("[data-barcode]"));
     const barHeight = bars.reduce((t, b) => t + b.getBoundingClientRect().height, 0);
     return {
-      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh) + bars.length,
+      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh),
       real: (pre.textContent ?? "").replace(/\n$/, "").split("\n").length,
+      bars: bars.length,
     };
   });
   expect(folded.real, "the preview was found and has content").toBeGreaterThan(5);
+  expect(folded.bars, "the document number is drawn as a barcode").toBe(1);
   // Drawn may come in a line under the text's own count — a trailing newline
   // does not get a line box of its own. It may never come in ABOVE it: that
-  // can only mean the browser folded something.
+  // can only mean the browser folded something, or drew a line the slip does
+  // not have (the blank under the barcode was exactly that).
   expect(
     folded.drawn,
     "lines drawn on screen vs lines in the slip — more means it wrapped"
@@ -3192,6 +3311,24 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
     folded.drawn,
     "the preview is laid out at all, rather than collapsed or hidden"
   ).toBeGreaterThanOrEqual(folded.real - 2);
+
+  // The count above cannot see a blank line the preview invents, because the
+  // newline that draws it is counted on both sides. So look at it directly:
+  // whatever follows the barcode must start on the line under it. A gap of a
+  // line is the blank the paper never prints.
+  const gap = await page.evaluate(() => {
+    const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre")!;
+    const bar = pre.querySelector<HTMLElement>("[data-barcode]")!;
+    const range = document.createRange();
+    range.setStartAfter(bar);
+    range.setEnd(pre, pre.childNodes.length);
+    const first = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0)!;
+    return {
+      gap: first.top - bar.getBoundingClientRect().bottom,
+      lh: parseFloat(getComputedStyle(pre).lineHeight),
+    };
+  });
+  expect(gap.gap, "space between the barcode and the next line").toBeLessThan(gap.lh / 2);
 });
 
 test("a quote adds up: the line shows what came off it, and so does the total", async ({ page }) => {

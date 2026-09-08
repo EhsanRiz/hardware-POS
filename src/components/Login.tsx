@@ -6,11 +6,12 @@ import { shopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
 import { errorMessage } from "../lib/errors";
 import { roleTitle } from "../lib/permissions";
-import { isOnline } from "../lib/offline";
+import { isOnline, useOnline } from "../lib/offline";
 import { usePendingSync } from "../lib/sync";
 import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
+import LoginEngraving from "./LoginEngraving";
 import type { LoginCandidate } from "../lib/types";
 
 /**
@@ -36,9 +37,17 @@ import type { LoginCandidate } from "../lib/types";
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
  */
+/** "Tuesday 8 September 2026" — the day, written out, for someone opening up. */
+function todayLine(now = new Date()): string {
+  const part = (opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-GB", opts).format(now);
+  return `${part({ weekday: "long" })} ${part({ day: "numeric" })} ${part({ month: "long" })} ${part({ year: "numeric" })}`;
+}
+
 export default function Login() {
   const { setUser } = useAuth();
   const { pending } = usePendingSync();
+  const online = useOnline();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
@@ -78,15 +87,47 @@ export default function Login() {
 
   return (
     <div className="login">
-      <div className="login-head">
-        <div className="sell-lockup">
-          <InnovaMark size={30} onGreen />
-          <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
-            Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
-          </span>
+      {/* The green scene. On a wide screen it is the left half: the lockup,
+          the shop, an engraving of the bench, and the three things a manager
+          wants to know on arrival before touching anything — the day, the
+          till, and whether it is talking to the server. On a phone it folds
+          back to a band above the names, drawing gone, so the list is what
+          the thumb lands on. */}
+      <div className="login-scene">
+        <div className="login-head">
+          <div className="sell-lockup">
+            <InnovaMark size={30} onGreen />
+            <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+              Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+            </span>
+          </div>
+          <h1 className="login-shop">{shopSettings().shop_name}</h1>
+          <p className="login-till">{registerName()}</p>
         </div>
-        <h1 className="login-shop">{shopSettings().shop_name}</h1>
-        <p className="login-till">{registerName()}</p>
+
+        <LoginEngraving />
+
+        <dl className="login-status">
+          <div>
+            <dt>Today</dt>
+            <dd>{todayLine()}</dd>
+          </div>
+          <div>
+            <dt>Line</dt>
+            <dd className={online ? "" : "is-offline"}>
+              {/* Same words as the header chip after sign-in: a manager must
+                  not read "Offline · 3 queued" here and "Syncing" there for
+                  the same state. */}
+              {online
+                ? pending > 0
+                  ? `Online · syncing ${pending}`
+                  : "Online"
+                : pending > 0
+                  ? `Offline · ${pending} queued`
+                  : "Offline"}
+            </dd>
+          </div>
+        </dl>
       </div>
 
       <div className="login-body">
@@ -143,15 +184,15 @@ export default function Login() {
           <span aria-hidden="true">·</span>
           <button onClick={() => setConfirmUnpair(true)}>Not this shop?</button>
         </div>
-      </div>
 
-      <footer className="login-foot">
-        <InstallButton className="mb-4" />
-        <p>
-          InnovaPOS · a product of InnovaEarth
-          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
-        </p>
-      </footer>
+        <footer className="login-foot">
+          <InstallButton className="mb-4" />
+          <p>
+            InnovaPOS · a product of InnovaEarth
+            <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+          </p>
+        </footer>
+      </div>
 
       {confirmUnpair && (
         <div className="modal-backdrop" onClick={() => setConfirmUnpair(false)}>

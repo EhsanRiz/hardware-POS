@@ -966,9 +966,20 @@
   flex-direction: column;
   background: var(--color-bg);
 }
-.login-head {
+
+/* The green half. Below 900px it is a band across the top with the drawing
+   put away; from 900px it stands beside the names, full height, and the
+   engraving is what fills the space that used to be empty. */
+.login-scene {
   background: var(--color-colophon);
-  padding: 34px 24px 30px;
+  color: var(--color-accent-400);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 34px 24px 24px;
+  gap: 18px;
+}
+.login-head {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -990,19 +1001,66 @@
   color: var(--color-accent-400);
   margin: -8px 0 0;
 }
+
+/* The engraving: strokes only, amber on green, 1.5 units at a 640 viewBox so
+   it stays a hairline at any size. Hidden until the screen is wide enough to
+   give it a panel of its own — on a phone it would only push the names below
+   the fold. */
+.login-engraving {
+  display: none;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  color: var(--color-accent-400);
+  opacity: 0.9;
+}
+
+/* The day and the line, over the drawing. Same kicker-and-value pair the
+   sell header uses, so it reads as the same instrument. */
+.login-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 32px;
+  margin: 0;
+  padding: 0;
+}
+.login-status > div { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.login-status dt {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-neutral-400);
+}
+.login-status dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-bg);
+  font-variant-numeric: tabular-nums;
+}
+.login-status dd.is-offline { color: var(--color-accent-400); }
+
 .login-body {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   padding: 28px 24px;
   gap: 18px;
 }
+/* The names sit in the middle of the cream with the colophon on the floor:
+   two auto margins share the free space, so the list is centred and the
+   footer is pushed down rather than the list being pushed up by it. */
+.login-body::before { content: ""; margin-bottom: auto; }
+/* The sell header drops the wordmark on a phone for want of room. The
+   sign-in band has the room, and the brand should say its name here. */
+.login-head .sell-wordmark { display: inline-block; }
 .login-prompt { font-size: 15px; color: var(--color-neutral-700); }
 .login-error { font-size: 14px; color: var(--color-owing); }
 .login-foot {
-  padding: 0 24px 26px;
+  margin-top: auto;
+  padding: 26px 0 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1050,26 +1108,27 @@
   margin: 0;
   padding: 0;
   width: 100%;
-  max-width: 320px;
+  max-width: 360px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .login-who button {
   width: 100%;
+  min-height: 60px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid var(--color-neutral-300);
   border-radius: 12px;
   background: var(--color-bg);
   cursor: pointer;
   text-align: left;
 }
-.login-who button:hover { border-color: var(--color-accent); }
-.login-who-name { font-size: 16px; color: var(--color-neutral-900); }
+.login-who button:hover { border-color: var(--color-accent); background: var(--color-neutral-100); }
+.login-who-name { font-size: 18px; font-weight: 500; color: var(--color-neutral-900); }
 .login-who-role { font-size: 13px; color: var(--color-neutral-700); }
 .login-back {
   background: none;
@@ -1102,6 +1161,52 @@
 }
 .login-outs a:hover,
 .login-outs button:hover { color: var(--color-accent); }
+
+/* Side by side from 900px: the scene takes the larger share and the names
+   sit centred in the cream, the way the payment column sits beside the
+   lines once signed in. */
+@media (min-width: 900px) {
+  .login { flex-direction: row; min-height: 100vh; }
+  .login-scene {
+    flex: 0 0 54%;
+    justify-content: space-between;
+    padding: 40px 48px 36px;
+    gap: 28px;
+  }
+  .login-engraving { display: block; }
+  .login-status { gap: 8px 44px; }
+  .login-body {
+    flex: 1 1 auto;
+    padding: 40px 48px 28px;
+    gap: 22px;
+  }
+  .login-prompt { font-size: 17px; }
+}
+
+/* The draw-in. Every stroke carries pathLength="1", so a dash of one unit is
+   the whole edge and the offset walks it from nothing to complete. One run,
+   forwards, staggered by --d from each tool's group; then the bubble slides
+   into the marks. Under reduced-motion none of this applies and the plate is
+   simply there. */
+@media (prefers-reduced-motion: no-preference) {
+  .login-engraving :is(path, line, rect, circle) {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: login-draw 1.6s cubic-bezier(0.4, 0, 0.2, 1) var(--d, 0s) forwards;
+  }
+  .login-engraving .login-bubble {
+    animation:
+      login-draw 0.8s ease-out calc(var(--d, 0s) + 1.2s) forwards,
+      login-settle 1.4s cubic-bezier(0.2, 0.8, 0.2, 1) calc(var(--d, 0s) + 1.8s) both;
+  }
+}
+@keyframes login-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes login-settle {
+  from { transform: translateX(-11px); }
+  to { transform: translateX(0); }
+}
 
 /* ---- Tablets ------------------------------------------------------------
  *
