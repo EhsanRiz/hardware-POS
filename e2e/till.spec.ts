@@ -2254,11 +2254,16 @@ test("a Sales row opens the sale, and the list is striped", async ({ page }) => 
   await openManage(page);
   await page.getByRole("button", { name: /^Sales$/ }).click();
 
-  // Neighbouring rows differ, so the eye can follow one across.
-  const [first, second] = await page.evaluate(() => {
-    const rows = document.querySelectorAll("li:has(button)");
-    return [getComputedStyle(rows[0]).backgroundColor, getComputedStyle(rows[1]).backgroundColor];
-  });
+  // Neighbouring rows differ, so the eye can follow one across. The list is
+  // fetched, so wait for the second row to exist before measuring anything:
+  // measured straight after the click, this read two rows that were not there
+  // yet on a runner slower than a laptop, and CI was red on main for it.
+  const rows = page.locator("li:has(button)");
+  await expect(rows.nth(1)).toBeVisible();
+  const [first, second] = await rows.evaluateAll((els) => [
+    getComputedStyle(els[0]).backgroundColor,
+    getComputedStyle(els[1]).backgroundColor,
+  ]);
   expect(first).not.toBe(second);
 
   // The row itself is the door; the buttons on it still do their own jobs.
