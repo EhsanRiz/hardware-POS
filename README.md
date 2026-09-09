@@ -212,8 +212,14 @@ It is an intelligent way in to what the till already shows, not the till:
   may see; cost prices, bank details and balances never leave the server.
   What it may touch is decided in `supabase/functions/tillai/tools.ts`, which
   is pure and tested by `test/tillai.test.mjs`.
-- **It never does sums with money.** Totals, takings, reports and cash-up are
-  in Manage behind a PIN, and it says so.
+- **It sees what the person can see.** Somebody whose rights open Manage's
+  reports or costs is asked for their PIN once when the sheet opens; it then
+  travels with each question to the same PIN-checked RPCs Manage calls, so a
+  manager can ask "how much did we sell in the past 3 days" and a counter
+  hand's PIN gets "Not permitted", exactly as in Manage. Nobody without such
+  rights is asked. The PIN is held in memory only and is never logged.
+- **It never does sums with money.** It quotes the figures the tools return;
+  a report's totals are the report's.
 - **It needs the line**, and says so. The till sells without it.
 
 The Gemini key and model are the document reader's (`GEMINI_API_KEY`,

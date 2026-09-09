@@ -4451,8 +4451,8 @@ declare v_org uuid; v_reg uuid; v_n bigint;
 begin
   select org_id into v_org from fixture;
   select id into v_reg from public.registers where org_id = v_org limit 1;
-  insert into public.tillai_questions (org_id, register_id, question, tools, answer)
-  values (v_org, v_reg, 'how much cement do we have', array['products'], '40 bags');
+  insert into public.tillai_questions (org_id, register_id, question, tools, answer, unlocked)
+  values (v_org, v_reg, 'how much cement do we have', array['products'], '40 bags', false);
   select count(*) into v_n from public.tillai_questions
    where org_id = v_org and asked_at > now() - interval '1 day';
   perform assert_eq(v_n, 1::bigint, 'the log counts a shop''s questions for the day');

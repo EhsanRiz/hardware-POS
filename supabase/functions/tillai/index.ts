@@ -19,7 +19,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   DAILY_CAP, HISTORY_TURNS, MAX_QUESTION, MAX_ROUNDS,
-  declarations, filterCustomers, scrub, systemPrompt, toolNamed,
+  declarations, scrub, systemPrompt, toolNamed,
 } from "./tools.ts";
 
 const supabase = createClient(
@@ -80,7 +80,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   if (req.method !== "POST") return json({ ok: false }, 405);
 
-  let body: { register_token?: string; question?: string; history?: Turn[] };
+  let body: { register_token?: string; question?: string; history?: Turn[]; pin?: string };
   try {
     body = await req.json();
   } catch {
@@ -89,6 +89,10 @@ Deno.serve(async (req: Request) => {
 
   const token = String(body.register_token ?? "");
   const question = String(body.question ?? "").trim().slice(0, MAX_QUESTION);
+  // The person's PIN, if they unlocked TillAI. It goes only to PIN-checked
+  // RPCs, which decide what it opens; it is never logged and never shown to
+  // the model.
+  const pin = /^\d{4,8}$/.test(String(body.pin ?? "")) ? String(body.pin) : null;
   if (!token) return json({ ok: false, message: "Register not paired or revoked" }, 403);
   if (!question) return json({ ok: false, message: "Ask something first." }, 400);
 
@@ -126,8 +130,8 @@ Deno.serve(async (req: Request) => {
     { role: "user", parts: [{ text: question }] },
   ];
   const request = {
-    systemInstruction: { parts: [{ text: systemPrompt({ name: org?.name ?? "this shop", till: reg.name }, new Date()) }] },
-    tools: [{ functionDeclarations: declarations() }],
+    systemInstruction: { parts: [{ text: systemPrompt({ name: org?.name ?? "this shop", till: reg.name }, new Date(), pin !== null) }] },
+    tools: [{ functionDeclarations: declarations(pin !== null) }],
     toolConfig: { functionCallingConfig: { mode: "AUTO" } },
     generationConfig: { temperature: 0.2, maxOutputTokens: 700 },
     contents,
@@ -164,16 +168,17 @@ Deno.serve(async (req: Request) => {
       for (const p of calls) {
         const fc = p.functionCall as { name: string; args?: Record<string, unknown> };
         const tool = toolNamed(fc.name);
-        if (!tool) {
+        if (!tool || (tool.pin && pin === null)) {
           responses.push({ functionResponse: { name: fc.name, response: { error: "No such tool" } } });
           continue;
         }
         const { data: rows, error } = await supabase.rpc(tool.rpc, {
           p_register_token: token,
+          ...(tool.pin ? { p_pin: pin } : {}),
           ...tool.args(fc.args ?? {}),
         });
         let result: unknown = error ? { error: error.message } : rows;
-        if (!error && tool.name === "customers") result = filterCustomers(rows, fc.args?.query);
+        if (!error && tool.filter) result = tool.filter(rows, fc.args?.query);
         if (!error) result = scrub(tool, result);
         if (!lookedAt.includes(tool.label)) lookedAt.push(tool.label);
         responses.push({ functionResponse: { name: fc.name, response: { result } } });
@@ -196,6 +201,7 @@ Deno.serve(async (req: Request) => {
     tools: lookedAt,
     answer: answer.slice(0, 4000),
     model,
+    unlocked: pin !== null,
   });
 
   return json({ ok: true, answer, looked_at: lookedAt });

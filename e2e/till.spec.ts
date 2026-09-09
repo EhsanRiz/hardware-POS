@@ -394,6 +394,8 @@ test("TillAI answers from the shop's records and says what it looked at", async 
   await page.keyboard.press("F4");
   const sheet = page.getByRole("dialog", { name: "TillAI" });
   await expect(sheet).toBeVisible();
+  // A counter hand is not asked for a PIN: there is nothing one would open.
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
   const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
   await expect(ask).toBeFocused();
 
@@ -431,6 +433,36 @@ test("TillAI answers from the shop's records and says what it looked at", async 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
   await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("a manager unlocks TillAI with their PIN, and it sees what Manage shows them", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  // Asked once, on first open: the PIN that opens the reports.
+  await expect(sheet).toContainText(/Enter your PIN/i);
+  for (const d of USERS.manager.pin.split("")) {
+    await sheet.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(sheet).toContainText(/Unlocked/i);
+
+  be.tillaiAnswer = "In the past 3 days: 14 sales, R 4 862.00 in total, of which cash R 3 100.00 and card R 1 762.00.";
+  be.tillaiLookedAt = ["the sales report"];
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("how much did we sell in the past 3 days");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("14 sales, R 4 862.00");
+  await expect(sheet).toContainText("Looked at: the sales report");
+  // The PIN went with the question, so the server's PIN-checked reports
+  // could answer; the token still went too.
+  expect(be.tillaiAsked[0].pin).toBe(USERS.manager.pin);
+  expect(be.tillaiAsked[0].register_token).toBe(REGISTER_TOKEN);
+
+  // The model's markdown never reaches the counter as asterisks.
+  be.tillaiAnswer = "Sales totals are in **Manage** on the till.";
+  await ask.fill("and profit?");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-model p").last()).toHaveText("Sales totals are in Manage on the till.");
 });
 
 test("TillAI needs the line, and says so while the till keeps selling", async ({ page }) => {

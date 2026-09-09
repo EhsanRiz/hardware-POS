@@ -20,7 +20,7 @@ export interface TillAIAnswer {
   lookedAt: string[];
 }
 
-export async function askTillAI(question: string, history: TillAITurn[]): Promise<TillAIAnswer> {
+export async function askTillAI(question: string, history: TillAITurn[], pin: string | null = null): Promise<TillAIAnswer> {
   const res = await fetch(`${API_BASE}/functions/v1/tillai`, {
     method: "POST",
     headers: {
@@ -28,7 +28,9 @@ export async function askTillAI(question: string, history: TillAITurn[]): Promis
       apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
       Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
     },
-    body: JSON.stringify({ register_token: requireToken(), question, history }),
+    // The PIN, when the person unlocked TillAI: it opens the report tools on
+    // the server, which check it against the same rights Manage checks.
+    body: JSON.stringify({ register_token: requireToken(), question, history, ...(pin ? { pin } : {}) }),
   });
   let out: { ok?: boolean; answer?: string; looked_at?: string[]; message?: string } = {};
   try {

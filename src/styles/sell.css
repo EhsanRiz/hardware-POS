@@ -1170,6 +1170,19 @@
   font-size: 15px;
 }
 .tillai-ask input:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; border-color: transparent; }
+.tillai-unlock { padding: 14px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.tillai-unlock .tillai-hint { text-align: center; }
+.tillai-skip {
+  min-height: 44px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--color-accent-700);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
 .tillai-offline {
   margin: 0;
   padding: 14px;

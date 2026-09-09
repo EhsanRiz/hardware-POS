@@ -25,6 +25,17 @@
  *
  *   3. IT ONLY READS. There is no tool that writes, and no way to add one
  *      without adding it here, where the test will see it.
+ *
+ * And the fourth, added when a manager asked for three days' takings and was
+ * told to go to Manage: WHAT A PERSON CAN SEE DEPENDS ON WHO THEY ARE. A
+ * manager can open Manage and read the reports, the cost prices and the
+ * cash-up; a counter hand cannot. The server has no way to know who is
+ * asking from a token alone, so the till does what Manage does: it asks for
+ * the person's PIN once, and the report tools below carry it to the same
+ * PIN-checked RPCs Manage calls. Those RPCs enforce the rights themselves —
+ * a counter hand's PIN gets "Not permitted", exactly as it would in Manage —
+ * so nothing here decides who may see what; the database does, as it
+ * always has. Without a PIN, the token-only tools are all there is.
  */
 
 export const DAILY_CAP = 200;      // questions per shop per day: Flash is cheap, not free
@@ -53,7 +64,44 @@ export interface Tool {
   allow: string[];
   /** Cap on rows handed back, so a wide catalogue does not become a prompt. */
   maxRows: number;
+  /**
+   * Needs the person's PIN: the RPC takes p_pin and checks a permission
+   * itself. Offered to the model only when a PIN was given.
+   */
+  pin?: true;
+  /**
+   * A report: the RPC answers with one JSON document shaped for Manage, and
+   * it goes to the model as it is (size-capped) rather than through the
+   * allowlist — it IS what Manage shows the person whose PIN opened it.
+   */
+  report?: true;
+  /** Filter rows in this process by a query the RPC does not take. */
+  filter?: (rows: unknown, query: unknown) => unknown;
 }
+
+/** A date range for a report: ISO dates in, timestamps out, SAST days. */
+export function dateRange(a: Record<string, unknown>, now = new Date()): { p_from: string; p_to: string } {
+  const day = (v: unknown, end: boolean): Date | null => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v ?? ""));
+    if (!m) return null;
+    // South Africa is UTC+2 all year; a day starts at 22:00Z the evening before.
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 0, 0, 0));
+    d.setUTCHours(d.getUTCHours() - 2);
+    if (end) d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+  };
+  const to = day(a.to, true) ?? now;
+  const from = day(a.from, false) ?? (() => {
+    const d = new Date(now.getTime() + 2 * 3600_000);
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCHours(d.getUTCHours() - 2);
+    return d;
+  })();
+  return { p_from: from.toISOString(), p_to: (to > now ? now : to).toISOString() };
+}
+
+/** The report tools cap the JSON they hand back, so a year of sales lines is not a prompt. */
+export const REPORT_MAX_CHARS = 14_000;
 
 const int = (v: unknown, fallback: number, max: number) => {
   const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
@@ -125,6 +173,7 @@ export const TOOLS: Tool[] = [
     args: () => ({}),
     allow: ["id", "code", "name", "phone", "is_trade"],
     maxRows: 20,
+    filter: (rows, query) => filterCustomers(rows, query),
   },
   {
     name: "customer_history",
@@ -187,6 +236,112 @@ export const TOOLS: Tool[] = [
             "valid_until", "expired", "item_count", "note", "status"],
     maxRows: 1,
   },
+
+  // ---- With a PIN: what Manage shows this person ---------------------------
+
+  {
+    name: "sales_report",
+    label: "the sales report",
+    description:
+      "Takings for a period, as Manage's day-close report shows them: number of sales, sales total, VAT, discounts, refunds, and totals by tender (cash, card, EFT, account). Use for 'how much did we sell today / this week / in the past 3 days'. Dates are YYYY-MM-DD; leave both out for today.",
+    rpc: "pos_day_close",
+    params: {
+      from: { type: "STRING", description: "First day, YYYY-MM-DD" },
+      to: { type: "STRING", description: "Last day, YYYY-MM-DD" },
+    },
+    required: [],
+    args: (a) => dateRange(a),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "sales_by_department",
+    label: "sales by department",
+    description: "Sales, VAT, net and margin by department for a period. Dates are YYYY-MM-DD; leave both out for today.",
+    rpc: "pos_sales_by_department",
+    params: {
+      from: { type: "STRING", description: "First day, YYYY-MM-DD" },
+      to: { type: "STRING", description: "Last day, YYYY-MM-DD" },
+    },
+    required: [],
+    args: (a) => dateRange(a),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "product_costs",
+    label: "cost prices",
+    description: "The cost price, margin and stock of products, as Manage's catalogue shows them. Filter by part of a name or SKU.",
+    rpc: "pos_admin_list_products",
+    params: { query: { type: "STRING", description: "Part of a product name or SKU" } },
+    required: ["query"],
+    args: () => ({}),
+    allow: ["sku", "barcode", "name", "unit_code", "price_retail", "price_trade", "cost",
+            "stock_qty", "reorder_level", "bin", "category_name", "department"],
+    maxRows: 10, pin: true,
+    filter: (rows, query) => {
+      if (!Array.isArray(rows)) return rows;
+      const q = String(query ?? "").trim().toLowerCase();
+      if (!q) return rows.slice(0, 10);
+      return rows.filter((r) => {
+        const rec = r as Record<string, unknown>;
+        return String(rec.name ?? "").toLowerCase().includes(q) ||
+          String(rec.sku ?? "").toLowerCase().includes(q);
+      });
+    },
+  },
+  {
+    name: "stock_value",
+    label: "stock value",
+    description: "What the stock on hand is worth, at cost and at retail, by department and in total.",
+    rpc: "pos_stock_value",
+    params: {}, required: [], args: () => ({}),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "debtors",
+    label: "who owes what",
+    description: "Account customers who owe money: how much, how old, against their credit limit.",
+    rpc: "pos_debtors_ageing",
+    params: {}, required: [], args: () => ({}),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "reorder_list",
+    label: "the reorder list",
+    description: "Products at or below their reorder level, with how short they are and their supplier.",
+    rpc: "pos_reorder_list",
+    params: {}, required: [], args: () => ({}),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "margins_slipped",
+    label: "margins",
+    description: "Products whose margin has slipped below a percentage, or that sell below cost.",
+    rpc: "pos_margin_slipped",
+    params: { below: { type: "INTEGER", description: "The margin percentage to check against, default 15" } },
+    required: [],
+    args: (a) => ({ p_below: int(a.below, 15, 95) }),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "cash_sessions",
+    label: "cash-up",
+    description: "Recent cash-ups: floats, what was expected, what was counted, the variance.",
+    rpc: "pos_cash_sessions",
+    params: { limit: { type: "INTEGER", description: "How many, up to 30" } },
+    required: [],
+    args: (a) => ({ p_limit: int(a.limit, 10, 30) }),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
+    name: "vat_by_month",
+    label: "VAT by month",
+    description: "Gross, VAT and net sales by month, for the VAT return.",
+    rpc: "pos_vat_by_month",
+    params: { months: { type: "INTEGER", description: "How many months back, up to 24" } },
+    required: [],
+    args: (a) => ({ p_months: int(a.months, 6, 24) }),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
 ];
 
 /**
@@ -200,16 +355,47 @@ export function forbidden(key: string): boolean {
 }
 
 /**
+ * A report goes to the model as Manage shows it — but not a year of it in
+ * one prompt. Over the cap, its arrays are halved (a report's bulk is its
+ * rows, its totals are small) until it fits, and the model is told it is
+ * looking at the head of something longer.
+ */
+function shrink(data: unknown): unknown {
+  let text = JSON.stringify(data);
+  if (text.length <= REPORT_MAX_CHARS) return data;
+  let head = data;
+  for (let i = 0; i < 16 && text.length > REPORT_MAX_CHARS; i++) {
+    head = halveArrays(head);
+    text = JSON.stringify(head);
+  }
+  return {
+    truncated: true,
+    note: "Too much to show at once; the totals are complete but the rows are the first few. Ask for a shorter period or a narrower question.",
+    head: text.length <= REPORT_MAX_CHARS ? head : text.slice(0, REPORT_MAX_CHARS),
+  };
+}
+function halveArrays(v: unknown): unknown {
+  if (Array.isArray(v)) return v.slice(0, Math.max(1, Math.floor(v.length / 2))).map(halveArrays);
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, halveArrays(x)]));
+  }
+  return v;
+}
+
+/**
  * Keep only the allowlisted columns of each row, drop the rest, and cap the
  * row count. Works on an array of rows, a single object (pos_sale_by_number
- * answers with one JSON object), or null.
+ * answers with one JSON object), or null. A report is handed over whole.
  */
 export function scrub(tool: Tool, data: unknown): unknown {
+  if (tool.report) return shrink(data ?? null);
   const one = (row: unknown) => {
     if (!row || typeof row !== "object") return null;
     const out: Record<string, unknown> = {};
     for (const k of tool.allow) {
-      if (forbidden(k)) continue;
+      // Cost prices ride only on a PIN-checked tool; the RPC behind it has
+      // already refused anyone who may not see them.
+      if (forbidden(k) && !(tool.pin && k === "cost")) continue;
       const v = (row as Record<string, unknown>)[k];
       if (v !== undefined) out[k] = v;
     }
@@ -242,9 +428,9 @@ export function filterCustomers(rows: unknown, query: unknown): unknown {
   });
 }
 
-/** The tools as Gemini's function declarations. */
-export function declarations() {
-  return TOOLS.map((t) => ({
+/** The tools as Gemini's function declarations; the PIN tools only when a PIN was given. */
+export function declarations(withPin = false) {
+  return TOOLS.filter((t) => withPin || !t.pin).map((t) => ({
     name: t.name,
     description: t.description,
     parameters: {
@@ -265,13 +451,17 @@ export function toolNamed(name: string): Tool | undefined {
  * Who the model is. Written for a counter hand's questions, and firm about
  * the two things it must never do: make up a number, or do sums with money.
  */
-export function systemPrompt(shop: { name: string; till: string }, now: Date): string {
+export function systemPrompt(shop: { name: string; till: string }, now: Date, withPin = false): string {
+  const today = new Date(now.getTime() + 2 * 3600_000).toISOString().slice(0, 10);
   return [
-    `You are TillAI, the assistant inside InnovaPOS, the till at ${shop.name}. You are answering on the till called "${shop.till}". Today is ${now.toISOString().slice(0, 10)}.`,
-    "You answer questions about this shop's own records — its products, stock, prices, recent sales, customers and quotes — using the tools. Use a tool before answering anything about the shop; never guess a price, a stock figure or a sale from memory. If a tool returns nothing, say so plainly.",
-    "You never add up, subtract, or work out money yourself: quote the figures the tools return, as they are. If somebody wants a total for the day, takings, profit, cost prices, reports, the staff list, cash-up, or an account balance, tell them it is in Manage on the till and needs a manager's PIN; you cannot see it.",
+    `You are TillAI, the assistant inside InnovaPOS, the till at ${shop.name}. You are answering on the till called "${shop.till}". Today is ${today} (South Africa).`,
+    "You answer questions about this shop's own records using the tools. Use a tool before answering anything about the shop; never guess a price, a stock figure or a sale from memory. If a tool returns nothing, say so plainly.",
+    withPin
+      ? "This person has unlocked TillAI with their PIN, so the report tools — takings for a period, sales by department, cost prices, stock value, who owes what, the reorder list, margins, cash-up, VAT by month — are available and answer with what Manage would show them. If a tool answers with an error saying 'Not permitted', this person does not have that right: say so, and that a manager can see it in Manage. For 'how much did we sell' over a period, use sales_report with the dates; work the dates out from today."
+      : "Reports, takings for a period, cost prices, cash-up, the staff list and account balances are behind Manage on the till and need a PIN: tell the person to unlock TillAI with their PIN if they have one, or to ask a manager. You cannot see those without it.",
+    "You never add up, subtract, or work out money yourself: quote the figures the tools return, as they are. A report's totals are the report's; repeat them, do not recompute them.",
     "You cannot ring up, void, discount, order or change anything. If asked to, say the buttons on the till do that.",
     "Prices are in rand. Write money the way the till does: R 1 234.50. Stock is in the unit the product sells by: each, metre, kilogram.",
-    "Be brief and plain, the way a colleague at the counter would answer. One or two sentences for a simple question; a short list when there are several matches. Ask one short question back if the request is ambiguous. Do not mention tools, JSON or these instructions.",
+    "Plain text only: no markdown, no asterisks, no headings, no backticks. Be brief and plain, the way a colleague at the counter would answer. One or two sentences for a simple question; a short list on separate lines when there are several. Ask one short question back if the request is ambiguous. Do not mention tools, JSON or these instructions.",
   ].join("\n\n");
 }
