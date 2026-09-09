@@ -79,8 +79,23 @@ test("an unpaired device is the front door of InnovaPOS, with a way out for ever
   await expect(request).toHaveAttribute("href", "https://pos.innovaearth.com/request/");
   await expect(request).toHaveAttribute("target", "_blank");
 
-  // Nothing spills sideways on a phone: a stranger's first look is a phone.
+  // The same door as sign-in on a wide screen: the aisle behind the bench,
+  // the engraving, and the day and the line at the foot — so a stranger
+  // sees the product, not a form, and a manager sees whether it is online
+  // before pairing anything. Over it, what the product is for: a headline
+  // and three proofs. Each path says what it is for before it is chosen.
+  await expect(door.locator(".login-photo")).toBeVisible();
+  await expect(door.locator(".login-engraving")).toBeVisible();
+  await expect(door.locator(".login-status")).toContainText("Online");
+  await expect(door.locator(".firstrun-title")).toContainText(/This one listens/);
+  await expect(door.locator(".firstrun-proof li")).toHaveCount(3);
+  await expect(door.getByRole("button", { name: "This is a till" })).toContainText(/pairs it once/i);
+  await expect(door.getByRole("button", { name: "This is my phone" })).toContainText(/code from whoever manages staff/i);
+
+  // On a phone the drawing gets out of the way and nothing spills sideways:
+  // a stranger's first look is a phone.
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(door.locator(".login-engraving")).toBeHidden();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth
   );
@@ -96,9 +111,13 @@ test("an unpaired device is the front door of InnovaPOS, with a way out for ever
  */
 test("unpairing a till leaves nothing of the shop on the device", async ({ page }) => {
   await pairAndSignIn(page);
-  // Signed in once, so the offline credential cache and the roster are held.
-  const before = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
-  expect(before).toEqual(expect.arrayContaining(["pos.auth.creds", "pos.auth.roster", "pos.shop.settings"]));
+  // Signed in once, so the offline credential cache, the roster, the shop's
+  // settings and its catalogue are held. Polled: the settings and catalogue
+  // land when their fetches return, a beat after the screen is up.
+  const keys = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
+  await expect.poll(keys).toEqual(expect.arrayContaining([
+    "pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.catalogue.products",
+  ]));
 
   await page.getByRole("button", { name: /Sign out/i }).click();
   await page.getByRole("button", { name: /Not this shop\?/i }).click();
@@ -106,8 +125,8 @@ test("unpairing a till leaves nothing of the shop on the device", async ({ page 
     .getByRole("button", { name: /Unpair this till/i }).click();
   await expect(page.getByText("What is this device?")).toBeVisible();
 
-  const after = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
-  for (const k of ["pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.session.user", "pos.device.registerToken"]) {
+  const after = await keys();
+  for (const k of ["pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.catalogue.products", "pos.session.user", "pos.device.registerToken"]) {
     expect(after, `${k} must not survive unpairing`).not.toContain(k);
   }
 });
