@@ -1425,3 +1425,26 @@ export async function staffEnrolmentCode(
   if (!rows?.[0]) throw new Error("That code could not be issued");
   return rows[0];
 }
+
+// --- TillAI's log ------------------------------------------------------------
+
+export interface TillAIQuestion {
+  id: string;
+  asked_at: string;
+  register_name: string;
+  question: string;
+  answer: string | null;
+  tools: string[];
+  unlocked: boolean;
+}
+
+/** What the shop asked TillAI, newest first. Behind view_reports, like takings. */
+export async function tillaiQuestions(pin: string, limit = 200): Promise<TillAIQuestion[]> {
+  const { data, error } = await supabase.rpc("pos_tillai_questions", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []) as TillAIQuestion[];
+}

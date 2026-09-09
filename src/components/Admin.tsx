@@ -45,6 +45,7 @@ import StaffAdmin from "./admin/StaffAdmin";
 import Shelf from "./admin/Shelf";
 import Buying from "./admin/Buying";
 import Suppliers from "./admin/Suppliers";
+import TillAILog from "./admin/TillAILog";
 
 export type TabKey =
   | "catalogue"
@@ -56,6 +57,7 @@ export type TabKey =
   | "approvals"
   | "cashup"
   | "reports"
+  | "tillai"
   | "staff"
   | "shop";
 
@@ -108,6 +110,7 @@ export default function Admin({
     if (can(user, "approve_discount")) t.push({ key: "approvals", label: "Approvals" });
     if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
     if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
+    if (can(user, "view_reports")) t.push({ key: "tillai", label: "TillAI" });
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
     if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
     return t;
@@ -613,6 +616,7 @@ export default function Admin({
 
       {tab === "cashup" && <CashUp pin={pin} />}
       {tab === "reports" && <Reports pin={pin} />}
+      {tab === "tillai" && <TillAILog pin={pin} />}
 
       {tab === "staff" && <StaffAdmin user={user} pin={pin} products={products} />}
 

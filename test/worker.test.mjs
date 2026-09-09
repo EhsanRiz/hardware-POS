@@ -13,7 +13,7 @@ const src = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8")
 const js = ts.transpileModule(src, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { redirectFor, TILL_HOST } = await import(
+const { redirectFor, TILL_HOST, digestRequest } = await import(
   "data:text/javascript;base64," + Buffer.from(js).toString("base64")
 );
 
@@ -47,6 +47,13 @@ check("its manifest", at("https://app.innovaearth.com/manifest.webmanifest", new
 console.log("--- the new host is home ---");
 check("a navigation on till. is served, not bounced", at(`https://${TILL_HOST}/`, nav), null);
 check("and so is any other host this Worker might be given", at("https://hardware-pos.workers.dev/", nav), null);
+
+console.log("--- the nightly line is asked for with the public key, and nothing else ---");
+const dr = digestRequest({ SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "anon-key" });
+check("it calls the digest function", dr.url, "https://x.supabase.co/functions/v1/error-digest");
+check("as a POST", dr.method, "POST");
+check("with the public key", dr.headers.get("apikey"), "anon-key");
+check("as a bearer too, the way the gateway wants it", dr.headers.get("authorization"), "Bearer anon-key");
 
 console.log(`\n${failures} failure(s)`);
 process.exit(failures ? 1 : 0);

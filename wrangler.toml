@@ -31,6 +31,14 @@ routes = [
 # a secret so a deploy needs no dashboard configuration to work.
 [vars]
 SUPABASE_URL = "https://krkatpesfwqnjitcxkco.supabase.co"
+# The public key, as public as the one every browser downloads. The Worker
+# uses it once a day to call the nightly digest (worker/index.ts, scheduled).
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtya2F0cGVzZndxbmppdGN4a2NvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNzYyMDUsImV4cCI6MjEwMTk1MjIwNX0.nqxh5DrmLCJjtz1JCZapD4IBFzGmtChBmvoomtoo1dQ"
+
+# The nightly line: 04:00 UTC is 06:00 in South Africa, before the first
+# shop opens. See worker/index.ts, scheduled().
+[triggers]
+crons = ["0 4 * * *"]
 
 [assets]
 directory = "./dist"

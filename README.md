@@ -213,11 +213,18 @@ It is an intelligent way in to what the till already shows, not the till:
   What it may touch is decided in `supabase/functions/tillai/tools.ts`, which
   is pure and tested by `test/tillai.test.mjs`.
 - **It sees what the person can see.** Somebody whose rights open Manage's
-  reports or costs is asked for their PIN once when the sheet opens; it then
-  travels with each question to the same PIN-checked RPCs Manage calls, so a
-  manager can ask "how much did we sell in the past 3 days" and a counter
-  hand's PIN gets "Not permitted", exactly as in Manage. Nobody without such
-  rights is asked. The PIN is held in memory only and is never logged.
+  reports or costs has their questions carry the PIN they signed in with, to
+  the same PIN-checked RPCs Manage calls: a manager can ask "how much did we
+  sell in the past 3 days", and a counter hand's PIN would get "Not
+  permitted", exactly as in Manage. The PIN is the session's, held in memory
+  only: a reload forgets it, the sheet asks once and keeps it for the rest of
+  the sign-in, and it is never stored or logged. A counter hand's questions
+  carry no PIN at all.
+- **It is on a phone too**, as a tile ("Ask TillAI") and a screen of its own,
+  with the same rule and the phone owner's own PIN.
+- **Manage → TillAI** shows what the shop asked, newest first, with the
+  answer and what was looked at — behind the reports right. A question it
+  could not answer is a thing the till does not do yet.
 - **It never does sums with money.** It quotes the figures the tools return;
   a report's totals are the report's.
 - **It needs the line**, and says so. The till sells without it.
@@ -226,6 +233,23 @@ The Gemini key and model are the document reader's (`GEMINI_API_KEY`,
 `GEMINI_MODEL`). Questions are logged per shop in `tillai_questions`, which is
 also the counter behind a daily cap. Deploy with
 `npx supabase functions deploy tillai`.
+
+## What went wrong on a till
+
+A render crash, an uncaught error or an unhandled rejection on a till is
+reported to the server (`pos_report_error`, table `client_errors`): kind,
+message, stack and the screen it happened on, through the till's token and
+nobody's PIN. The line going down is not a bug and is not reported; the same
+error within five minutes is one report; with no line the report waits in an
+outbox and goes when the line is back. The RPC caps sizes and drops a till's
+reports after sixty in an hour. Nothing reads the table through the API.
+
+Every morning at 06:00 (SAST) the till's Worker calls the `error-digest`
+function on its cron (`wrangler.toml`, `[triggers]`), which emails InnovaEarth
+one line per shop — errors grouped and counted, and how many questions TillAI
+was asked — through Resend, to `POS_REQUEST_TO`. A quiet night sends nothing,
+and the function refuses to send twice within twenty hours whoever calls it.
+Deploy with `npx supabase functions deploy error-digest`.
 
 ## Deploying (Cloudflare Workers)
 
