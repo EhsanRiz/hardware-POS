@@ -46,7 +46,11 @@ function todayLine(now = new Date()): string {
 
 export default function Login() {
   const { setUser } = useAuth();
-  const { pending } = usePendingSync();
+  const { pending, failed } = usePendingSync();
+  // Either queue holds real money: a sale waiting for the line, or one the
+  // server refused and somebody must look at. Unpairing throws the register
+  // token away, and the token is what replays them.
+  const held = pending + failed;
   const online = useOnline();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,16 +214,24 @@ export default function Login() {
           >
             <h2 className="modal-title">Unpair this till?</h2>
 
-            {pending > 0 ? (
+            {held > 0 ? (
               <>
                 {/* The register token is what replays a queued sale. Unpairing
-                    with sales still waiting would strand real money, so this is
+                    with sales still waiting — or refused and waiting for
+                    somebody to look — would strand real money, so this is
                     refused rather than warned about. */}
                 <p className="modal-row-meta" style={{ fontSize: 14 }}>
-                  {pending} {pending === 1 ? "sale is" : "sales are"} still
-                  waiting to reach the server. Unpairing now would lose{" "}
-                  {pending === 1 ? "it" : "them"}. Connect to the internet, let
-                  the queue empty, then try again.
+                  {held} {held === 1 ? "sale is" : "sales are"} still on this
+                  till
+                  {failed > 0
+                    ? pending > 0
+                      ? ", waiting for the line or needing attention"
+                      : " and needs attention"
+                    : ", waiting to reach the server"}
+                  . Unpairing now would lose {held === 1 ? "it" : "them"}.
+                  {failed > 0
+                    ? " Sign in, open the sales that need attention and deal with them, then try again."
+                    : " Connect to the internet, let the queue empty, then try again."}
                 </p>
                 <button
                   className="btn-line"

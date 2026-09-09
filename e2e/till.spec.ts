@@ -87,6 +87,62 @@ test("an unpaired device is the front door of InnovaPOS, with a way out for ever
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
+/**
+ * Several real shops share the server, and a tablet can leave one shop and
+ * join another. Nothing of the first shop may travel with it: the roster
+ * and the credential hashes that let its staff sign in offline, its settings,
+ * the last session. The server keeps the shops apart (schema.test.sql, "Two
+ * shops, one database"); this is the device's half of the same promise.
+ */
+test("unpairing a till leaves nothing of the shop on the device", async ({ page }) => {
+  await pairAndSignIn(page);
+  // Signed in once, so the offline credential cache and the roster are held.
+  const before = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
+  expect(before).toEqual(expect.arrayContaining(["pos.auth.creds", "pos.auth.roster", "pos.shop.settings"]));
+
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /Not this shop\?/i }).click();
+  await page.getByRole("dialog", { name: "Unpair this till" })
+    .getByRole("button", { name: /Unpair this till/i }).click();
+  await expect(page.getByText("What is this device?")).toBeVisible();
+
+  const after = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
+  for (const k of ["pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.session.user", "pos.device.registerToken"]) {
+    expect(after, `${k} must not survive unpairing`).not.toContain(k);
+  }
+});
+
+test("a till holding a refused sale cannot be unpaired", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // Taken with the line down, so it queues; when the line returns the server
+  // refuses it, so it lands where somebody must look at it.
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await page.route(/rpc\/pos_create_sale/, (r) =>
+    r.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ message: "Refused by the server for this test" }) })
+  );
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect(page.locator("header").getByText(/need attention/i)).toBeVisible({ timeout: 45_000 });
+
+  // The register token is what would replay it. Unpairing is refused, and
+  // says what to do instead.
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /Not this shop\?/i }).click();
+  const dialog = page.getByRole("dialog", { name: "Unpair this till" });
+  await expect(dialog).toContainText(/needs attention/i);
+  await expect(dialog.getByRole("button", { name: /Unpair this till/i })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+});
+
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "This is a till" }).click();

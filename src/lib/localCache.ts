@@ -29,3 +29,27 @@ export function cacheRemove(key: string): void {
     /* ignore */
   }
 }
+
+/**
+ * Forget everything cached under the namespace except the keys named.
+ *
+ * Used when a device leaves a shop. What the till caches — the roster, the
+ * credential hashes that let people sign in offline, the shop's own settings,
+ * the signed-in session — belongs to that shop, and a tablet paired to a
+ * second shop must not carry the first shop's staff and details across with
+ * it. The queues are the exception: they hold sales, which are money, and are
+ * never deleted quietly; unpairing is refused while they are non-empty.
+ */
+export function cacheClearExcept(keep: string[]): void {
+  try {
+    const keepFull = new Set(keep.map((k) => PREFIX + k));
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(PREFIX) && !keepFull.has(k)) doomed.push(k);
+    }
+    doomed.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
