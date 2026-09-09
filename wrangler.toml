@@ -1,4 +1,4 @@
-# InnovaEarth POS — the till app, served at app.innovaearth.com.
+# InnovaEarth POS — the till app, served at till.innovaearth.com.
 #
 # Its own Worker, separate from the landing page (landing/wrangler.toml) and
 # from the innovaearth.com site. A public marketing page and a till that shops
@@ -7,18 +7,22 @@
 #   npm run build
 #   npx wrangler deploy
 #
-# The route below attaches app.innovaearth.com on deploy — the zone is already
+# The routes below attach till.innovaearth.com on deploy — the zone is already
 # in this account, so wrangler creates the DNS record itself. No dashboard step.
 # The name the Worker is ACTUALLY deployed under. It read
 # "innovaearth-pos-app" for a while, which was a name nothing in the account
 # answered to — so `wrangler deploy` from here, exactly as this file's own
 # instructions say to run it, would have created a second, empty Worker and
-# tried to take app.innovaearth.com off the live till to give it to that.
+# tried to take the live till's domain off it to give it to that.
 name = "hardware-pos"
 main = "worker/index.ts"
 compatibility_date = "2024-09-23"
 account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
 routes = [
+  { pattern = "till.innovaearth.com", custom_domain = true },
+  # The old address. Still served by this Worker so a till paired on it keeps
+  # working until it is re-paired; a person who types it is sent on to the
+  # new one by worker/index.ts. Keep it for a year, then drop it.
   { pattern = "app.innovaearth.com", custom_domain = true }
 ]
 
