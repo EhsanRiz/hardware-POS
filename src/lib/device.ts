@@ -8,7 +8,7 @@
 // The token identifies the *register*, not a person: every sale still records
 // which cashier rang it up, and their permissions are still checked server-side.
 // Losing the tablet means revoking one token rather than rotating every PIN.
-import { cacheGet, cacheSet } from "./localCache";
+import { cacheClearExcept, cacheGet, cacheRemove, cacheSet } from "./localCache";
 
 const TOKEN_KEY = "device.registerToken";
 const NAME_KEY = "device.registerName";
@@ -74,8 +74,14 @@ export function savePairing(
  * what actually stops it selling.
  */
 export function clearPairing(): void {
-  cacheSet(ID_KEY, null);
-  cacheSet(TOKEN_KEY, null);
+  // Not only the pairing: everything the device learned about the shop goes
+  // with it — the roster, the offline credential hashes, the settings, the
+  // session — so a tablet paired to another shop next starts clean. Only the
+  // sale queues survive, because they are money; unpairing is refused while
+  // they hold anything, so they are empty here in practice.
+  cacheClearExcept(["queue.sales", "queue.failed"]);
+  cacheRemove(ID_KEY);
+  cacheRemove(TOKEN_KEY);
   cacheSet(NAME_KEY, "Till");
   cacheSet(KIND_KEY, "till");
   listeners.forEach((l) => l());

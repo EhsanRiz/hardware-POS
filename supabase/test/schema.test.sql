@@ -4308,4 +4308,136 @@ begin
     'a counter hand cannot enrol devices');
 end $$;
 
+
+-- Two shops, one database ------------------------------------------------------
+--
+-- Several real shops share this server, and every one of them must see only
+-- its own rows. The rule that carries 0012 is that org_id is never accepted
+-- from the client: every RPC takes the till's register token and derives the
+-- shop from it. Nothing in this file had ever put a second shop beside the
+-- first and looked, so this section does. A second shop is created the way
+-- InnovaEarth creates one, its manager enrols and pairs a till, and then
+-- that till is pointed at everything the first shop has.
+
+-- Refused, or empty: for a lookup aimed across the fence either is right,
+-- and a row coming back is the only wrong answer.
+create or replace function assert_hidden(sql text, what text) returns void
+language plpgsql as $$
+declare v_n bigint;
+begin
+  begin
+    execute format('select count(*) from (%s) x', sql) into v_n;
+  exception when others then
+    return;
+  end;
+  if v_n > 0 then raise exception 'FAILED: % — % row(s) came back', what, v_n; end if;
+end $$;
+
+do $$
+declare
+  v_org_a uuid; v_org_b uuid; v_tok_a text; v_tok_b text;
+  v_mgr_a uuid; v_mgr_b uuid; v_emp_a uuid;
+  v_prod_a uuid; v_price numeric; v_sale_a public.sales;
+  v_n bigint; v_name text;
+begin
+  select org_id, manager_id, employee_id into v_org_a, v_mgr_a, v_emp_a from fixture;
+  select token into v_tok_a from till;
+
+  -- The second shop, as InnovaEarth makes one: created with its manager's
+  -- number, the manager proves the phone and chooses a PIN, and pairs a till.
+  v_org_b := public.innova_create_org('Other Shop', 'Other Manager', '+27820000099');
+  perform public.auth_set_pin('+27820000099', '246810');
+  select id into v_mgr_b from public.app_users where org_id = v_org_b;
+  select token into v_tok_b
+    from public.pos_pair_register('+27820000099', '246810', 'Other till');
+
+  -- Something worth stealing in the first shop: a product and a sale on it.
+  select id, price_retail into v_prod_a, v_price
+    from public.products where org_id = v_org_a and active and price_retail > 0 limit 1;
+  v_sale_a := public.pos_create_sale(
+    p_register_token => v_tok_a, p_cashier_id => v_emp_a,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_a, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price))
+  );
+
+  -- Each till sees its own shop's name, and nothing of the other's.
+  select shop_name into v_name from public.pos_org_settings(v_tok_b);
+  perform assert_eq(v_name, 'Other Shop', 'the second till belongs to the second shop');
+
+  -- The catalogue. The first shop has a full one; the second has nothing yet,
+  -- and must not be shown the first shop's.
+  select count(*) into v_n from public.pos_catalogue(v_tok_a);
+  perform assert(v_n > 0, 'the first shop has products to protect');
+  select count(*) into v_n from public.pos_catalogue(v_tok_b);
+  perform assert_eq(v_n, 0::bigint, 'the second shop sees none of the first shop''s products');
+  select count(*) into v_n from public.pos_search_products(v_tok_b, 'cement', 20);
+  perform assert_eq(v_n, 0::bigint, 'nor finds them by search');
+
+  -- Sales, by number and by id, and the recent list.
+  select count(*) into v_n from public.pos_recent_sales(v_tok_a, 20);
+  perform assert(v_n > 0, 'the first shop has sales to protect');
+  perform assert_hidden(format('select * from public.pos_recent_sales(%L, 20)', v_tok_b),
+    'the second shop''s recent sales are empty');
+  -- A scalar function answers "nothing" with one null, not with no rows.
+  perform assert(public.pos_sale_by_number(v_tok_b, v_sale_a.doc_number) is null,
+    'a sale number from the first shop opens nothing on the second');
+  perform assert(public.pos_sale_by_number(v_tok_a, v_sale_a.doc_number) is not null,
+    'while its own till opens it');
+  perform assert_hidden(
+    format('select * from public.pos_sale_items(%L, %L)', v_tok_b, v_sale_a.id),
+    'nor do its lines by id');
+
+  -- People. The first shop's staff are not on the second shop's roster, and
+  -- its manager cannot sign in on the second shop's till with a PIN that is
+  -- perfectly good at home.
+  select count(*) into v_n from public.pos_staff_for_login(v_tok_b);
+  perform assert_eq(v_n, 1::bigint, 'the second shop''s roster is its own manager alone');
+  perform assert_hidden(
+    format('select * from public.pos_login(%L, %L, %L)', v_tok_b, v_mgr_a, '1234'),
+    'the first shop''s manager is a stranger on the second shop''s till');
+  select count(*) into v_n from public.pos_admin_list_users(v_tok_b, '246810');
+  perform assert_eq(v_n, 1::bigint, 'and the staff list shows nobody from next door');
+
+  -- Customers: the first shop has some; the second sees none.
+  select count(*) into v_n from public.pos_list_customers(v_tok_b);
+  perform assert_eq(v_n, 0::bigint, 'the second shop sees none of the first shop''s customers');
+
+  -- Writing across the fence: a sale on the second till naming the first
+  -- shop's product. The id is real; it is simply not this shop's.
+  perform assert_refuses(
+    format($q$select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object('product_id', %L, 'qty', 1)),
+      p_payment_method => 'cash',
+      p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', %L)))$q$,
+      v_tok_b, v_mgr_b, v_prod_a, v_price),
+    'a till cannot sell another shop''s product');
+
+  -- And the token itself: a wrong token opens nothing, so a shop cannot be
+  -- read by anyone who does not hold one of its tills.
+  perform assert_hidden(
+    format('select * from public.pos_catalogue(%L)', 'not-a-token'),
+    'no token, no catalogue');
+end $$;
+
+-- The tables themselves, as the app's own key sees them. The anon key ships
+-- in every browser, so PostgREST must offer it nothing but the RPCs: a row
+-- read straight off a table would bypass every check above.
+do $$
+begin
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.products',    'anon cannot read products');
+  perform assert_hidden('select * from public.catalogue',   'nor the catalogue view over them');
+  perform assert_hidden('select * from public.sales',       'nor sales');
+  perform assert_hidden('select * from public.sale_items',  'nor sale lines');
+  perform assert_hidden('select * from public.customers',   'nor customers');
+  perform assert_hidden('select * from public.app_users',   'nor staff');
+  perform assert_hidden('select * from public.registers',   'nor tills');
+  perform assert_hidden('select * from public.organizations', 'nor the shops themselves');
+  perform assert_hidden('select * from public.quotes',      'nor quotes');
+  perform assert_hidden('select * from public.auth_otps',   'nor OTPs');
+  perform set_config('role', 'postgres', true);
+end $$;
+
 select 'all database tests passed' as result;
