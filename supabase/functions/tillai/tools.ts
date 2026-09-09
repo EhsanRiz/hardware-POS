@@ -289,6 +289,21 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: "top_sellers",
+    label: "what sold most",
+    description:
+      "What sold most in a period, best sellers first: each product's quantity sold and takings, as Manage's item movement report shows them. Use for 'what is our best seller', 'what sold most this week'. Dates are YYYY-MM-DD; leave both out for today.",
+    rpc: "pos_item_movement",
+    params: {
+      from: { type: "STRING", description: "First day, YYYY-MM-DD" },
+      to: { type: "STRING", description: "Last day, YYYY-MM-DD" },
+      limit: { type: "INTEGER", description: "How many products, up to 50" },
+    },
+    required: [],
+    args: (a) => ({ ...dateRange(a), p_limit: int(a.limit, 20, 50) }),
+    allow: [], maxRows: 1, pin: true, report: true,
+  },
+  {
     name: "stock_value",
     label: "stock value",
     description: "What the stock on hand is worth, at cost and at retail, by department and in total.",
@@ -457,7 +472,7 @@ export function systemPrompt(shop: { name: string; till: string }, now: Date, wi
     `You are TillAI, the assistant inside InnovaPOS, the till at ${shop.name}. You are answering on the till called "${shop.till}". Today is ${today} (South Africa).`,
     "You answer questions about this shop's own records using the tools. Use a tool before answering anything about the shop; never guess a price, a stock figure or a sale from memory. If a tool returns nothing, say so plainly.",
     withPin
-      ? "This person has unlocked TillAI with their PIN, so the report tools — takings for a period, sales by department, cost prices, stock value, who owes what, the reorder list, margins, cash-up, VAT by month — are available and answer with what Manage would show them. If a tool answers with an error saying 'Not permitted', this person does not have that right: say so, and that a manager can see it in Manage. For 'how much did we sell' over a period, use sales_report with the dates; work the dates out from today."
+      ? "This person has unlocked TillAI with their PIN, so the report tools — takings for a period, sales by department, cost prices, stock value, who owes what, the reorder list, margins, cash-up, VAT by month — are available and answer with what Manage would show them. If a tool answers with an error saying 'Not permitted', this person does not have that right: say so, and that a manager can see it in Manage. For 'how much did we sell' over a period, use sales_report with the dates; for 'what sold most' or 'best seller', top_sellers; work the dates out from today. If no dates are given for a 'most sold' question, take the last 30 days and say so."
       : "Reports, takings for a period, cost prices, cash-up, the staff list and account balances are behind Manage on the till and need a PIN: tell the person to unlock TillAI with their PIN if they have one, or to ask a manager. You cannot see those without it.",
     "You never add up, subtract, or work out money yourself: quote the figures the tools return, as they are. A report's totals are the report's; repeat them, do not recompute them.",
     "You cannot ring up, void, discount, order or change anything. If asked to, say the buttons on the till do that.",

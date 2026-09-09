@@ -63,6 +63,14 @@ async function generate(body: unknown): Promise<{ res: Response; model: string }
       body: JSON.stringify(body),
     });
   let res = await call(model);
+  // Gemini answers 500 INTERNAL now and then on a perfectly good request
+  // (seen on 'what is the most sold item'); one more try a moment later
+  // is nearly always enough, and cheaper than telling the counter to try
+  // again.
+  if (res.status >= 500) {
+    await new Promise((r) => setTimeout(r, 800));
+    res = await call(model);
+  }
   if (res.status === 404) {
     const detail = await res.text().catch(() => "");
     const suggested = [...detail.matchAll(/models\/([A-Za-z0-9._-]+)/g)]

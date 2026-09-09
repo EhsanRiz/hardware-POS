@@ -37,6 +37,7 @@ const TOKEN_ONLY = new Set([
 const PIN_CHECKED = new Set([
   "pos_day_close", "pos_sales_by_department", "pos_admin_list_products", "pos_stock_value",
   "pos_debtors_ageing", "pos_reorder_list", "pos_margin_slipped", "pos_cash_sessions", "pos_vat_by_month",
+  "pos_item_movement",
 ]);
 
 console.log("--- every tool reads only what the till, or the person, can already see ---");
@@ -121,6 +122,9 @@ check("a 'to' after now is clipped to now", dateRange({ from: "2026-09-07", to: 
 check("rubbish dates fall back", dateRange({ from: "yesterday", to: "lol" }, now).p_to, now.toISOString());
 check("margins_slipped clamps its percentage", toolNamed("margins_slipped").args({ below: 500 }).p_below, 95);
 check("vat_by_month at most 24", toolNamed("vat_by_month").args({ months: 99 }).p_months, 24);
+check("top_sellers is a report behind a PIN", toolNamed("top_sellers").pin && toolNamed("top_sellers").report, true);
+check("top_sellers at most 50", toolNamed("top_sellers").args({ limit: 500 }).p_limit, 50);
+check("top_sellers takes a date range", typeof toolNamed("top_sellers").args({ from: "2026-09-01" }).p_from, "string");
 
 console.log("--- limits are clamped, whatever the model asks for ---");
 check("recent_sales at most 30", toolNamed("recent_sales").args({ limit: 5000 }).p_limit, 30);
@@ -150,6 +154,7 @@ check("late at night it is still today here, not tomorrow in London",
 const unlocked = systemPrompt({ name: "Ladybrand Hardware", till: "Front Counter" }, new Date("2026-09-09T08:00:00Z"), true);
 check("unlocked, it is told the PIN opened the reports", /unlocked TillAI with their PIN/i.test(unlocked), true);
 check("unlocked, it is pointed at sales_report for takings", /sales_report/.test(unlocked), true);
+check("unlocked, it is pointed at top_sellers for the best seller", /top_sellers/.test(unlocked), true);
 check("unlocked, it is told what 'Not permitted' means", /Not permitted/.test(unlocked), true);
 check("unlocked, it still never adds up", /never add up/i.test(unlocked), true);
 check("declarations are valid enough for Gemini", declarations(true).every((d) => d.parameters.type === "OBJECT"), true);

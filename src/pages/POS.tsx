@@ -255,7 +255,7 @@ export default function POS() {
   // Where a personal device is standing. The tiles are doorways into the
   // back office, so "home" is where it returns whenever one closes; only
   // Look it up is a screen of its own.
-  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup" | "tillai">("home");
+  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup">("home");
   // Read once. It cannot change without the app reloading, and the till
   // re-renders on every keystroke in the scan box — no reason to parse it
   // out of local storage each time.
@@ -973,9 +973,9 @@ export default function POS() {
       {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
       {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
       {/* The bubble in the corner: questions about the shop, answered from its
-          own records. Never in the path of a sale. A phone has it as a tile
-          and a screen instead (PhoneHome). */}
-      {kind !== "personal" && <TillAI />}
+          own records. Never in the path of a sale. On a phone the sheet it
+          opens is the whole screen. */}
+      <TillAI variant={kind === "personal" ? "phone" : "bubble"} />
     </>
   );
 
@@ -1024,17 +1024,6 @@ export default function POS() {
         </>
       );
     }
-    if (phoneScreen === "tillai") {
-      // The bubble's sheet, as a screen of its own on a phone. What it may
-      // see is decided on the server from the PIN this person signed in
-      // with, exactly as on the till.
-      return (
-        <>
-          <TillAI variant="phone" onClose={() => setPhoneScreen("home")} />
-          {overlays}
-        </>
-      );
-    }
     return (
       <>
         <PhoneHome
@@ -1047,10 +1036,7 @@ export default function POS() {
               setPhoneScreen("lookup");
               return;
             }
-            if (key === "tillai") {
-              setPhoneScreen("tillai");
-              return;
-            }
+
             // Everything else is a doorway into a back-office screen that
             // already exists, opened straight onto its own tab. The PIN is
             // asked for the same way it is on the till — held in memory only,
