@@ -39,7 +39,7 @@ import type { LoginCandidate } from "../lib/types";
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
  */
 export default function Login() {
-  const { setUser } = useAuth();
+  const { setUser, setSessionPin } = useAuth();
   const { pending, failed } = usePendingSync();
   // Either queue holds real money: a sale waiting for the line, or one the
   // server refused and somebody must look at. Unpairing throws the register
@@ -75,6 +75,7 @@ export default function Login() {
         );
       } else {
         setUser(user);
+        setSessionPin(pin);
       }
     } catch (e) {
       setError(errorMessage(e, "Sign-in failed"));

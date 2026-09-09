@@ -465,16 +465,13 @@ test("TillAI answers from the shop's records and says what it looked at", async 
   await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
 });
 
-test("a manager unlocks TillAI with their PIN, and it sees what Manage shows them", async ({ page }) => {
+test("a manager's TillAI is unlocked by the PIN they signed in with, and asks once after a reload", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.keyboard.press("F4");
   const sheet = page.getByRole("dialog", { name: "TillAI" });
-  // Asked once, on first open: the PIN that opens the reports.
-  await expect(sheet).toContainText(/Enter your PIN/i);
-  for (const d of USERS.manager.pin.split("")) {
-    await sheet.locator(`button:text-is("${d}")`).first().click();
-  }
+  // The PIN they typed a minute ago is the PIN: nobody is asked for it twice.
   await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
 
   be.tillaiAnswer = "In the past 3 days: 14 sales, R 4 862.00 in total, of which cash R 3 100.00 and card R 1 762.00.";
   be.tillaiLookedAt = ["the sales report"];
@@ -493,6 +490,92 @@ test("a manager unlocks TillAI with their PIN, and it sees what Manage shows the
   await ask.fill("and profit?");
   await page.keyboard.press("Enter");
   await expect(sheet.locator(".tillai-msg.is-model p").last()).toHaveText("Sales totals are in Manage on the till.");
+
+  // The PIN lives in memory only. A reload keeps the person signed in but
+  // forgets it, so the sheet asks — once — and keeps it for the session.
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.keyboard.press("F4");
+  await expect(sheet).toContainText(/Enter your PIN/i);
+  await expect(sheet).not.toContainText(/Unlocked/i);
+  for (const d of USERS.manager.pin.split("")) {
+    await sheet.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(sheet).toContainText(/Unlocked/i);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.keyboard.press("F4");
+  await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+  // And nothing of it is on the device.
+  const stored = await page.evaluate(() => JSON.stringify(Object.entries(localStorage)));
+  expect(stored).not.toMatch(/"pin"\s*:|sessionPin/);
+  expect(stored).not.toContain(`\\"${USERS.manager.pin}\\"`);
+});
+
+test("TillAI is on a phone as a screen of its own, and sees what the phone's owner can", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await page.getByRole("button", { name: /Ask TillAI/ }).click();
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toBeVisible();
+  // The whole display, not a bubble in a corner; no bubble at all.
+  await expect(sheet).toHaveClass(/is-phone/);
+  await expect(page.locator(".tillai-bubble")).toHaveCount(0);
+  const box = (await sheet.boundingBox())!;
+  const view = page.viewportSize()!;
+  expect(box.width).toBeGreaterThanOrEqual(view.width - 1);
+  // The owner signed in with their PIN a moment ago: unlocked, not asked.
+  await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("what did we take today");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement");
+  expect(be.tillaiAsked[0].pin).toBe(USERS.manager.pin);
+  // The phone's own token, not a till's: the server scopes by it.
+  expect(String(be.tillaiAsked[0].register_token)).toMatch(/^personal-token-/);
+
+  // The header's chevron is the way back to the errands.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator(".phone-tiles")).toBeVisible();
+
+  // A counter hand's own phone has the same tile and the counter's view: no
+  // PIN asked, nothing unlocked, and no PIN sent. (A phone offers only its
+  // owner's name, so this is a second phone, not a second sign-in.)
+  await page.evaluate(() => localStorage.clear());
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+  await page.getByRole("button", { name: /Ask TillAI/ }).click();
+  await expect(sheet).toBeVisible();
+  await expect(sheet).not.toContainText(/Enter your PIN|Unlocked/i);
+  await ask.fill("do we stock 2.5 twin and earth");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement");
+  expect(be.tillaiAsked[1].pin).toBeUndefined();
+});
+
+test("what the shop asked TillAI is in Manage, behind the reports right", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("how much cement do we have");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags");
+  await page.keyboard.press("Escape");
+
+  await openManage(page);
+  await page.locator("button:not(.tillai-bubble)", { hasText: /^TillAI$/ }).click();
+  const log = page.locator(".tillai-log-page");
+  await expect(log).toContainText("how much cement do we have");
+  await expect(log).toContainText(/1 in the last day/);
+  await expect(log).toContainText(/Front Counter/);
+  await expect(log).toContainText(/unlocked/);
+  // A row opens to its answer and what was looked at.
+  await log.getByRole("button", { name: /how much cement/ }).click();
+  await expect(log).toContainText("40 bags of Cement 42.5N 50kg");
+  await expect(log).toContainText("Looked at: products");
 });
 
 test("TillAI needs the line, and says so while the till keeps selling", async ({ page }) => {
@@ -519,6 +602,53 @@ test("TillAI is not on the door", async ({ page }) => {
   await expect(page.getByText("Who is on the till?")).toBeVisible();
   // Nobody is signed in, so there is nobody for it to answer.
   await expect(page.getByRole("button", { name: "TillAI" })).toHaveCount(0);
+});
+
+/**
+ * What went wrong at the counter reaches the server (0078). The report is
+ * one small call through the till's token; the line going down is not a
+ * bug and is not reported; the same crash twice is one report; and with no
+ * line the report waits in the outbox and goes when the line is back.
+ */
+test("a till tells the server what went wrong, and only what is worth telling", async ({ page }) => {
+  await pairAndSignIn(page);
+  const crash = (message: string) =>
+    page.evaluate((m) => { setTimeout(() => { throw new TypeError(m); }, 0); }, message);
+
+  await crash("Cannot read properties of undefined (reading 'qty')");
+  await expect.poll(() => be.errorReports.length).toBe(1);
+  const r = be.errorReports[0];
+  expect(r.p_register_token).toBe(REGISTER_TOKEN);
+  expect(r.p_kind).toBe("error");
+  expect(r.p_message).toBe("TypeError: Cannot read properties of undefined (reading 'qty')");
+  expect(String(r.p_stack)).toContain("TypeError");
+  expect(r.p_url).toBe("/");
+  expect(r.p_version).toBeTruthy();
+  // No PIN, no user: a crash needs nobody's credential to be worth knowing.
+  expect(JSON.stringify(r)).not.toMatch(/p_pin|user_id/);
+
+  // The same crash again within minutes is not a second report.
+  await crash("Cannot read properties of undefined (reading 'qty')");
+  // The line going down is not a bug.
+  await page.evaluate(() => { setTimeout(() => { void Promise.reject(new TypeError("Failed to fetch")); }, 0); });
+  await page.waitForTimeout(400);
+  expect(be.errorReports).toHaveLength(1);
+
+  // A different failure, a rejection this time, is.
+  await page.evaluate(() => { setTimeout(() => { void Promise.reject(new RangeError("bad slip width")); }, 0); });
+  await expect.poll(() => be.errorReports.length).toBe(2);
+  expect(be.errorReports[1].p_kind).toBe("rejection");
+  expect(be.errorReports[1].p_message).toBe("RangeError: bad slip width");
+
+  // With the line down the report waits, and goes when the line is back.
+  be.offline = true;
+  await crash("the drawer did not open");
+  await page.waitForTimeout(400);
+  expect(be.errorReports).toHaveLength(2);
+  be.offline = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => be.errorReports.length).toBe(3);
+  expect(be.errorReports[2].p_message).toBe("TypeError: the drawer did not open");
 });
 
 test("scanning a barcode rings the item straight through", async ({ page }) => {

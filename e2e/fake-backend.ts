@@ -475,6 +475,10 @@ export class Backend {
    * account: the question must carry this till's token and nothing more.
    */
   tillaiAsked: { register_token: unknown; question: unknown; history: unknown; pin: unknown }[] = [];
+  /** What the server's log would hold: every question answered, newest first (0077). */
+  tillaiLog: { id: string; asked_at: string; register_name: string; question: string; answer: string | null; tools: string[]; unlocked: boolean }[] = [];
+  /** What tills reported went wrong (0078), as the RPC received it. */
+  errorReports: Record<string, unknown>[] = [];
   tillaiAnswer = "You have 40 bags of Cement 42.5N 50kg in bin A1, at R 115.00 each.";
   tillaiLookedAt = ["products"];
   tillaiFails = false;
@@ -1105,13 +1109,25 @@ export async function installBackend(page: Page): Promise<Backend> {
     const respond = (status: number, data: unknown) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
     be.tillaiAsked.push({ register_token: b.register_token, question: b.question, history: b.history, pin: b.pin });
-    if (b.register_token !== REGISTER_TOKEN) {
+    // A till's token, or a phone's (pos_enrol_device): the server proves
+    // either the same way, by its hash against an active register.
+    const tok = String(b.register_token ?? "");
+    if (tok !== REGISTER_TOKEN && !tok.startsWith("personal-token-")) {
       return respond(403, { ok: false, message: "Register not paired or revoked" });
     }
     if (!String(b.question ?? "").trim()) return respond(400, { ok: false, message: "Ask something first." });
     if (be.tillaiFails) {
       return respond(502, { ok: false, message: "TillAI could not answer just now. The till is fine; try again in a moment." });
     }
+    be.tillaiLog.unshift({
+      id: `q${be.tillaiLog.length + 1}`,
+      asked_at: new Date().toISOString(),
+      register_name: "Front Counter",
+      question: String(b.question),
+      answer: be.tillaiAnswer,
+      tools: be.tillaiLookedAt,
+      unlocked: typeof b.pin === "string",
+    });
     return respond(200, { ok: true, answer: be.tillaiAnswer, looked_at: be.tillaiLookedAt });
   });
 
@@ -2985,6 +3001,19 @@ export async function installBackend(page: Page): Promise<Backend> {
         const last = be.closedSessions[0] as { float_kept?: number | null } | undefined;
         return json(last?.float_kept ?? null);
       }
+
+      case "rpc/pos_tillai_questions": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        if (!u.row.permissions.includes("view_reports")) return fail("Not permitted: view_reports");
+        return json(be.tillaiLog.slice(0, Number(body.p_limit ?? 200)));
+      }
+
+      case "rpc/pos_report_error":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        be.errorReports.push(body);
+        return json(null);
 
       case "rpc/pos_cash_sessions":
         if (!tokenOk) return fail("Register not paired or revoked");

@@ -27,7 +27,7 @@ export default function PhoneLock({
 }: {
   user: User;
   online: boolean;
-  onUnlock: () => void;
+  onUnlock: (pin: string) => void;
   /** Read-only escape hatch, offered only when the PIN cannot be proved. */
   onLookup: () => void;
   onSignOut: () => void;
@@ -40,7 +40,7 @@ export default function PhoneLock({
     setError(null);
     try {
       const who = await login(user.id, pin);
-      if (who) onUnlock();
+      if (who) onUnlock(pin);
       else setError("That PIN was not recognised.");
     } catch (e) {
       // Told apart on purpose: "we could not ask" is a different problem from

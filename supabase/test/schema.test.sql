@@ -4465,4 +4465,80 @@ begin
   perform set_config('role', 'postgres', true);
 end $$;
 
+-- 0077: TillAI's log in Manage --------------------------------------------------
+--
+-- Whoever may see reports may read what the shop asked TillAI; a counter
+-- hand may not; and the next shop's manager sees none of it.
+do $$
+declare v_tok text; v_rows jsonb; v_tok_b text;
+begin
+  select token into v_tok from till;
+  v_rows := public.pos_tillai_questions(v_tok, '1234', 50);
+  perform assert_eq(jsonb_array_length(v_rows), 1, 'a manager reads the shop''s questions');
+  perform assert_eq(v_rows->0->>'question', 'how much cement do we have', 'with the question');
+  perform assert_eq(v_rows->0->>'answer', '40 bags', 'and the answer');
+  perform assert_eq((v_rows->0->>'unlocked')::boolean, false, 'and whether a PIN was given');
+  perform assert(v_rows->0->>'register_name' is not null, 'and which till asked');
+  perform assert_refuses(
+    format('select public.pos_tillai_questions(%L, %L, 50)', v_tok, '5678'),
+    'a counter hand may not read the log');
+  perform assert_refuses(
+    format('select public.pos_tillai_questions(%L, %L, 50)', v_tok, '000000'),
+    'nor a wrong PIN');
+
+  -- The second shop (from "Two shops, one database") pairs another till and
+  -- looks: nothing of the first shop's questions.
+  select token into v_tok_b
+    from public.pos_pair_register('+27820000099', '246810', 'Another till');
+  perform assert_eq(jsonb_array_length(public.pos_tillai_questions(v_tok_b, '246810', 50)), 0,
+    'the second shop sees none of the first shop''s questions');
+end $$;
+
+
+-- 0078: what went wrong on a till ---------------------------------------------
+--
+-- Reported through the till's token, landing on its shop; sized and capped
+-- here because the client is the thing misbehaving; readable by nobody
+-- through the API.
+do $$
+declare v_tok text; v_org uuid; v_reg uuid; v_n bigint; v_kind text; v_len bigint; i int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id into v_reg from public.registers where org_id = v_org limit 1;
+
+  perform public.pos_report_error(v_tok, 'error', 'TypeError: x is not a function', 'at sell.tsx:1', '/', 'UA', '1.0');
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 1::bigint, 'a till''s report lands on its shop');
+
+  perform public.pos_report_error(v_tok, 'error', '   ');
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 1::bigint, 'an empty message is not a report');
+
+  perform public.pos_report_error(v_tok, null, repeat('x', 2000));
+  select length(message), kind into v_len, v_kind
+    from public.client_errors where org_id = v_org order by at desc, id desc limit 1;
+  perform assert_eq(v_len, 500::bigint, 'a long message is cut');
+  perform assert_eq(v_kind, 'error', 'no kind is "error"');
+
+  for i in 1..70 loop
+    perform public.pos_report_error(v_tok, 'error', 'loop ' || i);
+  end loop;
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 60::bigint, 'after sixty in an hour a till''s reports are dropped');
+
+  perform assert_refuses(
+    format('select public.pos_report_error(%L, %L, %L)', 'not-a-token', 'error', 'x'),
+    'a stranger''s token is refused');
+
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.client_errors', 'anon cannot read a shop''s errors');
+  perform assert_hidden('select * from public.ops_digests', 'nor the digest''s memory');
+  perform assert_refuses(
+    format('insert into public.client_errors (org_id, register_id, kind, message) values (%L, %L, %L, %L)',
+           v_org, v_reg, 'error', 'x'),
+    'nor write past the RPC');
+  perform set_config('role', 'postgres', true);
+end $$;
+
 select 'all database tests passed' as result;

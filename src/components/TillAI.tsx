@@ -31,11 +31,16 @@ const UNLOCKS = ["view_reports", "view_cost_prices", "manage_catalogue", "cash_m
  * is never in the path of a sale, and the scan field keeps its focus rules
  * when the sheet closes.
  *
- * A manager is asked for their PIN once when the sheet first opens: with
- * it, TillAI can see what Manage shows them — takings for a period, cost
+ * A manager's questions go with the PIN they signed in with: with it,
+ * TillAI can see what Manage shows them — takings for a period, cost
  * prices, stock value, who owes what — because the same PIN-checked RPCs
- * answer it. The PIN lives in this component's memory only, never in
- * storage, and goes with each question to the server, which never logs it.
+ * answer it. The PIN is the session's (AuthContext), held in memory only:
+ * after a reload it is gone, and the sheet asks for it once and keeps it
+ * for the rest of the sign-in. It is never stored, and the server never
+ * logs it.
+ *
+ * On a phone the same sheet is a screen of its own (variant "phone"): no
+ * bubble, the whole display, and the way back is the header's button.
  *
  * Keyboard: F4 opens and closes it, Escape closes it, Enter sends.
  */
@@ -46,13 +51,29 @@ interface Message {
   failed?: boolean;
 }
 
-export default function TillAI() {
+export default function TillAI({
+  variant = "bubble",
+  onClose,
+}: {
+  variant?: "bubble" | "phone";
+  /** Phone only: the way back to the errands. */
+  onClose?: () => void;
+} = {}) {
+  const phone = variant === "phone";
   const online = useOnline();
-  const { user } = useAuth();
+  const { user, sessionPin, setSessionPin } = useAuth();
   const canUnlock = (user?.permissions ?? []).some((p) => UNLOCKS.includes(p));
-  const [pin, setPin] = useState<string | null>(null);
-  const [pinStep, setPinStep] = useState<"ask" | "skipped" | "done">("ask");
-  const [open, setOpen] = useState(false);
+  // A counter hand's questions carry no credential at all: there is nothing
+  // a PIN would open for them, so it stays out of the request.
+  const pin = canUnlock ? sessionPin : null;
+  const [pinStep, setPinStep] = useState<"ask" | "skipped">("ask");
+  const [isOpen, setOpen] = useState(false);
+  const open = phone || isOpen;
+  const close = () => (phone ? onClose?.() : setOpen(false));
+  // Asked only when there is something a PIN would open and the session
+  // does not hold one yet: a counter hand is never asked, and a manager who
+  // signed in a minute ago is not asked again.
+  const askPin = canUnlock && pin === null && pinStep === "ask";
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,16 +82,16 @@ export default function TillAI() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "F4") {
+      if (e.key === "F4" && !phone) {
         e.preventDefault();
         setOpen((o) => !o);
       } else if (e.key === "Escape" && open) {
-        setOpen(false);
+        close();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, phone]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -106,30 +127,39 @@ export default function TillAI() {
 
   return (
     <>
-      <button
-        type="button"
-        className={`tillai-bubble${open ? " is-open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-        aria-label="TillAI"
-        aria-expanded={open}
-        title="TillAI (F4)"
-      >
-        <InnovaMark size={22} onGreen />
-        <span>TillAI</span>
-      </button>
+      {!phone && (
+        <button
+          type="button"
+          className={`tillai-bubble${open ? " is-open" : ""}`}
+          onClick={() => setOpen((o) => !o)}
+          aria-label="TillAI"
+          aria-expanded={open}
+          title="TillAI (F4)"
+        >
+          <InnovaMark size={22} onGreen />
+          <span>TillAI</span>
+        </button>
+      )}
 
       {open && (
-        <section className="tillai" role="dialog" aria-label="TillAI">
+        <section className={`tillai${phone ? " is-phone" : ""}`} role="dialog" aria-label="TillAI">
           <header className="tillai-head">
+            {phone && (
+              <button type="button" className="tillai-back" onClick={close} aria-label="Back">
+                ‹
+              </button>
+            )}
             <InnovaMark size={22} onGreen />
             <span className="tillai-title">TillAI</span>
             <span className="tillai-sub">{pin ? "Unlocked · sees what you can" : "Ask about this shop"}</span>
-            <button type="button" className="tillai-close" onClick={() => setOpen(false)} aria-label="Close TillAI">
-              ✕
-            </button>
+            {!phone && (
+              <button type="button" className="tillai-close" onClick={close} aria-label="Close TillAI">
+                ✕
+              </button>
+            )}
           </header>
 
-          {canUnlock && pinStep === "ask" ? (
+          {askPin ? (
             /* Once, on first open: the PIN that lets TillAI see what Manage
                shows this person. Skipping keeps the counter's view. */
             <div className="tillai-unlock">
@@ -138,7 +168,7 @@ export default function TillAI() {
                 takings, cost prices, stock value, who owes what. Skip it and
                 it answers as it would for the counter.
               </p>
-              <PinPad onSubmit={(p) => { setPin(p); setPinStep("done"); }} busy={false} />
+              <PinPad onSubmit={(p) => setSessionPin(p)} busy={false} />
               <button type="button" className="tillai-skip" onClick={() => setPinStep("skipped")}>
                 Skip for now
               </button>
@@ -166,7 +196,7 @@ export default function TillAI() {
           </div>
           )}
 
-          {canUnlock && pinStep === "ask" ? null : online ? (
+          {askPin ? null : online ? (
             <form className="tillai-ask" onSubmit={send}>
               <input
                 ref={inputRef}
