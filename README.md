@@ -200,7 +200,9 @@ claim by typing into it. See [`landing/README.md`](landing/README.md).
 ## Deploying (Cloudflare Workers)
 
 The till deploys as its own Worker, `hardware-pos`, served at
-**app.innovaearth.com**:
+**till.innovaearth.com** (its old address, app.innovaearth.com, still answers
+and sends a typed visit on to the new one; a till paired on the old address
+keeps working until it is re-paired):
 
 ```bash
 npm run build
@@ -208,7 +210,7 @@ npx wrangler deploy
 ```
 
 Then attach the hostname: **Workers & Pages → hardware-pos → Settings →
-Domains & Routes → Add custom domain → app.innovaearth.com**. The
+Domains & Routes → Add custom domain → till.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.
 
