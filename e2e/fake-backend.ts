@@ -474,7 +474,7 @@ export class Backend {
    * with which token, which is the part the browser suite can hold to
    * account: the question must carry this till's token and nothing more.
    */
-  tillaiAsked: { register_token: unknown; question: unknown; history: unknown }[] = [];
+  tillaiAsked: { register_token: unknown; question: unknown; history: unknown; pin: unknown }[] = [];
   tillaiAnswer = "You have 40 bags of Cement 42.5N 50kg in bin A1, at R 115.00 each.";
   tillaiLookedAt = ["products"];
   tillaiFails = false;
@@ -1104,7 +1104,7 @@ export async function installBackend(page: Page): Promise<Backend> {
     } catch { /* falls through to the checks below */ }
     const respond = (status: number, data: unknown) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
-    be.tillaiAsked.push({ register_token: b.register_token, question: b.question, history: b.history });
+    be.tillaiAsked.push({ register_token: b.register_token, question: b.question, history: b.history, pin: b.pin });
     if (b.register_token !== REGISTER_TOKEN) {
       return respond(403, { ok: false, message: "Register not paired or revoked" });
     }

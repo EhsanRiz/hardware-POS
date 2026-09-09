@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import { useOnline } from "../lib/offline";
+import { plainText } from "../lib/plaintext";
 import { askTillAI, type TillAITurn } from "../lib/tillai";
 import InnovaMark from "./InnovaMark";
+import PinPad from "./PinPad";
+
+/**
+ * The rights that open Manage's reports, costs and cash-up. Somebody with
+ * any of them can see more than the token-only tools show, so TillAI asks
+ * for their PIN once and carries it to the same PIN-checked RPCs Manage
+ * calls. Somebody with none of them is never asked: there is nothing a PIN
+ * would open for them.
+ */
+const UNLOCKS = ["view_reports", "view_cost_prices", "manage_catalogue", "cash_management"];
 
 /**
  * TillAI: the bubble in the corner, and the sheet it opens.
@@ -19,6 +31,12 @@ import InnovaMark from "./InnovaMark";
  * is never in the path of a sale, and the scan field keeps its focus rules
  * when the sheet closes.
  *
+ * A manager is asked for their PIN once when the sheet first opens: with
+ * it, TillAI can see what Manage shows them — takings for a period, cost
+ * prices, stock value, who owes what — because the same PIN-checked RPCs
+ * answer it. The PIN lives in this component's memory only, never in
+ * storage, and goes with each question to the server, which never logs it.
+ *
  * Keyboard: F4 opens and closes it, Escape closes it, Enter sends.
  */
 interface Message {
@@ -30,6 +48,10 @@ interface Message {
 
 export default function TillAI() {
   const online = useOnline();
+  const { user } = useAuth();
+  const canUnlock = (user?.permissions ?? []).some((p) => UNLOCKS.includes(p));
+  const [pin, setPin] = useState<string | null>(null);
+  const [pinStep, setPinStep] = useState<"ask" | "skipped" | "done">("ask");
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -69,8 +91,8 @@ export default function TillAI() {
     setInput("");
     setBusy(true);
     try {
-      const a = await askTillAI(question, history);
-      setMessages((m) => [...m, { role: "model", text: a.answer, lookedAt: a.lookedAt }]);
+      const a = await askTillAI(question, history, pin);
+      setMessages((m) => [...m, { role: "model", text: plainText(a.answer), lookedAt: a.lookedAt }]);
     } catch (err) {
       setMessages((m) => [
         ...m,
@@ -101,12 +123,27 @@ export default function TillAI() {
           <header className="tillai-head">
             <InnovaMark size={22} onGreen />
             <span className="tillai-title">TillAI</span>
-            <span className="tillai-sub">Ask about this shop</span>
+            <span className="tillai-sub">{pin ? "Unlocked · sees what you can" : "Ask about this shop"}</span>
             <button type="button" className="tillai-close" onClick={() => setOpen(false)} aria-label="Close TillAI">
               ✕
             </button>
           </header>
 
+          {canUnlock && pinStep === "ask" ? (
+            /* Once, on first open: the PIN that lets TillAI see what Manage
+               shows this person. Skipping keeps the counter's view. */
+            <div className="tillai-unlock">
+              <p className="tillai-hint">
+                Enter your PIN and TillAI can see what you can in Manage:
+                takings, cost prices, stock value, who owes what. Skip it and
+                it answers as it would for the counter.
+              </p>
+              <PinPad onSubmit={(p) => { setPin(p); setPinStep("done"); }} busy={false} />
+              <button type="button" className="tillai-skip" onClick={() => setPinStep("skipped")}>
+                Skip for now
+              </button>
+            </div>
+          ) : (
           <div className="tillai-log">
             {messages.length === 0 && (
               <p className="tillai-hint">
@@ -127,8 +164,9 @@ export default function TillAI() {
             {busy && <div className="tillai-msg is-model is-busy"><p>Looking…</p></div>}
             <div ref={endRef} />
           </div>
+          )}
 
-          {online ? (
+          {canUnlock && pinStep === "ask" ? null : online ? (
             <form className="tillai-ask" onSubmit={send}>
               <input
                 ref={inputRef}
