@@ -4440,4 +4440,29 @@ begin
   perform set_config('role', 'postgres', true);
 end $$;
 
+
+-- 0075: TillAI's log ----------------------------------------------------------
+--
+-- Written by the edge function with the service role; the counter behind the
+-- daily cap. Closed to the API: the anon key must not read a shop's questions,
+-- its own included.
+do $$
+declare v_org uuid; v_reg uuid; v_n bigint;
+begin
+  select org_id into v_org from fixture;
+  select id into v_reg from public.registers where org_id = v_org limit 1;
+  insert into public.tillai_questions (org_id, register_id, question, tools, answer)
+  values (v_org, v_reg, 'how much cement do we have', array['products'], '40 bags');
+  select count(*) into v_n from public.tillai_questions
+   where org_id = v_org and asked_at > now() - interval '1 day';
+  perform assert_eq(v_n, 1::bigint, 'the log counts a shop''s questions for the day');
+
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.tillai_questions', 'anon cannot read TillAI''s log');
+  perform assert_refuses(
+    format('insert into public.tillai_questions (org_id, register_id, question) values (%L, %L, %L)', v_org, v_reg, 'x'),
+    'nor write to it');
+  perform set_config('role', 'postgres', true);
+end $$;
+
 select 'all database tests passed' as result;

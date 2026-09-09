@@ -468,6 +468,16 @@ export class Backend {
             items: { product_id: string; qty: number; unit_price: number }[] }[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
+  /**
+   * TillAI. The real assistant runs on the server against Gemini; the fake
+   * answers with whatever a test set, and records what the till asked and
+   * with which token, which is the part the browser suite can hold to
+   * account: the question must carry this till's token and nothing more.
+   */
+  tillaiAsked: { register_token: unknown; question: unknown; history: unknown }[] = [];
+  tillaiAnswer = "You have 40 bags of Cement 42.5N 50kg in bin A1, at R 115.00 each.";
+  tillaiLookedAt = ["products"];
+  tillaiFails = false;
   private seq = 0;
 
   reset() {
@@ -1086,6 +1096,25 @@ export async function installBackend(page: Page): Promise<Backend> {
   // 0056: the reader. The model itself is not here — what a test can pin is
   // that the till sends the pages, shows the answer for checking, and files
   // exactly what was on that screen.
+  await page.route("**/functions/v1/tillai", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, unknown> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    be.tillaiAsked.push({ register_token: b.register_token, question: b.question, history: b.history });
+    if (b.register_token !== REGISTER_TOKEN) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    if (!String(b.question ?? "").trim()) return respond(400, { ok: false, message: "Ask something first." });
+    if (be.tillaiFails) {
+      return respond(502, { ok: false, message: "TillAI could not answer just now. The till is fine; try again in a moment." });
+    }
+    return respond(200, { ok: true, answer: be.tillaiAnswer, looked_at: be.tillaiLookedAt });
+  });
+
   await page.route("**/functions/v1/read-document", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
     let b: Record<string, unknown> = {};
