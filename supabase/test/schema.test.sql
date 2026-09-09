@@ -4470,7 +4470,7 @@ end $$;
 -- Whoever may see reports may read what the shop asked TillAI; a counter
 -- hand may not; and the next shop's manager sees none of it.
 do $$
-declare v_tok text; v_rows jsonb; v_tok_b text;
+declare v_tok text; v_rows jsonb; v_tok_b text; v_hand uuid; v_why text;
 begin
   select token into v_tok from till;
   v_rows := public.pos_tillai_questions(v_tok, '1234', 50);
@@ -4479,9 +4479,20 @@ begin
   perform assert_eq(v_rows->0->>'answer', '40 bags', 'and the answer');
   perform assert_eq((v_rows->0->>'unlocked')::boolean, false, 'and whether a PIN was given');
   perform assert(v_rows->0->>'register_name' is not null, 'and which till asked');
-  perform assert_refuses(
-    format('select public.pos_tillai_questions(%L, %L, 50)', v_tok, '5678'),
-    'a counter hand may not read the log');
+  -- A counter hand with a PIN of their own: refused for want of the right,
+  -- not for a wrong PIN — the reason is checked, so this cannot pass by
+  -- accident.
+  select id into v_hand from public.pos_admin_invite_user(
+    v_tok, '1234', 'Log Hand', '+27820000077', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('707070', gen_salt('bf')) where id = v_hand;
+  begin
+    perform public.pos_tillai_questions(v_tok, '707070', 50);
+    v_why := 'allowed';
+  exception when others then
+    v_why := sqlerrm;
+  end;
+  perform assert(v_why like 'Not permitted%', 'a counter hand may not read the log: ' || v_why);
   perform assert_refuses(
     format('select public.pos_tillai_questions(%L, %L, 50)', v_tok, '000000'),
     'nor a wrong PIN');
@@ -4517,7 +4528,7 @@ begin
 
   perform public.pos_report_error(v_tok, null, repeat('x', 2000));
   select length(message), kind into v_len, v_kind
-    from public.client_errors where org_id = v_org order by at desc, id desc limit 1;
+    from public.client_errors where org_id = v_org and message like 'xxxx%';
   perform assert_eq(v_len, 500::bigint, 'a long message is cut');
   perform assert_eq(v_kind, 'error', 'no kind is "error"');
 
