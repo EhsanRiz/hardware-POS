@@ -2,6 +2,9 @@ import { ENROL_URL, REQUEST_URL } from "../lib/config";
 import { useState } from "react";
 import { enrolDevice, pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
+import { useOnline } from "../lib/offline";
+import { todayLine } from "../lib/today";
+import LoginEngraving from "./LoginEngraving";
 import InnovaMark from "./InnovaMark";
 import { errorMessage } from "../lib/errors";
 
@@ -25,8 +28,32 @@ import { errorMessage } from "../lib/errors";
  * during an outage sync later without anyone's PIN. If the tablet is lost, the
  * token is revoked from Settings on another device; nobody's PIN has to change.
  */
+/* The two paths, drawn as the engraving draws things: single strokes. */
+function TillIcon() {
+  return (
+    <svg className="firstrun-path-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="6" y="9" width="36" height="24" rx="3" />
+      <line x1="6" y1="28" x2="42" y2="28" />
+      <path d="M 18 33 l -3 7 h 18 l -3 -7" />
+      <line x1="10" y1="40" x2="38" y2="40" />
+    </svg>
+  );
+}
+function PhoneIcon() {
+  return (
+    <svg className="firstrun-path-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="15" y="5" width="18" height="38" rx="4" />
+      <line x1="21" y1="9" x2="27" y2="9" />
+      <circle cx="24" cy="38" r="1.6" />
+    </svg>
+  );
+}
+
 export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   const [mode, setMode] = useState<"ask" | "till" | "phone">("ask");
+  const online = useOnline();
   const [code, setCode] = useState("");
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
@@ -84,38 +111,74 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   );
 
   if (mode === "ask") {
-    // The front door of InnovaPOS. One address serves every shop, and it is
-    // the pairing below, not the address, that decides which shop a device
-    // belongs to — so this screen is what anybody sees who is not paired yet:
-    // a manager with a new tablet, a colleague with their own phone, and a
-    // stranger who typed the address. Each of them needs somewhere to go.
+    // The front door of InnovaPOS, on the same two panels as sign-in so a
+    // device that has just been paired does not seem to change product. One
+    // address serves every shop, and it is the pairing below, not the
+    // address, that decides which shop a device belongs to — so this is what
+    // anybody sees who is not paired yet: a manager with a new tablet, a
+    // colleague with their own phone, and a stranger who typed the address.
+    // Each of them needs somewhere to go.
     return (
-      <div className="firstrun">
-        <div className="firstrun-head">
-          <div className="sell-lockup">
-            <InnovaMark size={30} onGreen />
-            <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
-              Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
-            </span>
+      <div className="login firstrun">
+        <div className="login-scene">
+          <img className="login-photo" src="/door.jpg" alt="" decoding="async" />
+          <div className="login-head">
+            <div className="sell-lockup">
+              <InnovaMark size={30} onGreen />
+              <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+                Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+              </span>
+            </div>
+            <h1 className="firstrun-title">Most tills just wait. This one listens.</h1>
+            <ul className="firstrun-proof">
+              <li>Sells with the line down</li>
+              <li>SARS-compliant invoices</li>
+              <li>Scan, bill, take payment, print</li>
+            </ul>
           </div>
-          <h1 className="firstrun-title">The till for hardware shops</h1>
-          <p className="firstrun-sub">
+
+          <LoginEngraving />
+
+          <dl className="login-status">
+            <div>
+              <dt>Today</dt>
+              <dd>{todayLine()}</dd>
+            </div>
+            <div>
+              <dt>Line</dt>
+              <dd className={online ? "" : "is-offline"}>{online ? "Online" : "Offline"}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="login-body">
+          <h2 className="firstrun-ask">What is this device?</h2>
+          <p className="firstrun-hint">
             This device is not set up for a shop yet. The shop is decided when
             a manager pairs it, so there is nothing to type in the address.
           </p>
-        </div>
-        <div className="firstrun-body">
-          <h2 className="firstrun-ask">What is this device?</h2>
-          <p className="firstrun-hint">
-            A till takes money at the counter. A phone is your own, for the work
-            away from it.
-          </p>
-          <button className="btn-tender" onClick={() => setMode("till")}>
-            This is a till
-          </button>
-          <button className="btn-line w-full" onClick={() => setMode("phone")}>
-            This is my phone
-          </button>
+          <div className="firstrun-paths">
+            <button className="firstrun-path" onClick={() => setMode("till")}>
+              <TillIcon />
+              <span className="firstrun-path-text">
+                <span className="firstrun-path-name">This is a till</span>
+                <span className="firstrun-path-desc">
+                  Takes money at the counter. A manager pairs it once with
+                  their phone number and PIN.
+                </span>
+              </span>
+            </button>
+            <button className="firstrun-path" onClick={() => setMode("phone")}>
+              <PhoneIcon />
+              <span className="firstrun-path-text">
+                <span className="firstrun-path-name">This is my phone</span>
+                <span className="firstrun-path-desc">
+                  Your own, for the work away from the counter. Set up with a
+                  code from whoever manages staff.
+                </span>
+              </span>
+            </button>
+          </div>
           <div className="firstrun-outs">
             <p>
               Invited to a shop but no PIN yet?{" "}
@@ -126,11 +189,13 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
               <a href={REQUEST_URL} target="_blank" rel="noreferrer">Request it for your shop</a>
             </p>
           </div>
+          <footer className="login-foot">
+            <p>
+              InnovaPOS · a product of InnovaEarth
+              <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+            </p>
+          </footer>
         </div>
-        <footer className="firstrun-foot">
-          InnovaPOS · a product of InnovaEarth
-          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
-        </footer>
       </div>
     );
   }

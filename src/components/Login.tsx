@@ -12,6 +12,7 @@ import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
 import LoginEngraving from "./LoginEngraving";
+import { todayLine } from "../lib/today";
 import type { LoginCandidate } from "../lib/types";
 
 /**
@@ -37,13 +38,6 @@ import type { LoginCandidate } from "../lib/types";
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
  */
-/** "Tuesday 8 September 2026" — the day, written out, for someone opening up. */
-function todayLine(now = new Date()): string {
-  const part = (opts: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat("en-GB", opts).format(now);
-  return `${part({ weekday: "long" })} ${part({ day: "numeric" })} ${part({ month: "long" })} ${part({ year: "numeric" })}`;
-}
-
 export default function Login() {
   const { setUser } = useAuth();
   const { pending, failed } = usePendingSync();
