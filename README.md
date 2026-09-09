@@ -197,6 +197,30 @@ static HTML/CSS/JS, no build step, deployed separately from the till. Its search
 demo runs the same rules as `src/lib/search.ts`, so a visitor can verify the
 claim by typing into it. See [`landing/README.md`](landing/README.md).
 
+## TillAI
+
+The bubble in the corner of the till. A counter hand asks in plain words —
+"how much cement do we have", "when did Mr Molefe last buy" — and gets an
+answer from the shop's own records, with a line saying what was looked at.
+
+It is an intelligent way in to what the till already shows, not the till:
+
+- **It only reads**, through the same token-only RPCs the till calls, so a
+  shop's isolation applies to it exactly as it does to the counter. It cannot
+  ring up, void, discount or change stock.
+- **It sees an allowlist, not a row.** Each tool names the columns the model
+  may see; cost prices, bank details and balances never leave the server.
+  What it may touch is decided in `supabase/functions/tillai/tools.ts`, which
+  is pure and tested by `test/tillai.test.mjs`.
+- **It never does sums with money.** Totals, takings, reports and cash-up are
+  in Manage behind a PIN, and it says so.
+- **It needs the line**, and says so. The till sells without it.
+
+The Gemini key and model are the document reader's (`GEMINI_API_KEY`,
+`GEMINI_MODEL`). Questions are logged per shop in `tillai_questions`, which is
+also the counter behind a daily cap. Deploy with
+`npx supabase functions deploy tillai`.
+
 ## Deploying (Cloudflare Workers)
 
 The till deploys as its own Worker, `hardware-pos`, served at

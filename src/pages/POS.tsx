@@ -70,6 +70,7 @@ import PhoneLookup from "../components/PhoneLookup";
 import Calculator from "../components/Calculator";
 import DiscountModal from "../components/DiscountModal";
 import FailedSales from "../components/FailedSales";
+import TillAI from "../components/TillAI";
 import PairRegister from "../components/PairRegister";
 import ManagerPinModal from "../components/ManagerPinModal";
 import CustomerPicker from "../components/sell/CustomerPicker";
@@ -971,6 +972,9 @@ export default function POS() {
 
       {showFailed && <FailedSales onClose={() => setShowFailed(false)} />}
       {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
+      {/* The bubble in the corner: questions about the shop, answered from its
+          own records. Never in the path of a sale. */}
+      <TillAI />
     </>
   );
 

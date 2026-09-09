@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import {
-  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, USERS,
+  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, REGISTER_TOKEN, USERS,
 } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
@@ -374,6 +374,89 @@ test.describe("sign-in on a phone", () => {
     );
     expect(overflow).toBeLessThanOrEqual(0);
   });
+});
+
+/**
+ * TillAI, the bubble in the corner. What the browser suite can hold it to:
+ * that it is there for a signed-in till and not on the door, that a
+ * question goes out with this till's token and comes back as words with a
+ * line saying what was looked at, that it says so when the line is down and
+ * leaves the till selling, and that it opens and closes from the keyboard.
+ * What it may read is the server's business and is decided in one tested
+ * file there (supabase/functions/tillai/tools.ts).
+ */
+test("TillAI answers from the shop's records and says what it looked at", async ({ page }) => {
+  await pairAndSignIn(page);
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  await expect(bubble).toBeVisible();
+
+  // F4 opens it and puts the caret in the question.
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toBeVisible();
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await expect(ask).toBeFocused();
+
+  await ask.fill("how much cement do we have");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement 42.5N 50kg");
+  await expect(sheet).toContainText("Looked at: products");
+
+  // The question carried this till's token and nothing else that identifies
+  // anyone: no PIN, no user. The server proves the token and scopes by it.
+  expect(be.tillaiAsked).toHaveLength(1);
+  expect(be.tillaiAsked[0].register_token).toBe(REGISTER_TOKEN);
+  expect(be.tillaiAsked[0].question).toBe("how much cement do we have");
+  expect(JSON.stringify(be.tillaiAsked[0])).not.toMatch(/pin|user_id/);
+
+  // A second question carries the first exchange, so "and how much sand?"
+  // means something.
+  await ask.fill("and the trade price?");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-model")).toHaveCount(2);
+  expect(be.tillaiAsked[1].history).toEqual([
+    { role: "user", text: "how much cement do we have" },
+    { role: "model", text: be.tillaiAnswer },
+  ]);
+
+  // A refusal is shown as a refusal, not as an answer.
+  be.tillaiFails = true;
+  await ask.fill("what about nails");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-failed")).toContainText(/could not answer just now/i);
+
+  // Escape closes it; the till underneath is untouched.
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("TillAI needs the line, and says so while the till keeps selling", async ({ page }) => {
+  await pairAndSignIn(page);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: "TillAI" }).click();
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toContainText(/needs the line/i);
+  await expect(sheet.getByRole("textbox", { name: "Ask TillAI" })).toHaveCount(0);
+  expect(be.tillaiAsked).toHaveLength(0);
+
+  // The sale goes through regardless: the bubble is not in its path.
+  await page.keyboard.press("Escape");
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("TillAI is not on the door", async ({ page }) => {
+  await pairAndSignIn(page);
+  await expect(page.getByRole("button", { name: "TillAI" })).toBeVisible();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  // Nobody is signed in, so there is nobody for it to answer.
+  await expect(page.getByRole("button", { name: "TillAI" })).toHaveCount(0);
 });
 
 test("scanning a barcode rings the item straight through", async ({ page }) => {
