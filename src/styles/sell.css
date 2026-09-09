@@ -2179,8 +2179,11 @@ tr.is-void td:last-child { text-decoration: none; }
   background: var(--color-colophon);
   border-bottom-color: rgba(0, 0, 0, 0.25);
 }
-.sell-wordmark { color: var(--color-bg); }
-.sell-wordmark span { color: var(--color-accent-400); }
+/* Cream only on the green grounds. The same wordmark sits on the cream
+   pairing card and on a phone's sign-in, where cream on cream made "Innova"
+   vanish next to "POS": there it keeps its ink. */
+.sell-head .sell-wordmark, .phone-home-head .sell-wordmark { color: var(--color-bg); }
+.sell-head .sell-wordmark span, .phone-home-head .sell-wordmark span { color: var(--color-accent-400); }
 .sell-edition { color: var(--color-accent-400); }
 .sell-nav button { color: var(--color-neutral-400); }
 .sell-nav button:hover:not(:disabled) { color: var(--color-accent-400); }

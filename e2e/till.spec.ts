@@ -52,6 +52,9 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
   // No PIN pad until the device is a till — a cashier should never sign in to
   // a tablet that turns out to be unable to sell.
   await expect(page.locator('button:text-is("1")')).toHaveCount(0);
+  // The wordmark on this cream card is ink, not the cream it wears on the
+  // green header: cream on cream made "Innova" vanish next to "POS".
+  await expect(page.locator(".pair-card .sell-wordmark")).toHaveCSS("color", "rgb(27, 42, 36)");
 });
 
 /**
@@ -222,6 +225,8 @@ test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) 
   }
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(page.getByText("Sam")).toBeVisible();
+  // And on the green header the wordmark is cream, as the frame wears it.
+  await expect(page.locator(".sell-head .sell-wordmark")).toHaveCSS("color", "rgb(245, 242, 234)");
 });
 
 test("the till says who is serving, and in what capacity", async ({ page }) => {
