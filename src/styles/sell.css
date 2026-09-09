@@ -1342,6 +1342,32 @@
 .login-head .sell-wordmark { display: inline-block; }
 .login-prompt { font-size: 15px; color: var(--color-neutral-700); }
 .login-error { font-size: 14px; color: var(--color-owing); }
+/* The pairing and enrolment cards: one gold action at the foot, and the way
+   back to "What is this device?" as a quiet link in the top corner, where a
+   way out is looked for, rather than a second full-width button under the
+   first. */
+.pair-card { position: relative; }
+.pair-back {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-neutral-700);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.pair-back span { font-size: 18px; line-height: 1; position: relative; top: -1px; }
+.pair-back:hover:not(:disabled) { background: var(--state-hover); color: var(--color-accent); }
+.pair-back:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .login-foot {
   margin-top: auto;
   padding: 26px 0 0;

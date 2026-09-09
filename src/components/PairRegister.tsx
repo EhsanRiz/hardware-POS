@@ -1,5 +1,5 @@
 import { ENROL_URL, REQUEST_URL } from "../lib/config";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { enrolDevice, pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
 import { useOnline } from "../lib/offline";
@@ -92,13 +92,34 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
     }
   }
 
+  // The way back to "What is this device?" from either form. It is a quiet
+  // link in the card's top corner, not a second button under the gold one:
+  // a form with one action should look like it has one action, and the way
+  // out belongs where people look for it. Escape does the same.
+  const back = () => {
+    if (busy) return;
+    setMode("ask");
+    setError(null);
+  };
+  useEffect(() => {
+    if (mode === "ask") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, busy]);
+
   const shell = (children: React.ReactNode) => (
     <div className="min-h-screen flex items-center justify-center p-6"
       style={{ background: "var(--color-bg)" }}>
       <div
-        className="w-full max-w-sm rounded p-6 space-y-4"
+        className="pair-card w-full max-w-sm rounded p-6 space-y-4"
         style={{ background: "var(--color-neutral-100)", border: "1px solid var(--divider)", boxShadow: "var(--shadow-md)" }}
       >
+        <button type="button" className="pair-back" onClick={back} disabled={busy}>
+          <span aria-hidden="true">‹</span> Back
+        </button>
         <div className="flex flex-col items-center gap-2 mb-2">
           <InnovaMark size={44} />
           <span className="sell-wordmark">
@@ -236,28 +257,12 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         <button disabled={busy || code.trim().length < 8} className="btn-tender">
           {busy ? "Setting up…" : "Set up my phone"}
         </button>
-        <button type="button" className="btn-line w-full"
-          onClick={() => { setMode("ask"); setError(null); }}>
-          Back
-        </button>
       </form>
     );
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-6"
-      style={{ background: "var(--color-bg)" }}>
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded p-6 space-y-4"
-        style={{ background: "var(--color-neutral-100)", border: "1px solid var(--divider)", boxShadow: "var(--shadow-md)" }}
-      >
-        <div className="flex flex-col items-center gap-2 mb-2">
-          <InnovaMark size={44} />
-          <span className="sell-wordmark">
-            Innova<span>POS</span>
-          </span>
-        </div>
+  return shell(
+      <form onSubmit={submit} className="space-y-4">
         <div>
           <h1 className="text-xl font-semibold text-center">Set up this till</h1>
           <p className="text-sm text-center mt-1"
@@ -307,11 +312,6 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         >
           {busy ? "Pairing…" : "Pair this till"}
         </button>
-        <button type="button" className="btn-line w-full"
-          onClick={() => { setMode("ask"); setError(null); }}>
-          Back
-        </button>
       </form>
-    </div>
   );
 }

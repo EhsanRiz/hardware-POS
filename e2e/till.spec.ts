@@ -100,6 +100,31 @@ test("an unpaired device is the front door of InnovaPOS, with a way out for ever
     () => document.documentElement.scrollWidth - window.innerWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
+
+  // Either path leads to a card with ONE action at its foot, and the way
+  // back to this question is a quiet link in the card's top corner, above
+  // the heading — not a second full-width button under the gold one, which
+  // read as a peer of "Pair this till". Escape is the same way back.
+  await door.getByRole("button", { name: "This is a till" }).click();
+  const card = page.locator(".pair-card");
+  await expect(card.getByText("Set up this till")).toBeVisible();
+  await expect(card.locator(".btn-tender")).toHaveCount(1);
+  await expect(card.locator(".btn-line")).toHaveCount(0);
+  const back = card.getByRole("button", { name: /Back/ });
+  const backBox = (await back.boundingBox())!;
+  const headingBox = (await card.getByText("Set up this till").boundingBox())!;
+  const cardBox = (await card.boundingBox())!;
+  expect(backBox.y + backBox.height).toBeLessThanOrEqual(headingBox.y);
+  expect(backBox.x - cardBox.x).toBeLessThan(24);
+  expect(backBox.width).toBeLessThan(cardBox.width / 2);
+  await back.click();
+  await expect(door.getByRole("button", { name: "This is a till" })).toBeVisible();
+
+  await door.getByRole("button", { name: "This is my phone" }).click();
+  await expect(card.getByText("Put your phone on the shop")).toBeVisible();
+  await expect(card.locator(".btn-line")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(door.getByRole("button", { name: "This is my phone" })).toBeVisible();
 });
 
 /**
