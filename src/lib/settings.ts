@@ -4,6 +4,7 @@
 // can correct its address or add a VAT number without a redeploy. They are
 // cached on the device because the invoice header has to print during an
 // outage, when the settings table is unreachable.
+import { useEffect, useState } from "react";
 import { fetchSettings } from "./api";
 import { VAT_RATE } from "./config";
 import { cacheGet, cacheSet } from "./localCache";
@@ -53,6 +54,22 @@ export function vatRate(): number {
 /** The cached shop settings. Safe to call offline and before the first fetch. */
 export function shopSettings(): ShopSettings {
   return cacheGet<ShopSettings>(KEY, FALLBACK);
+}
+
+/**
+ * The shop settings as a screen sees them: the cache at once, then whatever
+ * the server says. The sign-in screen showed "Hardware Shop" — the fallback
+ * — on a freshly paired till, because it read the cache once, before the
+ * first fetch had landed; a shop's own name must not wait for a reload.
+ */
+export function useShopSettings(): ShopSettings {
+  const [s, setS] = useState<ShopSettings>(shopSettings);
+  useEffect(() => {
+    let live = true;
+    void refreshSettings().then((fresh) => { if (live) setS(fresh); });
+    return () => { live = false; };
+  }, []);
+  return s;
 }
 
 /** Refresh from the server. Failures are ignored — the cache keeps the till up. */

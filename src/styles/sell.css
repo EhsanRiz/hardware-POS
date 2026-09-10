@@ -1295,11 +1295,35 @@
   gap: 14px;
   text-align: center;
 }
+/* The edition, under the lockup on the green: the brand's line, not the
+   shop's. */
+.login-edition {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-accent-400);
+  margin: -6px 0 0;
+}
+
+/* The shop, at the head of the cream side: the till's name as a kicker,
+   the shop's name large, its address and phone in one small line. It is
+   pinned to the top and the names are centred in what is left. */
+.login-shophead {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  margin-bottom: auto;
+}
 .login-shop {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.025em;
-  color: var(--color-bg);
+  line-height: 1.15;
+  color: var(--color-text);
   margin: 0;
 }
 .login-till {
@@ -1307,8 +1331,14 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: var(--color-accent-400);
-  margin: -8px 0 0;
+  color: var(--color-accent-700);
+  margin: 0;
+}
+.login-shop-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-neutral-700);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The engraving: strokes only, amber on green, 1.5 units at a 640 viewBox so
@@ -1358,10 +1388,9 @@
   padding: 28px 24px;
   gap: 18px;
 }
-/* The names sit in the middle of the cream with the colophon on the floor:
-   two auto margins share the free space, so the list is centred and the
-   footer is pushed down rather than the list being pushed up by it. */
-.login-body::before { content: ""; margin-bottom: auto; }
+/* The names sit in the middle of the cream with the shop's head at the top
+   and the colophon on the floor: two auto margins (the head's bottom, the
+   footer's top) share the free space, so the list is centred between them. */
 /* The sell header drops the wordmark on a phone for want of room. The
    sign-in band has the room, and the brand should say its name here. */
 .login-head .sell-wordmark { display: inline-block; }
@@ -1516,6 +1545,9 @@
     gap: 22px;
   }
   .login-prompt { font-size: 17px; }
+  .login-shop { font-size: 40px; }
+  .login-shop-meta { font-size: 14px; }
+  .login-shophead { padding-top: 18px; }
 }
 
 /* The draw-in. Every stroke carries pathLength="1", so a dash of one unit is
