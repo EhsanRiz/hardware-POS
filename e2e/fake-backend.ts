@@ -1218,7 +1218,11 @@ export async function installBackend(page: Page): Promise<Backend> {
 
     switch (path) {
       case "rpc/pos_pair_register": {
-        if (body.p_phone !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
+        // As the server reads it (0081): as typed if it starts with +,
+        // otherwise as a South African number.
+        const typed = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
+        const e164 = typed.startsWith("+") ? typed : typed.startsWith("0") ? "+27" + typed.slice(1) : typed;
+        if (e164 !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
           return fail("Invalid phone or PIN");
         }
         return json([{ register_id: "reg1", token: REGISTER_TOKEN }]);
