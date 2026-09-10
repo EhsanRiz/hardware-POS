@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { canSignInOffline, loginRoster, signIn } from "../lib/auth";
 import { ENROL_URL } from "../lib/config";
 import { useAuth } from "../context/AuthContext";
-import { shopSettings } from "../lib/settings";
+import { useShopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
 import { errorMessage } from "../lib/errors";
 import { roleTitle } from "../lib/permissions";
@@ -59,6 +59,7 @@ export default function Login() {
   const [confirmUnpair, setConfirmUnpair] = useState(false);
   const [roster, setRoster] = useState<LoginCandidate[] | null>(null);
   const [who, setWho] = useState<LoginCandidate | null>(null);
+  const shop = useShopSettings();
 
   useEffect(() => {
     void loginRoster().then(setRoster, () => setRoster([]));
@@ -144,11 +145,10 @@ export default function Login() {
       <div className="login-body">
         <header className="login-shophead">
           <p className="login-till">{registerName()}</p>
-          <h1 className="login-shop">{shopSettings().shop_name}</h1>
+          <h1 className="login-shop">{shop.shop_name}</h1>
           {(() => {
-            const s = shopSettings();
-            const where = [s.address_line1, s.address_line2].filter((x) => x && x.trim()).join(", ");
-            const line = [where, s.phone].filter((x) => x && x.trim()).join(" · ");
+            const where = [shop.address_line1, shop.address_line2].filter((x) => x && x.trim()).join(", ");
+            const line = [where, shop.phone].filter((x) => x && x.trim()).join(" · ");
             return line ? <p className="login-shop-meta">{line}</p> : null;
           })()}
         </header>
@@ -258,7 +258,7 @@ export default function Login() {
                 <p className="modal-row-meta" style={{ fontSize: 14 }}>
                   This device will stop being{" "}
                   <strong>{registerName()}</strong> at{" "}
-                  <strong>{shopSettings().shop_name}</strong>, and a manager
+                  <strong>{shop.shop_name}</strong>, and a manager
                   will have to pair it again with their phone and PIN. Nobody's
                   PIN changes, and the shop's data is untouched.
                 </p>
