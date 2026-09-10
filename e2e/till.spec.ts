@@ -229,6 +229,18 @@ test("the door names the shop, large, on the cream side, and the brand stays on 
   await expect(page.locator(".login-status")).toContainText("Offline");
 });
 
+test("pairing takes the number as people write it", async ({ page }) => {
+  // The placeholder says 082 123 4567; a manager who has just set a PIN by
+  // SMS on 076 108 0024 types exactly that, and must not be told the number
+  // is wrong for want of a +27.
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  await page.locator("input[type=tel]").fill("082 000 0001");
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+});
+
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "This is a till" }).click();

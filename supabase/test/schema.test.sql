@@ -4713,4 +4713,26 @@ begin
   perform set_config('role', 'postgres', true);
 end $$;
 
+-- 0081: pairing takes the number as people write it ---------------------------
+do $$
+declare v_tok text; v_n bigint;
+begin
+  select token into v_tok from public.pos_pair_register('082 000 0001', '1234', 'Typed local');
+  perform assert(v_tok is not null, 'a manager pairs with the number as they write it');
+  select token into v_tok from public.pos_pair_register('0820000001', '1234', 'Typed local, no spaces');
+  perform assert(v_tok is not null, 'with or without spaces');
+  select token into v_tok from public.pos_pair_register('+27 82 000 0001', '1234', 'Typed international');
+  perform assert(v_tok is not null, 'or with the country code and spaces');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000001', '9999', 'Wrong PIN'),
+    'the PIN still has to be right');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000009', '1234', 'Wrong number'),
+    'and the number still has to be somebody''s');
+  -- The tills paired above belong to the manager's shop, nobody else's.
+  select count(*) into v_n from public.registers r
+   where r.name like 'Typed %' and r.org_id = (select org_id from fixture);
+  perform assert_eq(v_n, 3::bigint, 'each till landed on the manager''s own shop');
+end $$;
+
 select 'all database tests passed' as result;
