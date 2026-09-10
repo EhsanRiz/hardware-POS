@@ -4733,6 +4733,20 @@ begin
   select count(*) into v_n from public.registers r
    where r.name like 'Typed %' and r.org_id = (select org_id from fixture);
   perform assert_eq(v_n, 3::bigint, 'each till landed on the manager''s own shop');
+
+  -- A Lesotho number is eight digits with no leading zero, written 5812 3456.
+  -- The Maseru Shop's manager (approved in the 0080 section, +26658123456)
+  -- sets a PIN and pairs with the number as Basotho write it.
+  perform public.auth_set_pin('+26658123456', '585858');
+  select token into v_tok from public.pos_pair_register('5812 3456', '585858', 'Maseru till');
+  perform assert(v_tok is not null, 'a Lesotho manager pairs with the number as written');
+  select count(*) into v_n from public.registers r
+   where r.name = 'Maseru till'
+     and r.org_id = (select id from public.organizations where name = 'Maseru Shop');
+  perform assert_eq(v_n, 1::bigint, 'and the till lands on the Maseru shop');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '5812 3456', '1234', 'Wrong PIN, Maseru'),
+    'with the right PIN only');
 end $$;
 
 select 'all database tests passed' as result;
