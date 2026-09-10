@@ -21,7 +21,9 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 const TO = Deno.env.get("POS_REQUEST_TO") ?? "ehsan@innovaearth.com";
-const FROM = Deno.env.get("RESEND_FROM") ?? "InnovaPOS <onboarding@resend.dev>";
+// From an address on innovaearth.com, which is verified in Resend; the
+// sandbox sender only delivers to the Resend account's own address.
+const FROM = Deno.env.get("RESEND_FROM") ?? "InnovaPOS <till@innovaearth.com>";
 const MIN_GAP_MS = 20 * 3600_000;
 const WINDOW_MS = 24 * 3600_000;
 

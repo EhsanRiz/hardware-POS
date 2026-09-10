@@ -11,9 +11,11 @@ const supabase = createClient(
 );
 
 const NOTIFY_TO = Deno.env.get("POS_REQUEST_TO") ?? "ehsan@innovaearth.com";
-// Until innovaearth.com is verified in Resend, its sandbox sender still
-// delivers to the account owner's own address — which is exactly NOTIFY_TO.
-const NOTIFY_FROM = Deno.env.get("RESEND_FROM") ?? "InnovaPOS <onboarding@resend.dev>";
+// From an address on innovaearth.com, which is verified in Resend. The
+// sandbox sender (onboarding@resend.dev) only ever delivers to the Resend
+// account's own address, and a request form that emails nobody is a lead
+// in a table nobody reads.
+const NOTIFY_FROM = Deno.env.get("RESEND_FROM") ?? "InnovaPOS <till@innovaearth.com>";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

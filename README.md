@@ -247,7 +247,9 @@ reports after sixty in an hour. Nothing reads the table through the API.
 Every morning at 06:00 (SAST) the till's Worker calls the `error-digest`
 function on its cron (`wrangler.toml`, `[triggers]`), which emails InnovaEarth
 one line per shop — errors grouped and counted, and how many questions TillAI
-was asked — through Resend, to `POS_REQUEST_TO`. A quiet night sends nothing,
+was asked — through Resend, from `RESEND_FROM` (an address on innovaearth.com,
+which is verified there; the sandbox sender only reaches the account's own
+inbox) to `POS_REQUEST_TO`. A quiet night sends nothing,
 and the function refuses to send twice within twenty hours whoever calls it.
 Deploy with `npx supabase functions deploy error-digest`.
 
