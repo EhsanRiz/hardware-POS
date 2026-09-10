@@ -350,6 +350,7 @@ export async function debtorsAgeing(pin: string): Promise<DebtorsAgeing> {
 }
 
 export interface SupplierSpendRow {
+  supplier_id: string;
   supplier: string;
   documents: number;
   received: number;

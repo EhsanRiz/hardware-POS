@@ -306,9 +306,9 @@ function Orders({
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [busy, setBusy] = useState(false);
-  // Called-off orders are kept but not shown, unless asked for: a list of
-  // what is coming should not be half what is not.
-  const [showCalledOff, setShowCalledOff] = useState(false);
+  // A called-off order stays on the list, crossed out. It used to hide
+  // behind a toggle, which read as deleted: the record of what was ordered
+  // and then not is part of the record.
   // Each order's lines, fetched with the list, so Email can build the
   // document inside the click — navigator.share cannot wait for a fetch.
   const [linesById, setLinesById] = useState<Record<string, PurchaseOrderLine[]>>({});
@@ -410,15 +410,6 @@ function Orders({
         <p className="acc-note">Nothing has been ordered yet.</p>
       ) : (
         <>
-        {orders.some((o) => o.status === "cancelled") && (
-          <p className="acc-note">
-            <button type="button" className="btn-line quiet" onClick={() => setShowCalledOff((v) => !v)}>
-              {showCalledOff
-                ? "Hide called off"
-                : `Show called off (${orders.filter((o) => o.status === "cancelled").length})`}
-            </button>
-          </p>
-        )}
         <table className="acc-table">
           <thead>
             <tr>
@@ -432,10 +423,10 @@ function Orders({
             </tr>
           </thead>
           <tbody>
-            {orders.filter((o) => showCalledOff || o.status !== "cancelled").map((o) => (
+            {orders.map((o) => (
               <tr
                 key={o.id}
-                className="acc-row is-clickable"
+                className={`acc-row is-clickable${o.status === "cancelled" ? " is-called-off" : ""}`}
                 onClick={() => setOpenId(o.id)}
               >
                 <td>
@@ -443,7 +434,7 @@ function Orders({
                   <span className="acc-sub">{fmtDate(o.created_at)}</span>
                 </td>
                 <td>{o.supplier}</td>
-                <td>
+                <td className="state">
                   {PO_STATUS_LABEL[o.status]}
                   {o.outstanding_lines > 0 && o.status !== "cancelled" && (
                     <span className="acc-sub">{o.outstanding_lines} still to come</span>

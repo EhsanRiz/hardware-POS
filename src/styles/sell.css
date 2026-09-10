@@ -1872,6 +1872,10 @@
    ledger. Nine columns is a long way for the eye to travel. */
 .sell tbody tr:nth-child(even) > td { background: rgba(28, 25, 23, 0.035); }
 .acc-row { cursor: pointer; }
+/* A called-off order: still on the list, crossed out. The state cell stays
+   legible so the row can say what happened to it. */
+.acc-row.is-called-off td:not(.state) { text-decoration: line-through; color: var(--color-neutral-700); }
+.acc-row.is-called-off .acc-name { color: var(--color-neutral-700); }
 .sell .acc-row:hover td { background: var(--color-neutral-100); }
 .acc-empty { text-align: center; color: var(--color-neutral-700); padding: 28px 10px; }
 

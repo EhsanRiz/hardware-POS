@@ -4845,4 +4845,27 @@ begin
   perform set_config('role', 'postgres', true);
 end $$;
 
+-- 0084: a supplier on the spend report opens its page ------------------------
+
+do $$
+declare v_tok text; v_r record; v_rows jsonb; v_row jsonb;
+begin
+  select token into v_tok from till;
+  -- Two invoices, one supplier, filed today.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Akbro Steel', '4000000084', null, null,
+    'invoice', 'INV-84-1', current_date, 1000.00, 150.00, 1150.00, null, '[]'::jsonb);
+  perform public.pos_purchasing_file_document(
+    v_tok, '1234', v_r.supplier_id, null, null, null, null,
+    'invoice', 'INV-84-2', current_date, 2000.00, 300.00, 2300.00, null, '[]'::jsonb);
+
+  v_rows := public.pos_purchases_by_supplier(v_tok, '1234', current_date, current_date + 1);
+  select e into v_row from jsonb_array_elements(v_rows) e where e->>'supplier' = 'Akbro Steel';
+  perform assert(v_row is not null, 'the supplier is on the report');
+  perform assert_eq(v_row->>'supplier_id', v_r.supplier_id::text,
+    'and the row carries the supplier''s id, so it can be opened');
+  perform assert_eq((v_row->>'documents')::int, 2, 'still one row per supplier');
+  perform assert_eq((v_row->>'total')::numeric, 3450.00::numeric, 'with both invoices on it');
+end $$;
+
 select 'all database tests passed' as result;
