@@ -251,6 +251,25 @@ was asked — through Resend, to `POS_REQUEST_TO`. A quiet night sends nothing,
 and the function refuses to send twice within twenty hours whoever calls it.
 Deploy with `npx supabase functions deploy error-digest`.
 
+## Wiping a shop, or deleting it
+
+A shop that was used for testing must start its books at invoice number 1
+on the day the real owner takes it on. Two operator functions, run from the
+Supabase SQL editor like `innova_create_org` and revoked from every API role:
+
+```sql
+-- Wipe the books, unpair every device, remove every person, restart the
+-- document numbers, keep the catalogue (stock set to nothing), and invite
+-- the real manager by phone. The name must match the id or nothing happens.
+select innova_reset_org('<org id>', '5 Star Hardware', 'Owner Name', '+27…');
+
+-- The same, then the catalogue and the shop itself.
+select innova_delete_org('<org id>', '5 Star Hardware');
+```
+
+Storage files (product photos, scanned supplier documents) are not touched;
+delete those from the dashboard if they matter.
+
 ## Deploying (Cloudflare Workers)
 
 The till deploys as its own Worker, `hardware-pos`, served at
