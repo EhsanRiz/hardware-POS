@@ -4654,4 +4654,63 @@ begin
   perform assert_eq(v_n, v_sales_a, 'the first shop is still untouched');
 end $$;
 
+-- 0080: approving a request from the email ------------------------------------
+--
+-- A request carries a token; approving it with the token makes the shop
+-- and invites the manager by the number they gave, in E.164 by their
+-- country; a second approval makes nothing; a bad token, a number that
+-- cannot be read, a number already in use, are each refused with words.
+do $$
+declare v_tok text; v_r jsonb; v_org uuid; v_n bigint; v_tok2 text; v_tok3 text; v_tok4 text;
+begin
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Approved Shop', 'Naledi Mokoena', 'naledi@example.co.za', '082 555 1234', 'South Africa')
+  returning approve_token into v_tok;
+  perform assert(length(v_tok) = 48, 'a request is born with a token');
+
+  v_r := public.innova_approve_request('0000000000000000000000000000000000000000000000000000');
+  perform assert_eq((v_r->>'ok')::boolean, false, 'a token we never sent is refused');
+  perform assert_eq(v_r->>'reason', 'unknown', 'and says so');
+
+  v_r := public.innova_approve_request(v_tok);
+  perform assert_eq((v_r->>'ok')::boolean, true, 'the request is approved');
+  perform assert_eq((v_r->>'already')::boolean, false, 'for the first time');
+  perform assert_eq(v_r->>'manager_phone', '+27825551234', 'the number read as South African');
+  v_org := (v_r->>'org_id')::uuid;
+  perform assert_eq((select name from public.organizations where id = v_org), 'Approved Shop', 'the shop exists');
+  select count(*) into v_n from public.app_users where org_id = v_org and status = 'invited' and phone_e164 = '+27825551234' and role = 'admin';
+  perform assert_eq(v_n, 1::bigint, 'and its manager is invited by that number');
+  perform assert_eq((select status from public.pos_requests where approve_token = v_tok), 'approved', 'the request is marked approved');
+
+  v_r := public.innova_approve_request(v_tok);
+  perform assert_eq((v_r->>'already')::boolean, true, 'a second click makes nothing');
+  select count(*) into v_n from public.organizations where name = 'Approved Shop';
+  perform assert_eq(v_n, 1::bigint, 'still one shop');
+
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Unreadable Shop', 'Somebody', 'x@example.com', 'call me', 'Other')
+  returning approve_token into v_tok2;
+  v_r := public.innova_approve_request(v_tok2);
+  perform assert_eq(v_r->>'reason', 'phone', 'a number that cannot be read is refused, not guessed');
+  perform assert(not exists (select 1 from public.organizations where name = 'Unreadable Shop'), 'and no shop is made');
+
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Second Shop Same Number', 'Naledi Again', 'n2@example.com', '0825551234', 'South Africa')
+  returning approve_token into v_tok3;
+  v_r := public.innova_approve_request(v_tok3);
+  perform assert_eq(v_r->>'reason', 'phone_taken', 'a number already on a shop is refused');
+
+  -- The country decides the dial code: a Lesotho number is +266, not +27.
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Maseru Shop', 'Thabo Letsie', 'thabo@example.ls', '5812 3456', 'Lesotho')
+  returning approve_token into v_tok4;
+  v_r := public.innova_approve_request(v_tok4);
+  perform assert_eq(v_r->>'manager_phone', '+26658123456', 'a Lesotho number is read as Lesotho');
+
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(format('select public.innova_approve_request(%L)', v_tok3), 'anon cannot approve a request');
+  perform assert_hidden('select * from public.pos_requests', 'nor read the requests and their tokens');
+  perform set_config('role', 'postgres', true);
+end $$;
+
 select 'all database tests passed' as result;
