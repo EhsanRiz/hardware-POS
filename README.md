@@ -253,6 +253,17 @@ inbox) to `POS_REQUEST_TO`. A quiet night sends nothing,
 and the function refuses to send twice within twenty hours whoever calls it.
 Deploy with `npx supabase functions deploy error-digest`.
 
+## Approving a request
+
+The request form emails InnovaEarth with an **Approve** button. One click
+(`supabase/functions/pos-approve`, calling `innova_approve_request`) makes the
+shop, invites the contact as its manager on the number they gave (read as
+E.164 by their country), marks the request approved, and emails them how to
+enrol and pair a till. A second click says the shop is already set up and
+makes nothing. A number that cannot be read, or that already belongs to
+somebody, is refused with words; the email's SQL line is the fallback.
+Deploy with `npx supabase functions deploy pos-approve --no-verify-jwt`.
+
 ## Wiping a shop, or deleting it
 
 A shop that was used for testing must start its books at invoice number 1

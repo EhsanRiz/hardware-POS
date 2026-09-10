@@ -66,13 +66,22 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, message: "Thank you — we already have your enquiry and will be in touch." });
   }
 
-  const { error } = await supabase.from("pos_requests").insert({
+  const { data: saved, error } = await supabase.from("pos_requests").insert({
     org_name: orgName, contact_name: contact, email, phone, country, vertical, message,
-  });
-  if (error) {
+  }).select("approve_token").single();
+  if (error || !saved) {
     console.error(error);
     return json({ ok: false, message: "Something went wrong. Please try again." }, 500);
   }
+  // The Approve link: one click makes the shop and invites the manager
+  // (supabase/functions/pos-approve). The SQL line stays as the fallback,
+  // with the number filled in as best we can read it.
+  const approveUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/pos-approve?t=${saved.approve_token}`;
+  const dial = country.toLowerCase() === "south africa" ? "+27" : country.toLowerCase() === "lesotho" ? "+266" : "";
+  const digits = phone.replace(/\D/g, "");
+  const e164 = phone.trim().startsWith("+") ? "+" + digits
+    : dial && digits.startsWith("0") ? dial + digits.slice(1)
+    : "+27…manager phone…";
 
   // The email is best-effort: the enquiry is already stored, so a Resend blip
   // must not turn a captured lead into a user-facing failure.
@@ -96,9 +105,12 @@ Deno.serve(async (req: Request) => {
 <tr><td><b>Vertical</b></td><td>${esc(vertical)}</td></tr>
 <tr><td><b>Message</b></td><td>${esc(message) || "—"}</td></tr>
 </table>
-<p>Create the org in Supabase → SQL editor:</p>
-<pre>select innova_create_org('${esc(orgName).replace(/'/g, "''")}', '${esc(contact).replace(/'/g, "''")}', '+27…manager phone…');</pre>
-<p>The manager then enrols at pos.innovaearth.com → Store sign-in → First time here.</p>`,
+<p style="margin:22px 0">
+<a href="${approveUrl}" style="display:inline-block;padding:12px 22px;background:#0e3a2d;color:#f5f2ea;text-decoration:none;border-radius:8px;font-weight:600">Approve — set up ${esc(orgName)}</a>
+</p>
+<p>One click makes the shop, invites ${esc(contact)} as its manager on ${esc(e164)}, and emails them how to enrol and pair a till. A second click does nothing.</p>
+<p style="color:#666;font-size:13px">Or by hand, in Supabase → SQL editor:</p>
+<pre>select innova_create_org('${esc(orgName).replace(/'/g, "''")}', '${esc(contact).replace(/'/g, "''")}', '${esc(e164)}');</pre>`,
       }),
     });
     if (!res.ok) console.error("Resend", res.status, await res.text());
