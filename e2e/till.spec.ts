@@ -4187,7 +4187,7 @@ test("a document filed without being read can be read later, on the same documen
   await expect(read.getByRole("button", { name: "Receive this delivery" })).toBeVisible();
 });
 
-test("called-off orders are hidden, deletable when they never went out, and each order goes out as a document", async ({ page }) => {
+test("called-off orders stay on the list crossed out, deletable when they never went out, and each order goes out as a document", async ({ page }) => {
   be.suppliers.push({ id: "sup1", code: null, name: "Voltex", contact_name: null, phone: "051 000 0000",
     email: "orders@voltex.co.za", address: "1 Depot Rd, Bloemfontein", vat_number: "4000000000",
     notes: null } as (typeof be.suppliers)[number]);
@@ -4211,31 +4211,35 @@ test("called-off orders are hidden, deletable when they never went out, and each
   await page.getByRole("button", { name: /^Buying$/ }).click();
   await page.getByRole("button", { name: /^Orders$/ }).click();
 
-  // CALLED OFF IS NOT ON THE LIST. What is coming is the list; what is not
-  // coming is behind a toggle that says how many.
+  // CALLED OFF STAYS ON THE LIST, crossed out. It used to hide behind a
+  // toggle, which read as deleted; an order that was raised and then not is
+  // part of the record, and the line through it says which it is.
   const rows = page.locator("tr.acc-row");
+  const struck = (number: string) =>
+    rows.filter({ hasText: number }).locator("td").first()
+      .evaluate((el) => getComputedStyle(el).textDecorationLine);
   await expect(rows.filter({ hasText: "PO-000001" })).toBeVisible();
-  await expect(rows.filter({ hasText: "PO-000002" })).toHaveCount(0);
-  await expect(rows.filter({ hasText: "PO-000003" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Show called off (2)" }).click();
   await expect(rows.filter({ hasText: "PO-000002" })).toBeVisible();
   await expect(rows.filter({ hasText: "PO-000003" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /called off/i })).toHaveCount(0);
+  expect(await struck("PO-000001")).toBe("none");
+  expect(await struck("PO-000002")).toBe("line-through");
+  expect(await struck("PO-000003")).toBe("line-through");
+  await expect(rows.filter({ hasText: "PO-000003" })).toContainText("Called off");
+  // Crossed out is not sendable: there is nothing to print for it.
+  await expect(rows.filter({ hasText: "PO-000003" }).getByRole("button", { name: /^Print/ })).toHaveCount(0);
 
   // ONE THAT NEVER WENT OUT MAY GO. One that went to the supplier stays.
   await rows.filter({ hasText: "PO-000003" }).click();
   await expect(page.getByText(/PO-000003 · Voltex · Called off/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete this order" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  // The toggle is remembered while the list is open.
-  await expect(page.getByRole("button", { name: "Hide called off" })).toBeVisible();
   await rows.filter({ hasText: "PO-000002" }).click();
   await page.getByRole("button", { name: "Delete this order" }).click();
   await page.getByRole("button", { name: "Delete it" }).click();
   await expect.poll(() => be.purchaseOrders.map((o) => o.doc_number)).toEqual(["PO-000001", "PO-000003"]);
   await expect(rows.filter({ hasText: "PO-000002" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Hide called off" }).click();
-  await expect(page.getByRole("button", { name: "Show called off (1)" })).toBeVisible();
-  await expect(rows.filter({ hasText: "PO-000003" })).toHaveCount(0);
+  await expect(rows.filter({ hasText: "PO-000003" })).toBeVisible();
 
   // EACH ORDER GOES OUT AS A DOCUMENT, from its own row: print it, save it
   // as a PDF, or email it to the supplier — whose address is on file.
@@ -4299,8 +4303,40 @@ test("the header calculator does a quick sum and leaves the sale alone", async (
   expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(totalsBox.x);
   expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(tenderBox.x);
 
+  // AND IT CAN BE MOVED: dragged by its title bar to wherever it is least in
+  // the way, and it stays there when it is opened again.
+  const grip = calc.getByTestId("calc-grip");
+  const gripBox = (await grip.boundingBox())!;
+  await page.mouse.move(gripBox.x + 40, gripBox.y + gripBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox.x + 40 + 120, gripBox.y + gripBox.height / 2 + 150, { steps: 6 });
+  await page.mouse.move(gripBox.x + 40 + 240, gripBox.y + gripBox.height / 2 + 300, { steps: 6 });
+  await page.mouse.up();
+  const moved = (await calc.boundingBox())!;
+  expect(Math.round(moved.x - calcBox.x)).toBe(240);
+  expect(Math.round(moved.y - calcBox.y)).toBe(300);
+  // The sum survived the move.
+  await expect(calc.getByTestId("calc-display")).toHaveText("36");
+
   await calc.getByRole("button", { name: "Close calculator" }).click();
   await expect(calc).toHaveCount(0);
+  await page.getByRole("button", { name: "Calculator" }).click();
+  // Polled: it scales in over a moment, and the box is read once it has.
+  await expect.poll(async () => {
+    const b = (await calc.boundingBox())!;
+    return [Math.round(b.x), Math.round(b.y)];
+  }).toEqual([Math.round(moved.x), Math.round(moved.y)]);
+
+  // It cannot be dragged off the screen: the title bar is always reachable.
+  const g2 = (await grip.boundingBox())!;
+  await page.mouse.move(g2.x + 40, g2.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(-500, -500, { steps: 4 });
+  await page.mouse.up();
+  const corner = (await calc.boundingBox())!;
+  expect(Math.round(corner.x)).toBe(0);
+  expect(Math.round(corner.y)).toBe(0);
+  await calc.getByRole("button", { name: "Close calculator" }).click();
 });
 
 test("Manage and the pop-ups wear the shop's colours, not a stranger's", async ({ page }) => {
@@ -5952,6 +5988,36 @@ test("the reports answer who sold it, what came back, and what the shelves are w
   await page.getByRole("tab", { name: "Suppliers" }).click();
   await expect(page.getByRole("region", { name: "Suppliers" }))
     .toContainText("No supplier paperwork in this range");
+});
+
+test("a supplier on the spend report opens its page", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "AKBRO STEEL AND HARDWARE CC", contact_name: null, phone: "051 447 0000",
+    email: null, address: null, vat_number: "4000000001", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "INV-1201",
+    doc_date: "2026-09-07", total: 7782.74, note: null, status: "received",
+    created_at: "2026-09-07T08:00:00Z",
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await page.getByRole("tab", { name: "Suppliers" }).click();
+  const region = page.getByRole("region", { name: "Suppliers" });
+  await expect(region).toContainText("7 782.74");
+
+  // The figure came from somewhere: the row is the supplier, and opens it.
+  await region.getByRole("button", { name: "Open AKBRO STEEL AND HARDWARE CC" }).click();
+  await expect(page.getByRole("heading", { name: "AKBRO STEEL AND HARDWARE CC" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "← Suppliers" })).toBeVisible();
+  await expect(page.locator("tr.acc-row", { hasText: "Invoice INV-1201" })).toBeVisible();
+
+  // Back to the list, and the list is the list: the supplier it was asked
+  // to open is not opened again.
+  await page.getByRole("button", { name: "← Suppliers" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "AKBRO STEEL" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AKBRO STEEL AND HARDWARE CC" })).toHaveCount(0);
 });
 
 test("a report tab a cashier cannot open is not there at all", async ({ page }) => {

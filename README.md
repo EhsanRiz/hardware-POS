@@ -258,9 +258,16 @@ Deploy with `npx supabase functions deploy error-digest`.
 Every order on Buying → Orders has Print, PDF and Email in front of it. The
 document is the shop's own paper addressed to the supplier (`orderSheet`,
 lines ex VAT, VAT at the shop's rate); Email opens to the supplier's address
-on file, and emailing a draft marks it as with the supplier. Called-off orders
-are hidden behind a toggle; one that never went to the supplier can be
-deleted (`pos_po_delete`), one that did stays on the record.
+on file, and emailing a draft marks it as with the supplier. A called-off
+order stays on the list, crossed out (`tr.is-called-off`); one that never
+went to the supplier can be deleted (`pos_po_delete`), one that did stays on
+the record.
+
+The till's calculator floats over the cart and can be dragged by its title
+bar to wherever it is least in the way; it stays there until the page
+reloads. On Reports → Suppliers each row is the supplier: clicking it opens
+the supplier's page under Suppliers (`pos_purchases_by_supplier` carries
+`supplier_id` since 0084).
 
 A supplier document filed without being read — the reading failed, or it was
 filed by hand — has "Read this document" on it: the filed pages go to the

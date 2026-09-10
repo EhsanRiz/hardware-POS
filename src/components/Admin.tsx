@@ -123,6 +123,9 @@ export default function Admin({
   );
   // On a phone the tabs live behind a burger (see the header); this is it.
   const [menuOpen, setMenuOpen] = useState(false);
+  // A supplier another tab asked to see: Reports hands one over and the
+  // Suppliers tab opens on its page rather than on the list.
+  const [supplierToOpen, setSupplierToOpen] = useState<string | null>(null);
   // How many colleagues are on the list but cannot sign in yet. Carried on the
   // menu's Staff row, because a closed menu is the one place that problem
   // could otherwise hide on a phone. A hint, not a screen: if the roster
@@ -607,7 +610,9 @@ export default function Admin({
       )}
 
       {tab === "shelf" && <Shelf user={user} pin={pin} />}
-      {tab === "suppliers" && <Suppliers pin={pin} />}
+      {tab === "suppliers" && (
+        <Suppliers pin={pin} openId={supplierToOpen} onOpened={() => setSupplierToOpen(null)} />
+      )}
       {tab === "buying" && <Buying pin={pin} products={products} />}
 
       {tab === "sales" && <SalesHistory pin={pin} user={user} />}
@@ -615,7 +620,12 @@ export default function Admin({
       {tab === "approvals" && <Approvals pin={pin} />}
 
       {tab === "cashup" && <CashUp pin={pin} />}
-      {tab === "reports" && <Reports pin={pin} />}
+      {tab === "reports" && (
+        <Reports
+          pin={pin}
+          onOpenSupplier={(id) => { setSupplierToOpen(id); setTab("suppliers"); }}
+        />
+      )}
       {tab === "tillai" && <TillAILog pin={pin} />}
 
       {tab === "staff" && <StaffAdmin user={user} pin={pin} products={products} />}

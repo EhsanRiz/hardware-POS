@@ -34,7 +34,16 @@ import ScanDocument from "./ScanDocument";
  * a search and not an afternoon. Reading the lines off the page comes next;
  * this screen is the filing.
  */
-export default function Suppliers({ pin }: { pin: string }) {
+export default function Suppliers({
+  pin,
+  openId = null,
+  onOpened,
+}: {
+  pin: string;
+  /** Land on this supplier's page rather than the list (a report row). */
+  openId?: string | null;
+  onOpened?: () => void;
+}) {
   const online = useOnline();
   const [suppliers, setSuppliers] = useState<Supplier[] | null>(null);
   const [selected, setSelected] = useState<Supplier | null>(null);
@@ -77,6 +86,15 @@ export default function Suppliers({ pin }: { pin: string }) {
   useEffect(() => {
     void loadSuppliers();
   }, [loadSuppliers]);
+
+  // Asked to open on one supplier: once the list is in, go straight to it.
+  useEffect(() => {
+    if (!openId || !suppliers) return;
+    const sup = suppliers.find((x) => x.id === openId);
+    if (sup) setSelected(sup);
+    onOpened?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, suppliers]);
 
   useEffect(() => {
     setDocs(null);

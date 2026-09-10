@@ -3011,17 +3011,17 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
 
         if (path === "rpc/pos_purchases_by_supplier") {
-          const by: Record<string, { docs: number; received: number; total: number; quoted: number }> = {};
+          const by: Record<string, { name: string; docs: number; received: number; total: number; quoted: number }> = {};
           for (const d of be.supplierDocs) {
             const name = be.suppliers.find((x) => x.id === d.supplier_id)?.name ?? "—";
-            const g = (by[name] ??= { docs: 0, received: 0, total: 0, quoted: 0 });
+            const g = (by[d.supplier_id] ??= { name, docs: 0, received: 0, total: 0, quoted: 0 });
             g.docs++;
             if (d.status === "received") g.received++;
             if (d.kind === "quote") g.quoted = r2(g.quoted + (d.total ?? 0));
             else g.total = r2(g.total + (d.total ?? 0));
           }
-          return json(Object.entries(by).map(([supplier, g]) => ({
-            supplier, documents: g.docs, received: g.received,
+          return json(Object.entries(by).map(([supplier_id, g]) => ({
+            supplier_id, supplier: g.name, documents: g.docs, received: g.received,
             total: g.total, quoted: g.quoted, last_document: null,
           })).sort((a, b) => b.total - a.total));
         }
