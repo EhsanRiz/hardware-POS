@@ -4552,4 +4552,106 @@ begin
   perform set_config('role', 'postgres', true);
 end $$;
 
+-- 0079: an operator wipes a shop clean, or deletes it --------------------------
+--
+-- A third shop is made the way InnovaEarth makes one, used the way a tester
+-- uses one, and then reset: its books, devices and people go, its catalogue
+-- stays with no stock, its invoice numbers start again, its real manager is
+-- invited — and the first shop, beside it, notices nothing.
+do $$
+declare
+  v_org_c uuid; v_mgr_c uuid; v_tok_c text; v_prod_c uuid; v_sale public.sales;
+  v_org_a uuid; v_sales_a bigint; v_log_a bigint; v_n bigint; v_new uuid; v_seq int; v_status text; v_phone text;
+begin
+  select org_id into v_org_a from fixture;
+  select count(*) into v_sales_a from public.sales where org_id = v_org_a;
+  select count(*) into v_log_a from public.tillai_questions where org_id = v_org_a;
+  perform assert(v_log_a > 0, 'the first shop has a TillAI log to protect');
+
+  v_org_c := public.innova_create_org('Reset Shop', 'Old Manager', '+27820000088');
+  perform public.auth_set_pin('+27820000088', '112233');
+  select id into v_mgr_c from public.app_users where org_id = v_org_c;
+  select token into v_tok_c from public.pos_pair_register('+27820000088', '112233', 'Test till');
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org_c, 'RS-1', 'Reset Shop Cement', 'ea', 100, 60, 25, true, 'standard')
+  returning id into v_prod_c;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok_c, p_cashier_id => v_mgr_c,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_c, 'qty', 2)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 200)));
+  insert into public.tillai_questions (org_id, register_id, question)
+  values (v_org_c, (select id from public.registers where org_id = v_org_c), 'test');
+  perform public.pos_report_error(v_tok_c, 'error', 'a test crash');
+  select max(next_number) into v_seq from public.doc_sequences where org_id = v_org_c;
+  perform assert(v_seq > 1, 'the test shop has used an invoice number');
+
+  -- The name must match: a pasted id alone wipes nothing.
+  perform assert_refuses(
+    format('select public.innova_reset_org(%L, %L, %L, %L)', v_org_c, 'Other Shop', 'Owner', '+27820000089'),
+    'a reset with the wrong name is refused');
+  select count(*) into v_n from public.sales where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'and touched nothing');
+
+  -- Neither function is anybody''s to call through the API.
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(
+    format('select public.innova_reset_org(%L, %L, %L, %L)', v_org_c, 'Reset Shop', 'Owner', '+27820000089'),
+    'anon cannot reset a shop');
+  perform assert_refuses(
+    format('select public.innova_delete_org(%L, %L)', v_org_c, 'Reset Shop'),
+    'nor delete one');
+  perform set_config('role', 'postgres', true);
+
+  v_new := public.innova_reset_org(v_org_c, 'reset shop', 'Real Owner', '+27820000089');
+
+  select count(*) into v_n from public.sales where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'the sales are gone');
+  select count(*) into v_n from public.sale_items si join public.sales s on s.id = si.sale_id where s.org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and their lines');
+  select count(*) into v_n from public.stock_movements where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and the stock movements');
+  select count(*) into v_n from public.registers where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'every device is unpaired');
+  select count(*) into v_n from public.tillai_questions where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'the TillAI log is gone');
+  select count(*) into v_n from public.client_errors where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and the error reports');
+  perform assert_refuses(format('select * from public.register_by_token(%L)', v_tok_c),
+    'the old till''s token opens nothing');
+
+  select count(*) into v_n from public.app_users where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'one person remains');
+  select status, phone_e164 into v_status, v_phone from public.app_users where id = v_new;
+  perform assert_eq(v_status, 'invited', 'the real manager, invited');
+  perform assert_eq(v_phone, '+27820000089', 'by their own number');
+  perform assert(not exists (select 1 from public.app_users where phone_e164 = '+27820000088'),
+    'the tester''s number is free again');
+
+  select count(*) into v_n from public.products where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'the catalogue is kept');
+  select stock_qty::bigint into v_n from public.products where id = v_prod_c;
+  perform assert_eq(v_n, 0::bigint, 'with no stock on hand');
+  select coalesce(max(next_number), 1) into v_seq from public.doc_sequences where org_id = v_org_c;
+  perform assert_eq(v_seq, 1, 'the invoice numbers start again');
+  perform assert(exists (select 1 from public.organizations where id = v_org_c), 'the shop itself stays');
+
+  select count(*) into v_n from public.sales where org_id = v_org_a;
+  perform assert_eq(v_n, v_sales_a, 'the first shop''s sales are untouched');
+  select count(*) into v_n from public.registers where org_id = v_org_a;
+  perform assert(v_n > 0, 'and its tills are still paired');
+  select count(*) into v_n from public.tillai_questions where org_id = v_org_a;
+  perform assert_eq(v_n, v_log_a, 'and its TillAI log is untouched');
+
+  -- And gone altogether.
+  perform public.innova_delete_org(v_org_c, 'Reset Shop');
+  perform assert(not exists (select 1 from public.organizations where id = v_org_c), 'the shop is deleted');
+  select count(*) into v_n from public.products where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'with its catalogue');
+  select count(*) into v_n from public.app_users where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and its people');
+  select count(*) into v_n from public.sales where org_id = v_org_a;
+  perform assert_eq(v_n, v_sales_a, 'the first shop is still untouched');
+end $$;
+
 select 'all database tests passed' as result;
