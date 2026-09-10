@@ -77,16 +77,6 @@ export const PHONE_TILES: Tile[] = [
     icon: <Icon d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3" />,
   },
   {
-    key: "tillai",
-    label: "Ask TillAI",
-    hint: "Stock, prices, who bought what — and the day's takings if they are yours to see",
-    // The same assistant as the bubble on the till, and the same rule: it
-    // sees what this person can already see, nothing more.
-    perms: [],
-    online: true,
-    icon: <Icon d="M4 5h16v11H9l-5 4V5zM8 9h8M8 12h5" />,
-  },
-  {
     key: "shelf",
     label: "Photograph shelf items",
     hint: "Barcodes and pictures, from the aisle",

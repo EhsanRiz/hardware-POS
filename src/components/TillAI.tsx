@@ -39,8 +39,9 @@ const UNLOCKS = ["view_reports", "view_cost_prices", "manage_catalogue", "cash_m
  * for the rest of the sign-in. It is never stored, and the server never
  * logs it.
  *
- * On a phone the same sheet is a screen of its own (variant "phone"): no
- * bubble, the whole display, and the way back is the header's button.
+ * On a phone (variant "phone") the bubble is the same bubble, in the same
+ * corner; the sheet it opens takes the whole display, and the header's
+ * chevron is the way back to it.
  *
  * Keyboard: F4 opens and closes it, Escape closes it, Enter sends.
  */
@@ -53,11 +54,8 @@ interface Message {
 
 export default function TillAI({
   variant = "bubble",
-  onClose,
 }: {
   variant?: "bubble" | "phone";
-  /** Phone only: the way back to the errands. */
-  onClose?: () => void;
 } = {}) {
   const phone = variant === "phone";
   const online = useOnline();
@@ -67,9 +65,8 @@ export default function TillAI({
   // a PIN would open for them, so it stays out of the request.
   const pin = canUnlock ? sessionPin : null;
   const [pinStep, setPinStep] = useState<"ask" | "skipped">("ask");
-  const [isOpen, setOpen] = useState(false);
-  const open = phone || isOpen;
-  const close = () => (phone ? onClose?.() : setOpen(false));
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
   // Asked only when there is something a PIN would open and the session
   // does not hold one yet: a counter hand is never asked, and a manager who
   // signed in a minute ago is not asked again.
@@ -82,7 +79,7 @@ export default function TillAI({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "F4" && !phone) {
+      if (e.key === "F4") {
         e.preventDefault();
         setOpen((o) => !o);
       } else if (e.key === "Escape" && open) {
@@ -91,7 +88,7 @@ export default function TillAI({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, phone]);
+  }, [open]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -127,19 +124,17 @@ export default function TillAI({
 
   return (
     <>
-      {!phone && (
-        <button
-          type="button"
-          className={`tillai-bubble${open ? " is-open" : ""}`}
-          onClick={() => setOpen((o) => !o)}
-          aria-label="TillAI"
-          aria-expanded={open}
-          title="TillAI (F4)"
-        >
-          <InnovaMark size={22} onGreen />
-          <span>TillAI</span>
-        </button>
-      )}
+      <button
+        type="button"
+        className={`tillai-bubble${open ? " is-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-label="TillAI"
+        aria-expanded={open}
+        title="TillAI (F4)"
+      >
+        <InnovaMark size={22} onGreen />
+        <span>TillAI</span>
+      </button>
 
       {open && (
         <section className={`tillai${phone ? " is-phone" : ""}`} role="dialog" aria-label="TillAI">

@@ -220,8 +220,8 @@ It is an intelligent way in to what the till already shows, not the till:
   only: a reload forgets it, the sheet asks once and keeps it for the rest of
   the sign-in, and it is never stored or logged. A counter hand's questions
   carry no PIN at all.
-- **It is on a phone too**, as a tile ("Ask TillAI") and a screen of its own,
-  with the same rule and the phone owner's own PIN.
+- **It is on a phone too**, the same bubble in the same corner; the sheet it
+  opens is the whole screen, with the same rule and the phone owner's own PIN.
 - **Manage → TillAI** shows what the shop asked, newest first, with the
   answer and what was looked at — behind the reports right. A question it
   could not answer is a thing the till does not do yet.

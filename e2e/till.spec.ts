@@ -513,17 +513,21 @@ test("a manager's TillAI is unlocked by the PIN they signed in with, and asks on
   expect(stored).not.toContain(`\\"${USERS.manager.pin}\\"`);
 });
 
-test("TillAI is on a phone as a screen of its own, and sees what the phone's owner can", async ({ page }) => {
+test("TillAI is on a phone as the same bubble, and its sheet is the screen", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
-  await page.getByRole("button", { name: /Ask TillAI/ }).click();
+  // The bubble, in the corner, as on the till — not a tile among the errands.
+  await expect(page.locator(".phone-tiles")).not.toContainText(/TillAI/);
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  await expect(bubble).toBeVisible();
+  await bubble.click();
   const sheet = page.getByRole("dialog", { name: "TillAI" });
   await expect(sheet).toBeVisible();
-  // The whole display, not a bubble in a corner; no bubble at all.
+  // The whole display.
   await expect(sheet).toHaveClass(/is-phone/);
-  await expect(page.locator(".tillai-bubble")).toHaveCount(0);
   const box = (await sheet.boundingBox())!;
   const view = page.viewportSize()!;
   expect(box.width).toBeGreaterThanOrEqual(view.width - 1);
+  expect(box.height).toBeGreaterThanOrEqual(view.height - 1);
   // The owner signed in with their PIN a moment ago: unlocked, not asked.
   await expect(sheet).toContainText(/Unlocked/i);
   await expect(sheet).not.toContainText(/Enter your PIN/i);
@@ -536,17 +540,18 @@ test("TillAI is on a phone as a screen of its own, and sees what the phone's own
   // The phone's own token, not a till's: the server scopes by it.
   expect(String(be.tillaiAsked[0].register_token)).toMatch(/^personal-token-/);
 
-  // The header's chevron is the way back to the errands.
+  // The header's chevron is the way back to the errands, bubble still there.
   await page.getByRole("button", { name: "Back" }).click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(bubble).toBeVisible();
 
-  // A counter hand's own phone has the same tile and the counter's view: no
-  // PIN asked, nothing unlocked, and no PIN sent. (A phone offers only its
-  // owner's name, so this is a second phone, not a second sign-in.)
+  // A counter hand's own phone has the same bubble and the counter's view:
+  // no PIN asked, nothing unlocked, and no PIN sent. (A phone offers only
+  // its owner's name, so this is a second phone, not a second sign-in.)
   await page.evaluate(() => localStorage.clear());
   await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
-  await page.getByRole("button", { name: /Ask TillAI/ }).click();
+  await page.getByRole("button", { name: "TillAI" }).click();
   await expect(sheet).toBeVisible();
   await expect(sheet).not.toContainText(/Enter your PIN|Unlocked/i);
   await ask.fill("do we stock 2.5 twin and earth");
