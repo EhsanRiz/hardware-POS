@@ -1448,3 +1448,25 @@ export async function tillaiQuestions(pin: string, limit = 200): Promise<TillAIQ
   if (error) throw error;
   return (data ?? []) as TillAIQuestion[];
 }
+
+/**
+ * A reading for a document that was filed without one (0082): it lands on
+ * the same document — number, date, totals and lines — which then reads and
+ * receives like any other. Returns how many lines landed.
+ */
+export async function readFiledDocument(pin: string, documentId: string, read: ReadDocument): Promise<number> {
+  const { data, error } = await supabase.rpc("pos_purchasing_read_filed_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+    p_kind: read.kind ?? null,
+    p_doc_number: read.doc_number ?? null,
+    p_doc_date: read.doc_date ?? null,
+    p_subtotal: read.subtotal ?? null,
+    p_tax_total: read.tax_total ?? null,
+    p_total: read.total ?? null,
+    p_lines: read.lines ?? [],
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}

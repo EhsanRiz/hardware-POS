@@ -4141,6 +4141,52 @@ test("a photographed product carries its picture onto the line", async ({ page }
   await expect(page.locator(".line-thumb")).toHaveAttribute("src", /^data:image/);
 });
 
+test("a document filed without being read can be read later, on the same document", async ({ page }) => {
+  // The Jasbro invoice: filed with its page and none of its lines, because
+  // the reading was skipped. It must not have to be scanned again.
+  be.suppliers.push({ id: "sup9", code: null, name: "Jasbro Plumbing", contact_name: null,
+    phone: "010 442 0625", email: "info@jasbro.co.za", address: null, vat_number: "4370229645",
+    notes: null } as (typeof be.suppliers)[number]);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: "Manage" }).click();
+  await page.getByRole("button", { name: "File by hand" }).click();
+  const filed = page.getByRole("dialog", { name: "New supplier document" });
+  await filed.getByLabel("Document kind").selectOption("invoice");
+  await filed.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "page1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await filed.getByRole("button", { name: "File 1 page" }).click();
+  await expect(page.getByText("Filed with 1 page.")).toBeVisible();
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "invoice", status: "stored" });
+
+  // Open it: a picture with no lines, and the way to read it.
+  await page.locator("tr.acc-row", { hasText: "Invoice" }).first().click();
+  const view = page.getByRole("dialog", { name: /Invoice/ });
+  await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+  await view.getByRole("button", { name: "Read this document" }).click();
+  await expect(page.getByText(/Read: 2 lines found/)).toBeVisible();
+
+  // The filed page went to the reader, and the reading landed on THIS
+  // document: number, date, total and lines, nothing filed twice.
+  expect(be.readPages).toBe(1);
+  expect(be.supplierDocs).toHaveLength(1);
+  // The reader called it a quote; the person filed it as an invoice, and the
+  // person's word stands — or the receive step would vanish with it.
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "invoice", status: "read", doc_number: "27181", doc_date: "2026-08-13", total: 5300.35 });
+  expect(be.supplierLines.map((l) => l.description)).toEqual(["COMP ELBOW 15MM", "COMP SPARE RING 15MM"]);
+
+  // And now it reads like any scan: its lines, and the step that books them in.
+  await page.locator("tr.acc-row", { hasText: "27181" }).first().click();
+  const read = page.getByRole("dialog", { name: /27181/ });
+  await expect(read).toContainText("COMP ELBOW 15MM");
+  await expect(read.getByRole("button", { name: "Read this document" })).toHaveCount(0);
+  await expect(read.getByRole("button", { name: "Receive this delivery" })).toBeVisible();
+});
+
 test("the header calculator does a quick sum and leaves the sale alone", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
@@ -4159,6 +4205,14 @@ test("the header calculator does a quick sum and leaves the sale alone", async (
 
   // It floats: the sale underneath was never touched.
   await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+
+  // And it floats over the cart, never over the money: the totals and the
+  // tender panel stay in full view while a sum is being tapped.
+  const calcBox = (await calc.boundingBox())!;
+  const totalsBox = (await page.locator(".totals").boundingBox())!;
+  const tenderBox = (await page.locator(".tender").boundingBox())!;
+  expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(totalsBox.x);
+  expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(tenderBox.x);
 
   await calc.getByRole("button", { name: "Close calculator" }).click();
   await expect(calc).toHaveCount(0);

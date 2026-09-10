@@ -4749,4 +4749,61 @@ begin
     'with the right PIN only');
 end $$;
 
+-- 0082: reading a document that was filed without being read -----------------
+do $$
+declare v_tok text; v_sup uuid; v_doc uuid; v_n int; v_status text; v_num text; v_why text;
+begin
+  select token into v_tok from till;
+  select id into v_sup from public.suppliers where org_id = (select org_id from fixture) limit 1;
+  if v_sup is null then
+    insert into public.suppliers (org_id, name) values ((select org_id from fixture), 'Read Later Supplies')
+    returning id into v_sup;
+  end if;
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup, 'invoice');
+  select status into v_status from public.supplier_documents where id = v_doc;
+  perform assert_eq(v_status, 'stored', 'a document filed by hand is stored, not read');
+
+  -- The reader calls it a quote; the person filed it as an invoice, and
+  -- the person's word stands — or the receive step would vanish.
+  v_n := public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc,
+    'quote', 'INV-10022994', '2026-08-14', 4605.00, 690.75, 5295.75,
+    '[{"supplier_code":"PL 0065","description":"COMP ELBOW 15MM","qty":20,"unit_price":16.85,"line_total":337.00},
+      {"supplier_code":"PL 0107","description":"COMP SPARE RING 15MM","qty":100,"unit_price":1.10,"line_total":110.00},
+      {"description":"   "}]'::jsonb);
+  perform assert_eq(v_n, 2, 'the reading lands as lines, blank rows dropped');
+  select status, doc_number into v_status, v_num from public.supplier_documents where id = v_doc;
+  perform assert_eq(v_status, 'read', 'and the document is now read');
+  perform assert_eq(v_num, 'INV-10022994', 'with its number');
+  perform assert_eq((select kind from public.supplier_documents where id = v_doc), 'invoice',
+    'still an invoice, whatever the reader called it');
+  -- Filed as "other", the reading's kind is taken.
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup, 'other');
+  perform public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc, 'delivery_note', 'DN-1', null, null, null, null,
+    '[{"description":"SAND"}]'::jsonb);
+  perform assert_eq((select kind from public.supplier_documents where id = v_doc), 'delivery_note',
+    'a document filed as "other" takes the reading''s kind');
+  select id into v_doc from public.supplier_documents where doc_number = 'INV-10022994' and supplier_id = v_sup;
+  select count(*)::int into v_n from public.supplier_document_lines where document_id = v_doc;
+  perform assert_eq(v_n, 2, 'two lines on it');
+
+  begin
+    perform public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc, 'invoice', null, null, null, null, null,
+      '[{"description":"AGAIN","qty":1}]'::jsonb);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%already been read%', 'a second reading is refused: ' || v_why);
+  select count(*)::int into v_n from public.supplier_document_lines where document_id = v_doc;
+  perform assert_eq(v_n, 2, 'and adds nothing');
+
+  perform assert_refuses(
+    format('select public.pos_purchasing_read_filed_document(%L, %L, %L, %L, null, null, null, null, null, %L::jsonb)',
+           v_tok, '1234', gen_random_uuid(), 'invoice', '[]'),
+    'a document that is not this shop''s is not found');
+  perform assert_refuses(
+    format('select public.pos_purchasing_read_filed_document(%L, %L, %L, %L, null, null, null, null, null, %L::jsonb)',
+           v_tok, '5678', v_doc, 'invoice', '[]'),
+    'and a counter hand may not read one');
+end $$;
+
 select 'all database tests passed' as result;
