@@ -1800,6 +1800,20 @@ export async function installBackend(page: Page): Promise<Backend> {
         if (moved > 0) po.status = left === 0 ? "received" : "part";
         return json({ lines_received: moved, lines_outstanding: left });
       }
+      case "rpc/pos_po_delete": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Order not found");
+        if (po.status !== "cancelled") return fail("Only a called-off order can be deleted");
+        if (po.sent_at) return fail("That order went to the supplier; it stays on the record as called off");
+        if (be.poLines.some((l) => l.po_id === po.id && l.received_qty > 0)) {
+          return fail("Something was received against that order; it stays on the record");
+        }
+        be.poLines = be.poLines.filter((l) => l.po_id !== po.id);
+        be.purchaseOrders = be.purchaseOrders.filter((x) => x.id !== po.id);
+        return json(null);
+      }
       case "rpc/pos_po_cancel": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");

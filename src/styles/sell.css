@@ -2711,3 +2711,7 @@ tr.is-void td:last-child { text-decoration: none; }
 .tillai-log-text { font-size: 15px; }
 .tillai-log-a { padding: 0 6px 12px 18px; }
 .tillai-log-a p { margin: 0; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+
+/* Buying → Orders: print, PDF and email in front of each order. */
+.po-send { display: inline-flex; gap: 4px; white-space: nowrap; }
+.po-send .btn-line.quiet { min-height: 34px; padding: 0 10px; font-size: 13px; }

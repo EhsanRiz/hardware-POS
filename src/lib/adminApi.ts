@@ -1470,3 +1470,11 @@ export async function readFiledDocument(pin: string, documentId: string, read: R
   if (error) throw error;
   return Number(data ?? 0);
 }
+
+/** Delete a called-off order that never went to the supplier (0083). */
+export async function poDelete(pin: string, poId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_po_delete", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+  });
+  if (error) throw error;
+}

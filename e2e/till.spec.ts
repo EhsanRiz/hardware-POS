@@ -4187,6 +4187,91 @@ test("a document filed without being read can be read later, on the same documen
   await expect(read.getByRole("button", { name: "Receive this delivery" })).toBeVisible();
 });
 
+test("called-off orders are hidden, deletable when they never went out, and each order goes out as a document", async ({ page }) => {
+  be.suppliers.push({ id: "sup1", code: null, name: "Voltex", contact_name: null, phone: "051 000 0000",
+    email: "orders@voltex.co.za", address: "1 Depot Rd, Bloemfontein", vat_number: "4000000000",
+    notes: null } as (typeof be.suppliers)[number]);
+  const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
+  const at = "2026-09-10T08:00:00.000Z";
+  be.purchaseOrders.push(
+    { id: "po1", doc_number: "PO-000001", supplier_id: "sup1", status: "draft", expected_on: null, note: null, created_at: at, created_by_name: "Manager", sent_at: null },
+    { id: "po2", doc_number: "PO-000002", supplier_id: "sup1", status: "cancelled", expected_on: null, note: "raised by mistake", created_at: at, created_by_name: "Manager", sent_at: null },
+    { id: "po3", doc_number: "PO-000003", supplier_id: "sup1", status: "cancelled", expected_on: null, note: null, created_at: at, created_by_name: "Manager", sent_at: at },
+  );
+  be.poLines.push({ id: "pl1", po_id: "po1", product_id: cable.id, sku: cable.sku, name: cable.name, unit_code: cable.unit_code, qty: 6, unit_cost: 50, received_qty: 0 });
+  // Print goes to the browser's dialog, which a test cannot see; the call is
+  // what is checked.
+  await page.addInitScript(() => {
+    (window as unknown as { __printed: number }).__printed = 0;
+    window.print = () => { (window as unknown as { __printed: number }).__printed += 1; };
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+  await page.getByRole("button", { name: /^Orders$/ }).click();
+
+  // CALLED OFF IS NOT ON THE LIST. What is coming is the list; what is not
+  // coming is behind a toggle that says how many.
+  const rows = page.locator("tr.acc-row");
+  await expect(rows.filter({ hasText: "PO-000001" })).toBeVisible();
+  await expect(rows.filter({ hasText: "PO-000002" })).toHaveCount(0);
+  await expect(rows.filter({ hasText: "PO-000003" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show called off (2)" }).click();
+  await expect(rows.filter({ hasText: "PO-000002" })).toBeVisible();
+  await expect(rows.filter({ hasText: "PO-000003" })).toBeVisible();
+
+  // ONE THAT NEVER WENT OUT MAY GO. One that went to the supplier stays.
+  await rows.filter({ hasText: "PO-000003" }).click();
+  await expect(page.getByText(/PO-000003 · Voltex · Called off/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete this order" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  // The toggle is remembered while the list is open.
+  await expect(page.getByRole("button", { name: "Hide called off" })).toBeVisible();
+  await rows.filter({ hasText: "PO-000002" }).click();
+  await page.getByRole("button", { name: "Delete this order" }).click();
+  await page.getByRole("button", { name: "Delete it" }).click();
+  await expect.poll(() => be.purchaseOrders.map((o) => o.doc_number)).toEqual(["PO-000001", "PO-000003"]);
+  await expect(rows.filter({ hasText: "PO-000002" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Hide called off" }).click();
+  await expect(page.getByRole("button", { name: "Show called off (1)" })).toBeVisible();
+  await expect(rows.filter({ hasText: "PO-000003" })).toHaveCount(0);
+
+  // EACH ORDER GOES OUT AS A DOCUMENT, from its own row: print it, save it
+  // as a PDF, or email it to the supplier — whose address is on file.
+  const row = rows.filter({ hasText: "PO-000001" });
+  await expect(row.getByRole("button", { name: "Print PO-000001" })).toBeVisible();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    row.getByRole("button", { name: "PDF PO-000001" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe("Purchase-Order-PO-000001.pdf");
+
+  const email = row.getByRole("link", { name: "Email PO-000001" });
+  const href = (await email.getAttribute("href")) ?? "";
+  expect(href).toMatch(/^mailto:orders%40voltex\.co\.za\?subject=Purchase%20Order%20PO-000001%20from%20Ladybrand%20Hardware/);
+  // The document is in the body: the supplier and the six rolls at R 50.
+  const body = decodeURIComponent(href.split("&body=")[1] ?? "");
+  expect(body).toContain("Purchase Order PO-000001");
+  expect(body).toContain("For: Voltex");
+  expect(body).toContain("6 roll × Twin & Earth 2.5mm 100m (CBL-25-100) — R 300.00");
+  expect(body).toContain("VAT R 45.00");
+  expect(body).toContain("Total R 345.00");
+  // Emailed is as good as sent: the draft is now with the supplier.
+  await Promise.all([page.waitForEvent("download"), email.click()]);
+  await expect.poll(() => be.purchaseOrders.find((o) => o.id === "po1")?.status).toBe("sent");
+  await expect(row).toContainText("With the supplier");
+
+  // Print opens the document and goes to the print dialog by itself.
+  await row.getByRole("button", { name: "Print PO-000001" }).click();
+  const doc = page.getByRole("dialog", { name: "Purchase Order PO-000001" });
+  await expect(doc).toBeVisible();
+  await expect(doc).toContainText("Order from");
+  await expect(doc).toContainText("Voltex");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBe(1);
+  await doc.getByRole("button", { name: "Close document" }).click();
+});
+
 test("the header calculator does a quick sum and leaves the sale alone", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");

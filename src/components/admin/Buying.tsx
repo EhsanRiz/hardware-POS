@@ -3,6 +3,7 @@ import {
   PO_STATUS_LABEL,
   poCancel,
   poCreate,
+  poDelete,
   poFromReorder,
   poLines,
   poList,
@@ -22,6 +23,11 @@ import {
   type Supplier,
 } from "../../lib/adminApi";
 import { fmtDate } from "../../lib/dates";
+import { orderSheet } from "../../lib/orderSheet";
+import { emailSheet, saveSheetPdf, sheetMailto } from "../../lib/sendSheet";
+import { shopSettings, vatRate } from "../../lib/settings";
+import { shopWhere, type Sheet } from "../../lib/sheet";
+import DocumentSheet from "../DocumentSheet";
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
@@ -300,15 +306,52 @@ function Orders({
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [busy, setBusy] = useState(false);
+  // Called-off orders are kept but not shown, unless asked for: a list of
+  // what is coming should not be half what is not.
+  const [showCalledOff, setShowCalledOff] = useState(false);
+  // Each order's lines, fetched with the list, so Email can build the
+  // document inside the click — navigator.share cannot wait for a fetch.
+  const [linesById, setLinesById] = useState<Record<string, PurchaseOrderLine[]>>({});
+  const [showing, setShowing] = useState<{ sheet: Sheet; print: boolean } | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      setOrders(await poList(pin));
+      const list = await poList(pin);
+      setOrders(list);
+      const got: Record<string, PurchaseOrderLine[]> = {};
+      await Promise.all(list.filter((o) => o.status !== "cancelled").map(async (o) => {
+        try { got[o.id] = await poLines(pin, o.id); } catch { /* the row shows without a document */ }
+      }));
+      setLinesById(got);
     } catch (e) {
       setError(errorMessage(e, "Could not load the orders"));
     }
   }, [pin]);
+
+  /** The order as a document, on the shop's paper, addressed to its supplier. */
+  const sheetFor = (o: PurchaseOrder): Sheet | null => {
+    const lines = linesById[o.id];
+    if (!lines) return null;
+    const sup = suppliers.find((x) => x.id === o.supplier_id);
+    const s = shopSettings();
+    return orderSheet({
+      number: o.doc_number,
+      date: fmtDate(o.created_at),
+      supplier: { name: o.supplier, address: sup?.address, phone: sup?.phone, vatNumber: sup?.vat_number, email: sup?.email },
+      lines,
+      rate: vatRate(),
+      expectedOn: o.expected_on ? fmtDate(o.expected_on) : null,
+      note: o.note,
+      raisedBy: o.created_by_name,
+      deliverTo: shopWhere(s).join(", ") || null,
+    });
+  };
+  /** Emailed is as good as sent: a draft that went out by email is with the supplier. */
+  const markSent = (o: PurchaseOrder) => {
+    if (o.status !== "draft") return;
+    void poSend(pin, o.id).then(load).catch(() => {});
+  };
 
   useEffect(() => {
     void load();
@@ -358,11 +401,24 @@ function Orders({
         </button>
       </div>
 
+      {showing && (
+        <DocumentSheet sheet={showing.sheet} autoPrint={showing.print} onClose={() => setShowing(null)} />
+      )}
       {!orders ? (
         <p className="acc-note">Loading…</p>
       ) : orders.length === 0 ? (
         <p className="acc-note">Nothing has been ordered yet.</p>
       ) : (
+        <>
+        {orders.some((o) => o.status === "cancelled") && (
+          <p className="acc-note">
+            <button type="button" className="btn-line quiet" onClick={() => setShowCalledOff((v) => !v)}>
+              {showCalledOff
+                ? "Hide called off"
+                : `Show called off (${orders.filter((o) => o.status === "cancelled").length})`}
+            </button>
+          </p>
+        )}
         <table className="acc-table">
           <thead>
             <tr>
@@ -372,10 +428,11 @@ function Orders({
               <th>Expected</th>
               <th className="num">Lines</th>
               <th className="num">Value</th>
+              <th>Send</th>
             </tr>
           </thead>
           <tbody>
-            {orders.map((o) => (
+            {orders.filter((o) => showCalledOff || o.status !== "cancelled").map((o) => (
               <tr
                 key={o.id}
                 className="acc-row is-clickable"
@@ -395,10 +452,47 @@ function Orders({
                 <td className="quiet">{o.expected_on ? fmtDate(o.expected_on) : "—"}</td>
                 <td className="num quiet">{o.lines}</td>
                 <td className="num">{money(o.total)}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {/* The order as a document, in front of the row it belongs
+                      to: print it, save it as a PDF, or email it to the
+                      supplier, whose address is already on file. Emailing a
+                      draft marks it as with the supplier. */}
+                  {o.status !== "cancelled" && sheetFor(o) && (
+                    <span className="po-send">
+                      <button
+                        type="button" className="btn-line quiet"
+                        aria-label={`Print ${o.doc_number}`}
+                        onClick={() => setShowing({ sheet: sheetFor(o)!, print: true })}
+                      >
+                        Print
+                      </button>
+                      <button
+                        type="button" className="btn-line quiet"
+                        aria-label={`PDF ${o.doc_number}`}
+                        onClick={() => void saveSheetPdf(sheetFor(o)!, shopSettings())}
+                      >
+                        PDF
+                      </button>
+                      <a
+                        className="btn-line quiet"
+                        aria-label={`Email ${o.doc_number}`}
+                        href={sheetMailto(sheetFor(o)!, shopSettings())}
+                        onClick={(e) => {
+                          const done = emailSheet(sheetFor(o)!, shopSettings(), () => {});
+                          if (done.attached) e.preventDefault();
+                          markSent(o);
+                        }}
+                      >
+                        Email
+                      </a>
+                    </span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </>
       )}
     </div>
   );
@@ -424,6 +518,7 @@ function OrderSheet({
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [term, setTerm] = useState("");
   // What is being booked in this time round, per line.
   const [arrived, setArrived] = useState<Map<string, string>>(new Map());
@@ -661,6 +756,32 @@ function OrderSheet({
       )}
 
       <div className="modal-actions">
+        {/* Called off before it ever went out: noise, and it may go. One
+            that went to the supplier stays on the record, called off. */}
+        {po.status === "cancelled" && !po.sent_at && !confirmDelete && (
+          <button className="btn-line quiet" disabled={busy || !online} onClick={() => setConfirmDelete(true)}>
+            Delete this order
+          </button>
+        )}
+        {confirmDelete && (
+          <>
+            <span className="acc-note">Delete {po.doc_number}? It never went to the supplier.</span>
+            <button className="btn-line" disabled={busy} onClick={() => setConfirmDelete(false)}>Keep it</button>
+            <button
+              className="btn-fill"
+              disabled={busy || !online}
+              onClick={() => {
+                setBusy(true);
+                void poDelete(pin, po.id)
+                  .then(async () => { await onChanged(); onBack(); })
+                  .catch((e) => setError(errorMessage(e, "That order could not be deleted")))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Delete it
+            </button>
+          </>
+        )}
         {(po.status === "draft" || po.status === "sent") && (
           <button
             className="btn-line quiet"

@@ -4806,4 +4806,43 @@ begin
     'and a counter hand may not read one');
 end $$;
 
+-- 0083: deleting an order that never went out ---------------------------------
+do $$
+declare v_tok text; v_sup uuid; v_prod uuid; v_po public.purchase_orders; v_sent public.purchase_orders; v_why text;
+begin
+  select token into v_tok from till;
+  select id into v_sup from public.suppliers where org_id = (select org_id from fixture) limit 1;
+  select id into v_prod from public.products where org_id = (select org_id from fixture) and active limit 1;
+
+  v_po := public.pos_po_create(v_tok, '1234', v_sup);
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'raised by mistake');
+  perform public.pos_po_delete(v_tok, '1234', v_po.id);
+  perform assert(not exists (select 1 from public.purchase_orders where id = v_po.id),
+    'a called-off draft that never went out can be deleted');
+
+  v_sent := public.pos_po_create(v_tok, '1234', v_sup);
+  perform public.pos_po_set_line(v_tok, '1234', v_sent.id, v_prod, 6, 50);
+  v_sent := public.pos_po_send(v_tok, '1234', v_sent.id);
+  perform public.pos_po_cancel(v_tok, '1234', v_sent.id, 'no longer needed');
+  begin
+    perform public.pos_po_delete(v_tok, '1234', v_sent.id);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%went to the supplier%', 'one that went to the supplier stays: ' || v_why);
+  perform assert(exists (select 1 from public.purchase_orders where id = v_sent.id and status = 'cancelled'),
+    'still on the record, called off');
+
+  v_po := public.pos_po_create(v_tok, '1234', v_sup);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', v_tok, '1234', v_po.id),
+    'a live draft cannot be deleted, only called off');
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, null);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', v_tok, '5678', v_po.id),
+    'and a counter hand may not delete one');
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', 'not-a-token', '1234', v_po.id),
+    'nor a stranger');
+  perform set_config('role', 'postgres', true);
+end $$;
+
 select 'all database tests passed' as result;
