@@ -190,6 +190,45 @@ test("a till holding a refused sale cannot be unpaired", async ({ page }) => {
   await expect(page.getByText("Who is on the till?")).toBeVisible();
 });
 
+test("the door names the shop, large, on the cream side, and the brand stays on the green", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+  // The shop's own name at the head of the cream side, the till's name as a
+  // kicker over it, the address and phone under it — from the settings.
+  const head = page.locator(".login-body .login-shophead");
+  await expect(head.locator(".login-shop")).toHaveText("Ladybrand Hardware");
+  await expect(head.locator(".login-till")).toHaveText("Front Counter");
+  await expect(head.locator(".login-shop-meta")).toHaveText("12 Church St, Ladybrand, Free State · 051 924 0000");
+  // Large: bigger than anything else on that side, and above the names.
+  const shopPx = await head.locator(".login-shop").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  const promptPx = await page.locator(".login-prompt").first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  expect(shopPx).toBeGreaterThanOrEqual(promptPx * 2);
+  const headBox = (await head.boundingBox())!;
+  const promptBox = (await page.getByText("Who is on the till?").boundingBox())!;
+  expect(headBox.y + headBox.height).toBeLessThanOrEqual(promptBox.y);
+
+  // The green side speaks the brand and the edition, not the shop: the name
+  // is said once, on the shop's side.
+  const scene = page.locator(".login-scene");
+  await expect(scene).toContainText(/InnovaPOS/);
+  await expect(scene).toContainText(/Hardware edition/i);
+  await expect(scene).not.toContainText("Ladybrand Hardware");
+  await expect(scene).not.toContainText("Front Counter");
+
+  // With the line down it reads the same, from the cache.
+  be.offline = true;
+  await page.reload();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  await expect(head.locator(".login-shop")).toHaveText("Ladybrand Hardware");
+  await expect(head.locator(".login-shop-meta")).toContainText("051 924 0000");
+  await expect(page.locator(".login-status")).toContainText("Offline");
+});
+
 test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "This is a till" }).click();

@@ -37,6 +37,14 @@ import type { LoginCandidate } from "../lib/types";
  * Two ways out, because a screen that can only be satisfied by remembering
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
+ *
+ * The frame speaks the brand and the workspace speaks the shop: the green
+ * side carries InnovaPOS and the edition, the cream side carries the shop's
+ * own name, large, with its address and phone under it and the till's name
+ * over it. Several shops share this server, and a device that says whose it
+ * is in big type is the visible half of keeping them apart. It all comes
+ * from the settings the till already caches, so it reads the same with the
+ * line down.
  */
 export default function Login() {
   const { setUser, setSessionPin } = useAuth();
@@ -105,8 +113,7 @@ export default function Login() {
               Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
             </span>
           </div>
-          <h1 className="login-shop">{shopSettings().shop_name}</h1>
-          <p className="login-till">{registerName()}</p>
+          <p className="login-edition">Hardware edition</p>
         </div>
 
         <LoginEngraving />
@@ -135,6 +142,16 @@ export default function Login() {
       </div>
 
       <div className="login-body">
+        <header className="login-shophead">
+          <p className="login-till">{registerName()}</p>
+          <h1 className="login-shop">{shopSettings().shop_name}</h1>
+          {(() => {
+            const s = shopSettings();
+            const where = [s.address_line1, s.address_line2].filter((x) => x && x.trim()).join(", ");
+            const line = [where, s.phone].filter((x) => x && x.trim()).join(" · ");
+            return line ? <p className="login-shop-meta">{line}</p> : null;
+          })()}
+        </header>
         {!who ? (
           <>
             <p className="login-prompt">Who is on the till?</p>
