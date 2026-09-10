@@ -410,12 +410,13 @@ export function sheetAsPdf(
 
     p.text(
       sheet.kind === "quote" ? "QUOTATION FOR"
-        : sheet.kind === "delivery" ? "DELIVER TO" : "INVOICED TO",
+        : sheet.kind === "delivery" ? "DELIVER TO"
+        : sheet.kind === "order" ? "ORDER FROM" : "INVOICED TO",
       SIDE, 8, { colour: GREY }
     );
     p.y += 12;
     p.text(
-      sheet.customer.name ?? (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale"),
+      sheet.customer.name ?? (sheet.kind === "quote" ? "Walk-in customer" : sheet.kind === "order" ? "Supplier" : "Cash sale"),
       SIDE,
       11.5,
       { bold: true }
@@ -594,7 +595,7 @@ export function sheetAsPdf(
 
     p.y = splitTop;
     const leftWidth = RIGHT - 175 - SIDE;
-    const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
+    const terms = (sheet.kind === "quote" ? s.quote_terms : sheet.kind === "order" ? "" : s.receipt_terms) ?? "";
     for (const block of [sheet.note ?? "", terms.trim()]) {
       if (!block) continue;
       for (const line of wrap(block, 9, leftWidth)) {

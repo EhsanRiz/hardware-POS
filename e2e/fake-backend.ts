@@ -1701,6 +1701,35 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
         return json(poRow(be, row));
       }
+      case "rpc/pos_purchasing_read_filed_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Document not found");
+        if (d.status !== "stored" || be.supplierLines.some((l) => l.document_id === d.id)) {
+          return fail("That document has already been read");
+        }
+        // The person's kind stands; only "other" takes the reader's word.
+        const kinds = ["quote", "invoice", "delivery_note", "statement"];
+        if (d.kind === "other" && kinds.includes(String(body.p_kind))) d.kind = String(body.p_kind);
+        d.doc_number = String(body.p_doc_number ?? "").trim() || d.doc_number;
+        d.doc_date = (body.p_doc_date as string | null) ?? d.doc_date;
+        d.total = (body.p_total as number | null) ?? d.total;
+        d.status = "read";
+        let n = 0;
+        for (const l of (body.p_lines as Record<string, unknown>[]) ?? []) {
+          const desc = String(l.description ?? "").trim();
+          if (!desc) continue;
+          n += 1;
+          be.supplierLines.push({
+            document_id: d.id, line_no: n,
+            supplier_code: (l.supplier_code as string | null) ?? null, description: desc,
+            qty: (l.qty as number | null) ?? null, unit_price: (l.unit_price as number | null) ?? null,
+            line_total: (l.line_total as number | null) ?? null,
+          });
+        }
+        return json(n);
+      }
       case "rpc/pos_po_list": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
@@ -1770,6 +1799,20 @@ export async function installBackend(page: Page): Promise<Backend> {
           (l) => l.po_id === po.id && l.received_qty < l.qty).length;
         if (moved > 0) po.status = left === 0 ? "received" : "part";
         return json({ lines_received: moved, lines_outstanding: left });
+      }
+      case "rpc/pos_po_delete": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Order not found");
+        if (po.status !== "cancelled") return fail("Only a called-off order can be deleted");
+        if (po.sent_at) return fail("That order went to the supplier; it stays on the record as called off");
+        if (be.poLines.some((l) => l.po_id === po.id && l.received_qty > 0)) {
+          return fail("Something was received against that order; it stays on the record");
+        }
+        be.poLines = be.poLines.filter((l) => l.po_id !== po.id);
+        be.purchaseOrders = be.purchaseOrders.filter((x) => x.id !== po.id);
+        return json(null);
       }
       case "rpc/pos_po_cancel": {
         if (!tokenOk) return fail("Register not paired or revoked");

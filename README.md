@@ -253,6 +253,20 @@ inbox) to `POS_REQUEST_TO`. A quiet night sends nothing,
 and the function refuses to send twice within twenty hours whoever calls it.
 Deploy with `npx supabase functions deploy error-digest`.
 
+## Buying: orders as documents
+
+Every order on Buying → Orders has Print, PDF and Email in front of it. The
+document is the shop's own paper addressed to the supplier (`orderSheet`,
+lines ex VAT, VAT at the shop's rate); Email opens to the supplier's address
+on file, and emailing a draft marks it as with the supplier. Called-off orders
+are hidden behind a toggle; one that never went to the supplier can be
+deleted (`pos_po_delete`), one that did stays on the record.
+
+A supplier document filed without being read — the reading failed, or it was
+filed by hand — has "Read this document" on it: the filed pages go to the
+reader and the reading lands on the same document
+(`pos_purchasing_read_filed_document`). The kind the person chose stands.
+
 ## Approving a request
 
 The request form emails InnovaEarth with an **Approve** button. One click

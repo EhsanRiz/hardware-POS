@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 // do quick sums without leaving the POS. Shows the running calculation, takes
 // keyboard input, and is closed with the ✕ in the top-right corner. It floats
 // (no full-screen backdrop) so the till stays visible behind it.
+//
+// It floats over the CART, top-left, and never over the money. It used to sit
+// top-right, which is exactly where the totals and the tender panel are: the
+// one thing a cashier must still see while tapping a sum is the total.
 type Op = "+" | "-" | "×" | "÷";
 
 function apply(a: number, b: number, op: Op): number {
@@ -154,7 +158,8 @@ export default function Calculator({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed top-16 right-4 z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in"
+      className="fixed top-16 left-4 z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in"
+      data-testid="calculator"
       role="dialog"
       aria-label="Calculator"
     >
