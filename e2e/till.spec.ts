@@ -1968,6 +1968,52 @@ test("a sale open when the screen reloads comes back parked", async ({ page }) =
   expect(be.storedSales[0].total).toBe(1565);
 });
 
+test("two parked sales are chosen between, not resumed blind", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  // Two customers step away: one for a card, one for a bakkie.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "2");
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+
+  // TWO PARKED: the button asks which. It used to bring back the last one
+  // parked, silently, and the cashier parked it again to reach the other.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  await expect(which).toBeVisible();
+  const rows = which.locator(".modal-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(0)).toContainText("R 115.00");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(rows.nth(1)).toContainText("2 units");
+  await expect(rows.nth(1)).toContainText("R 2 900.00");
+
+  // The first one back is the one asked for, and the other stays parked.
+  await rows.nth(0).click();
+  await expect(which).toHaveCount(0);
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // With a sale open, the other cannot be pulled over it.
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(banner(page)).toContainText(/Finish or park this sale/);
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+
+  // ONE PARKED: straight back, no question asked.
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.getByRole("dialog", { name: "Which parked sale?" })).toHaveCount(0);
+  await expect(page.locator(".line-row")).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+});
+
 test("a completed sale does not come back parked", async ({ page }) => {
   // The other half: the device's copy has to be dropped when the sale leaves,
   // or every refresh resurrects the last thing sold.
