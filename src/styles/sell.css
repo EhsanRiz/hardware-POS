@@ -540,7 +540,12 @@
   color: var(--color-neutral-700);
 }
 
-.tender-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+/* Four ways to be paid, on one line. It was three-across with Zapper making a
+   ragged second row of two; dropping the one the shop does not take leaves a
+   row that reads as a set rather than a grid with a gap in it — and gives the
+   payment column back about 65px, which on the shop's own till is the
+   difference between the keypad fitting and not. */
+.tender-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .tender-btn {
   min-height: 76px;
   display: flex;
@@ -2209,3 +2214,114 @@ tr.is-void td:last-child { text-decoration: none; }
   border: 0;
   cursor: pointer;
 }
+
+/* ---- The till it is actually running on -------------------------------- */
+/*
+ * A PinnPOS all-in-one: 1024 x 768 at 100%, which in a Chrome window with a
+ * tab strip, an address bar and the Windows taskbar leaves about 1024 x 590 of
+ * page. The tier above this was written for tablets, where 1024 wide comes
+ * with 768 of height; this one is the same width with a third of the height
+ * gone, and that combination broke two things outright rather than merely
+ * crowding them:
+ *
+ *   - the header ran 74px past the right edge, taking Sign out off the screen
+ *   - the pay column could not fit the totals, five tenders, the button and
+ *     its hint, so Zapper and Account were sliced in half — two ways of being
+ *     paid that the counter simply could not reach
+ *
+ * Measured, not guessed: scrollWidth 1098 against a 1024 viewport.
+ */
+
+/* The edition tag is decorative and the widest thing that is. Losing it below
+   1200 buys ~90px, which is the whole horizontal overflow. */
+@media (max-width: 1199px) {
+  .sell-edition, .sell-rule-v { display: none; }
+}
+
+/* Whatever else happens, the controls on the right keep their room and a long
+   name gives way first. "Ehsan Rizvi · Owner" is what a real shop puts here;
+   the fixture's "Manager" is six characters, which is exactly why the suite
+   never saw this. */
+.sell-head-right { flex: none; }
+
+/* The nav gives up padding, not position. `min-width: 0` alone let its buttons
+   spill out of it and sit UNDER the calculator — an 18px overlap, measured —
+   because a flex item shrinking below its content does not clip it. Tightening
+   the buttons makes the row genuinely narrower instead. */
+@media (max-width: 1199px) {
+  .sell-nav button { padding-left: 10px; padding-right: 10px; }
+  /* Six controls at a 16px gap is 80px of air in a row that has none to give. */
+  .sell-head-right { gap: 10px; }
+}
+/* If anything still has to give, it is the till's name — the one thing here
+   that can be read from the slip, the drawer or the wall. It shrinks and
+   ellipses; the tabs and the controls do not move. */
+.sell-till { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sell-nav { flex: none; }
+
+/* If the tenders, the amount and the keys do not fit, the panel scrolls inside
+   itself rather than being clipped by its parent. At EVERY height, not just
+   the short ones: a 1920 laptop was quietly cutting the bottom row of the
+   keypad — the backspace key — with nothing to say it had. Cut off is
+   unreachable; scrolled is not. */
+.tender { min-height: 0; overflow-y: auto; }
+
+/* The name gives way before the controls do — but only where the room is
+   actually short. A manager's laptop has width to spare, and truncating
+   somebody's name on a 1920 screen to solve a 1024 problem would be fixing the
+   wrong machine. */
+@media (max-width: 1199px) {
+  .sell-cashier-name {
+    display: block;
+    max-width: 11ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* 820, not 700. The PinnPOS is 768 tall, so FULLSCREEN on the shop's own till
+   sat just above the old ceiling and got the roomy tier — which is why the
+   keypad was cut there too, and always had been. The compact tier has to cover
+   the machine at both sizes: ~590 windowed and 768 with the browser out of the
+   way. A 1080p laptop maximised is ~950 and keeps the roomy layout. */
+@media (max-height: 820px) {
+  /* The colophon is 34px of a 590px screen, on every tab, and nobody has ever
+     read it at a counter. It stays on taller screens. */
+  .sell-foot { display: none; }
+
+  .sell-head { padding-top: 8px; padding-bottom: 8px; }
+  .totals { margin-top: 10px; padding: 12px 18px 14px; }
+
+  /* Five tenders in two rows have to fit beside a total, a button and a hint.
+     These come down together rather than one of them collapsing. */
+  .tender-btn { min-height: 58px; gap: 4px; }
+  .tender-grid { gap: 8px; }
+
+  /* The hint is advice; the keys are the only way to enter an amount on a
+     touch-only counter. Advice goes first. */
+  .tender-caption { display: none; }
+
+  /* And the keys themselves come down to fit rather than folding away behind a
+     toggle — a fold is two extra taps on every cash sale. 42px still clears
+     the 44px-ish target a finger needs once the 5px gaps are counted as part
+     of the reach, and this is a screen you press with a fingertip, not a
+     thumb held at arm's length. */
+  .keypad { gap: 5px; }
+  .keypad button { min-height: 40px; font-size: 16px; }
+
+  /* The total keeps its job — the figure a customer reads from a metre away —
+     but 46px with 26px of air above it is a poster on a screen this short.
+     36px is still the largest thing on the till by some way. */
+  .total-row { margin-top: 14px; }
+  .total-row .fig { font-size: 36px; }
+  .totals-row { margin-bottom: 7px; }
+
+
+  /* The scan box is the most-used control on the screen and was showing
+     "Scan barcc" — 89px of input. It takes the larger share of the row here;
+     the customer chip can lose the width. */
+  .scan-field { flex: 2 1 0; }
+  .customer-pick { flex: 1 1 0; min-width: 0; }
+}
+

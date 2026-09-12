@@ -123,8 +123,12 @@ export default function SellHeader({
           onShowFailed={onShowFailed}
         />
 
-        <span className="sell-till">
-          {registerName()} · {shopSettings().shop_name}
+        {/* Which till this is — and only that. It carried the shop name too,
+            which at 0.11em tracking in capitals came to 315px of header and
+            was what pushed Sign out off a 1366 laptop. Nobody standing in the
+            shop needs to be told which shop it is; the invoice says so. */}
+        <span className="sell-till" title={shopSettings().shop_name}>
+          {registerName()}
         </span>
 
         <span className="sell-divider-v" />

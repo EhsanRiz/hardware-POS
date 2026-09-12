@@ -9,7 +9,6 @@ import {
   CashIcon,
   EftIcon,
   PrinterIcon,
-  QrIcon,
 } from "./Icons";
 
 /** The tenders a South African hardware counter actually takes. */
@@ -17,7 +16,11 @@ const TENDERS: { method: PaymentMethod; label: string; icon: React.ReactNode }[]
   { method: "cash", label: "Cash", icon: <CashIcon /> },
   { method: "card", label: "Card", icon: <CardIcon /> },
   { method: "eft", label: "EFT", icon: <EftIcon /> },
-  { method: "zapper", label: "Zapper", icon: <QrIcon /> },
+  // Zapper is deliberately NOT here. The shop does not take it, and a button
+  // nobody presses is a button somebody eventually presses by mistake. The
+  // method itself stays in the type and in every label map, because sales
+  // already taken on it must keep reading correctly in history, on a reprint
+  // and in the reports.
   { method: "account", label: "Account", icon: <AccountIcon /> },
 ];
 
@@ -95,6 +98,7 @@ export default function PaymentColumn({
   const [poNumber, setPoNumber] = useState("");
   const [vatNumber, setVatNumber] = useState("");
   const [showInvoiceFields, setShowInvoiceFields] = useState(false);
+
   // Selling more than the shelf count, acknowledged once for this set of short
   // lines. Change a quantity and it is asked again — an acknowledgement of
   // "2 m short" must not silently cover 20.
@@ -179,6 +183,7 @@ export default function PaymentColumn({
 
   const ready = !busy && canPay && lines.length > 0 && outstanding <= 0.005;
 
+
   /**
    * Add a tender. With no amount typed it settles whatever is outstanding.
    *
@@ -186,7 +191,38 @@ export default function PaymentColumn({
    * over a R200 note for a R115 sale must never record a R200 payment.
    * Everything else is applied as entered, because a card cannot overpay.
    */
-  function take(method: PaymentMethod) {
+  /**
+   * Changing your mind about how they are paying.
+   *
+   * Tapping a tender records a payment for the whole outstanding amount, which
+   * settles the sale — and settled, every tender button went disabled. So a
+   * cashier who tapped Cash when the customer meant Card had no way forward
+   * except the small × on the taken row, which reads as "delete a payment"
+   * rather than "I picked the wrong one". They cancelled the sale instead.
+   *
+   * So while exactly ONE tender is holding the sale, the others stay live and
+   * tapping one swaps it: the first is dropped and the new method takes the
+   * sale from a clean slate. Rounding follows the new method — cash to the
+   * nearest 10c, a card to the exact cent — which is why it re-takes rather
+   * than editing the method on the row in place.
+   *
+   * Split payments are untouched: with two tenders down, the buttons mean
+   * "add another" again, and a flip would be ambiguous about which to replace.
+   */
+  const sole = taken.length === 1 ? taken[0].payment.method : null;
+  // Both halves matter. One tender that SETTLES the sale is a choice that can
+  // be changed; one tender with money still owing is the first half of a split,
+  // and tapping the next method there means "add", not "replace". Without the
+  // second half, R50 cash then Card silently threw the R50 away.
+  const canFlipTo = (m: PaymentMethod) =>
+    sole != null && sole !== m && outstanding <= 0.005;
+
+  function tap(method: PaymentMethod) {
+    if (canFlipTo(method)) return take(method, []);
+    take(method);
+  }
+
+  function take(method: PaymentMethod, base: TakenTender[] = taken) {
     if (lines.length === 0) return;
     // "Put it on my account" is said AT the till, after the goods are rung up,
     // by a builder the cashier may not have recognised. So Account is a live
@@ -194,11 +230,23 @@ export default function PaymentColumn({
     // to the trade band on the way back.
     if (method === "account" && !customer) return onPickCustomer();
 
+    // Derived from `base`, not from the memoised totals, so a flip can compute
+    // against an empty slate in the same tick that clears it — React has not
+    // re-rendered yet, and `paid` would still be yesterday's answer.
+    const basePaid =
+      Math.round(base.reduce((sum, t) => sum + t.payment.amount, 0) * 100) / 100;
+    const baseNonCash =
+      Math.round(
+        base
+          .filter((t) => t.payment.method !== "cash")
+          .reduce((sum, t) => sum + t.payment.amount, 0) * 100
+      ) / 100;
+
     // Cash settles to the nearest 10c; everything else to the exact cent.
     const remaining =
       method === "cash"
-        ? Math.round((total + cashRounding(total - nonCashTaken) - paid) * 100) / 100
-        : Math.round((total - paid) * 100) / 100;
+        ? Math.round((total + cashRounding(total - baseNonCash) - basePaid) * 100) / 100
+        : Math.round((total - basePaid) * 100) / 100;
     if (remaining <= 0) return;
 
     const offered = hasTyped ? typed : remaining;
@@ -218,8 +266,8 @@ export default function PaymentColumn({
     }
     if (applied <= 0.005) return;
 
-    setTaken((prev) => [
-      ...prev,
+    setTaken([
+      ...base,
       {
         payment: { method, amount: Math.round(applied * 100) / 100 },
         // What was physically handed over for this tender. Only cash can be
@@ -382,7 +430,13 @@ export default function PaymentColumn({
         )}
 
         <span className="kicker-sm">
-          {taken.length > 0 ? "Add another tender" : "Tender"}
+          {/* With one tender holding the whole sale the buttons swap it; with
+              two they add to it. Saying which stops the cashier guessing. */}
+          {taken.length === 0
+            ? "Tender"
+            : sole != null && outstanding <= 0.005
+              ? "Tap another to change it"
+              : "Add another tender"}
         </span>
 
         <div className="tender-grid">
@@ -397,7 +451,7 @@ export default function PaymentColumn({
               disabled={
                 lines.length === 0 ||
                 (t.method === "account" && accountBlocked) ||
-                outstanding <= 0.005
+                (outstanding <= 0.005 && !canFlipTo(t.method))
               }
               title={
                 t.method !== "account"
@@ -410,7 +464,7 @@ export default function PaymentColumn({
                         ? `${money(accountHeadroom)} left on this account`
                         : undefined
               }
-              onClick={() => take(t.method)}
+              onClick={() => tap(t.method)}
             >
               {t.icon}
               {t.label}
@@ -441,6 +495,12 @@ export default function PaymentColumn({
           />
         </div>
 
+        {/* Always rendered, and disabled rather than hidden once the money
+            is counted. Hiding it was tried, to buy room on a short screen: it
+            takes the keys out of the accessibility tree, so they stop being
+            findable at all — and the room is only bought at the one moment
+            there is nothing left to do with it. The keys are made smaller
+            instead; see the short-screen tier in sell.css. */}
         <div className="keypad">
           {[
             ["7", "8", "9", "R200"],

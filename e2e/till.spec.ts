@@ -6207,3 +6207,65 @@ test("a locked phone with no line still answers a price", async ({ page }) => {
   await expect(page.locator(".phone-lock")).toBeVisible();
   await expect(page.locator(".phone-tiles")).toHaveCount(0);
 });
+
+test("a tender picked by mistake is changed by tapping another", async ({ page }) => {
+  // Tapping a tender settles the sale, and settled, every tender button went
+  // disabled. A cashier who tapped Cash when the customer meant Card had no
+  // way forward but the small × on the taken row — so they cancelled the sale
+  // and rang it up again.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: "Cash" }).click();
+  const tenders = page.locator(".taken-row:not(.is-outstanding)");
+  await expect(tenders).toHaveCount(1);
+  await expect(tenders.first()).toContainText("Cash");
+
+  // The others stay live, and say so.
+  await expect(page.getByText(/Tap another to change it/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Card" })).toBeEnabled();
+
+  // Tapping Card REPLACES the cash tender rather than adding to it — a sale
+  // paid once must not end up recorded as paid twice.
+  await page.getByRole("button", { name: "Card" }).click();
+  await expect(tenders).toHaveCount(1);
+  await expect(tenders.first()).toContainText("Card");
+  await expect(tenders.first()).toContainText(/R\s?115\.00/);
+
+  // And it still completes, on the method actually chosen.
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.sales.at(-1)!.payments.map((p) => p.method)).toEqual(["card"]);
+});
+
+test("a split payment still adds rather than swapping", async ({ page }) => {
+  // The flip is only meaningful while ONE tender holds the whole sale. With
+  // two down, the buttons mean "add another" again and swapping would be
+  // ambiguous about which of them it replaced.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByLabel("Amount for the next tender").fill("50");
+  await page.getByRole("button", { name: "Cash" }).click();
+  await page.getByRole("button", { name: "Card" }).click();
+
+  const tenders = page.locator(".taken-row:not(.is-outstanding)");
+  await expect(tenders).toHaveCount(2);
+  await expect(page.getByText(/Tap another to change it/i)).toHaveCount(0);
+});
+
+test("the counter does not offer a tender the shop does not take", async ({ page }) => {
+  // Zapper is off the counter. The METHOD stays in the labels, because sales
+  // already taken on it have to keep reading correctly everywhere else.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByRole("button", { name: "Zapper" })).toHaveCount(0);
+  // exact: the sections nav also has an "Accounts" button.
+  for (const m of ["Cash", "Card", "EFT", "Account"]) {
+    await expect(page.getByRole("button", { name: m, exact: true })).toBeVisible();
+  }
+});

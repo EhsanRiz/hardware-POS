@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installBackend, pairAndSignIn } from "./fake-backend";
+import { installBackend, pairAndSignIn, USERS } from "./fake-backend";
 
 /**
  * The till fits the hardware it is deployed on.
@@ -258,5 +258,163 @@ test.describe("phone, 390", () => {
       () => document.documentElement.scrollWidth - window.innerWidth
     );
     expect(docSpill, "horizontal overflow in CSS pixels").toBeLessThanOrEqual(0);
+  });
+});
+
+/**
+ * The till in the shop, as it is actually run.
+ *
+ * A PinnPOS all-in-one, 1024 x 768 at 100%. Two sizes matter and they are very
+ * different: FULLSCREEN (or installed as an app) gives the page all 768, while
+ * a Chrome window with a tab strip, an address bar and the Windows taskbar
+ * leaves about 590.
+ *
+ * Fullscreen is the one that must be perfect, and it is the one that was not:
+ * the compact tier used to stop at 700px, so the shop's own till at 768 got
+ * the roomy layout and had 147px of the payment panel — most of the keypad —
+ * cut off. It had always been cut there.
+ *
+ * These are also the first cases with a real name in them. "Ehsan Rizvi ·
+ * Owner" is what the shop's header carries; the fixture's "Manager" is six
+ * characters, and that alone is why the header overflow never showed up.
+ */
+test.describe("the shop's own till", () => {
+  /** Rects read WITHOUT scrolling. boundingBox() scrolls the element into view
+      before measuring, so it reports a control that is only reachable by
+      scrolling as being on the screen — which is the exact fault being
+      tested. */
+  const rect = (page: import("@playwright/test").Page, sel: string) =>
+    page.evaluate((s) => {
+      const el = document.querySelector(s);
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return { x: b.x, y: b.y, right: b.right, bottom: b.bottom };
+    }, sel);
+
+  async function signedIn(page: import("@playwright/test").Page) {
+    const be = await installBackend(page);
+    be.staff[0].name = "Ehsan Rizvi";
+    USERS.manager.row.name = "Ehsan Rizvi";
+    await pairAndSignIn(page, USERS.manager.pin);
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+  }
+
+  test.afterEach(() => {
+    USERS.manager.row.name = "Manager";
+  });
+
+  test.describe("fullscreen, 768", () => {
+    test.use({ viewport: { width: 1024, height: 768 } });
+
+    test("the payment column fits with nothing hidden", async ({ page }) => {
+      await signedIn(page);
+      // Everything: the tenders, the amount, all sixteen keys, the invoice
+      // disclosure. On a touch-only counter the keys are the ONLY way to enter
+      // what somebody handed over — the amount box is inputMode="none" — so a
+      // key below the fold is a key that is not there.
+      const hidden = await page.evaluate(() => {
+        const t = document.querySelector(".tender")!;
+        return t.scrollHeight - t.clientHeight;
+      });
+      expect(hidden, "payment panel content hidden below the fold").toBeLessThanOrEqual(1);
+    });
+  });
+
+  test.describe("windowed, 590", () => {
+    test.use({ viewport: { width: 1024, height: 590 } });
+
+    test("every control the counter needs is on the screen", async ({ page }) => {
+      await signedIn(page);
+
+      // The header ran 74px past the right edge and took Sign out with it.
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth
+      );
+      expect(overflow, "horizontal overflow in CSS pixels").toBeLessThanOrEqual(0);
+
+      const within = async (sel: string, what: string) => {
+        const b = await rect(page, sel);
+        expect(b, `${what} is not in the DOM`).not.toBeNull();
+        expect(b!.right, `${what} right edge`).toBeLessThanOrEqual(1024);
+        expect(b!.bottom, `${what} bottom edge`).toBeLessThanOrEqual(590);
+        expect(b!.y, `${what} top edge`).toBeGreaterThanOrEqual(0);
+      };
+
+      // Every way of being paid, the box the money goes in, and the button
+      // that commits it. These were sliced in half at this height; the keypad
+      // below them may scroll here, but none of these may.
+      for (const m of ["cash", "card", "eft", "account"]) {
+        await within(`.tender-btn[data-method="${m}"]`, `${m} tender`);
+      }
+      await within(".cash-in", "amount box");
+      await within(".btn-tender", "Tender & print");
+
+      // And the way out of the shift.
+      const signOut = await page.evaluate(() => {
+        const b = [...document.querySelectorAll("button")]
+          .find((x) => x.textContent?.trim() === "Sign out")!
+          .getBoundingClientRect();
+        return { right: b.right, bottom: b.bottom };
+      });
+      expect(signOut.right, "Sign out right edge").toBeLessThanOrEqual(1024);
+
+      // The scan box must be able to say what it is for: it was showing
+      // "Scan barcc" in 89px of input.
+      const ph = await page.getByPlaceholder(/Scan barcode/i).evaluate((el) => {
+        const i = el as HTMLInputElement;
+        // Rough but sufficient: a proportional 16px face averages ~7px a
+        // character, so this catches a truncated instruction without
+        // pretending to measure glyphs.
+        return { w: i.getBoundingClientRect().width, chars: i.placeholder.length };
+      });
+      expect(ph.w, "scan input width").toBeGreaterThan(ph.chars * 6);
+    });
+  });
+});
+
+/**
+ * The manager's laptop.
+ *
+ * 1366 is where most laptops land, and it is the first width at which the
+ * header shows the till's name — so it is the only size that can see that
+ * element grow. Carrying the shop name as well as the register's, in capitals
+ * at 0.11em tracking, made it 315px and pushed Sign out clean off the screen.
+ * The till at 1024 cannot catch that: there the element is display:none.
+ */
+test.describe("the manager's laptop", () => {
+  test.use({ viewport: { width: 1366, height: 640 } });
+
+  test("the header fits, with a real name in it", async ({ page }) => {
+    const be = await installBackend(page);
+    be.staff[0].name = "Ehsan Rizvi";
+    USERS.manager.row.name = "Ehsan Rizvi";
+    try {
+      await pairAndSignIn(page, USERS.manager.pin);
+
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth
+      );
+      expect(overflow, "horizontal overflow in CSS pixels").toBeLessThanOrEqual(0);
+
+      for (const name of ["Sign out", "Manage"]) {
+        const b = await page.getByRole("button", { name, exact: true }).boundingBox();
+        expect(b, `${name} has no box`).not.toBeNull();
+        expect(b!.x + b!.width, `${name} right edge`).toBeLessThanOrEqual(1366);
+      }
+
+      // The tabs must not end up under the calculator: a flex item shrinking
+      // below its content does not clip it, so "no overflow" alone can still
+      // mean two controls sitting on top of each other.
+      const gap = await page.evaluate(() => {
+        const nav = document.querySelector(".sell-nav")!;
+        const last = nav.lastElementChild!.getBoundingClientRect();
+        const calc = document.querySelector(".head-calc-btn")!.getBoundingClientRect();
+        return calc.x - last.right;
+      });
+      expect(gap, "gap between the last tab and the calculator").toBeGreaterThan(0);
+    } finally {
+      USERS.manager.row.name = "Manager";
+    }
   });
 });
