@@ -6,6 +6,9 @@ import { errorMessage } from "../../lib/errors";
 import { downscaleImage, imageSrc } from "../../lib/images";
 import { refreshSettings, shopSettings } from "../../lib/settings";
 import { getPrintMode, setPrintMode, type PrintMode } from "../../lib/print";
+import {
+  publishSlipMetrics, setSlipWidth, slipWidth, SLIP_WIDTHS, type SlipWidth,
+} from "../../lib/config";
 
 /** The text fields only — the one boolean is edited by its own control. */
 type TextKey = {
@@ -62,6 +65,7 @@ export default function ShopSettings({ pin }: { pin: string }) {
   const [busy, setBusy] = useState(false);
   // Per-device, so it is read from the device rather than the shop record.
   const [printMode, setPrintModeState] = useState<PrintMode>(getPrintMode);
+  const [cols, setCols] = useState<number>(slipWidth);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   // Read-only, and served rather than compiled in — see the note beside it.
@@ -395,9 +399,9 @@ export default function ShopSettings({ pin }: { pin: string }) {
 
         {(
           [
-            ["auto", "Work it out", "An Android tablet prints through RawBT; anything else shows the slip on screen."],
-            ["direct", "Straight to the printer", "No slip on screen. Goes to whatever this machine prints to by default — set that to the till printer."],
-            ["browser", "Always show the slip", "Useful with no printer attached, or to read a slip before it is printed."],
+            ["auto", "Work it out", "An Android tablet prints through RawBT; anything else goes straight to this machine's default printer."],
+            ["direct", "Always straight to the printer", "Never show a slip on screen. Goes to whatever this machine prints to by default — set that to the till printer."],
+            ["browser", "Always show the slip first", "For a device with no printer attached, or to read a slip before printing it."],
             ["thermal", "Always RawBT", "For a tablet that reports an unusual browser and is not recognised as Android."],
           ] as [PrintMode, string, string][]
         ).map(([value, label, blurb]) => (
@@ -422,7 +426,7 @@ export default function ShopSettings({ pin }: { pin: string }) {
         {/* The half of this that is not ours to fix. Said here, next to the
             setting, because this is where somebody stands when they wonder why
             a dialog is still appearing. */}
-        {printMode === "direct" && (
+        {printMode !== "browser" && printMode !== "thermal" && (
           <p className="text-xs text-stone-500 border-t border-stone-200 pt-3">
             The shop's own dialog is now gone. Chrome still shows ITS print
             dialog, and no web page can switch that off — it is a property of
@@ -432,6 +436,43 @@ export default function ShopSettings({ pin }: { pin: string }) {
             Chrome then prints to the default printer with no dialog at all.
           </p>
         )}
+
+        <div className="border-t border-stone-200 pt-4">
+          <h3 className="text-sm font-medium text-stone-800">How wide the slip is</h3>
+          {/* The only real lever on the size of the print, and worth saying
+              plainly: the type is sized so a full line just fits the paper, so
+              a character is about (paper ÷ columns) and nothing else moves it
+              by more than a few percent. */}
+          <p className="text-xs text-stone-500 mt-1">
+            This is what makes the print bigger or smaller. The type is sized so
+            a full line just fits the roll, so fewer columns means bigger
+            letters — and shorter room for a description.
+          </p>
+          <div className="flex gap-2 mt-3">
+            {SLIP_WIDTHS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-pressed={cols === n}
+                onClick={() => {
+                  setSlipWidth(n as SlipWidth);
+                  setCols(n);
+                  publishSlipMetrics();
+                }}
+                className={`h-11 px-4 rounded-lg border text-sm font-medium ${
+                  cols === n
+                    ? "border-gold-400 bg-gold-50 text-colophon"
+                    : "border-stone-200 text-stone-700"
+                }`}
+              >
+                {n} columns
+                <span className="block text-xs font-normal text-stone-500">
+                  {n === 48 ? "smallest" : n === 40 ? "default" : "biggest"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">

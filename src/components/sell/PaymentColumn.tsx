@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { vatRate } from "../../lib/settings";
 import { cashRounding, money, quantity, vatWithin } from "../../lib/money";
 import type { CartLine, Customer, Payment, PaymentMethod } from "../../lib/types";
@@ -321,6 +321,26 @@ export default function PaymentColumn({
   );
 
   const shortKey = shortLines.map((s) => `${s.line.product.id}:${s.line.qty}`).join("|");
+  /**
+   * Unfolding "Invoice details" brings the fields to the cashier.
+   *
+   * They sit under the keypad, at the bottom of the column that scrolls, so on
+   * a counter screen opening them put them below the fold: the cashier tapped
+   * the button, watched nothing appear, and had to scroll to find the thing
+   * they had just asked for. Scrolled to and focused — focus being the right
+   * answer on its own merits, since the next thing after asking for a field is
+   * typing in it. `block: "nearest"` so a column that did NOT need to move
+   * does not jump.
+   */
+  const poRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!showInvoiceFields) return;
+    const el = poRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest" });
+    el.focus({ preventScroll: true });
+  }, [showInvoiceFields]);
+
   useEffect(() => setShortAck(false), [shortKey]);
 
   function complete() {
@@ -566,6 +586,7 @@ export default function PaymentColumn({
             <label>
               <span className="kicker-sm">Order number</span>
               <input
+                ref={poRef}
                 value={poNumber}
                 onChange={(e) => setPoNumber(e.target.value)}
                 placeholder="Their PO number"

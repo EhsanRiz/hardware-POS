@@ -80,7 +80,13 @@
   display: flex;
   align-items: center;
   gap: 11px;
-  flex: none;
+  /* Shrinkable, not fixed. It used to hold the wordmark, which is always the
+     same eight characters wide; it now holds the SHOP's name, which is however
+     long the shop is called. `flex: none` meant a long trading name pushed the
+     header past the right edge of a 1024 till and took Sign out with it. It
+     gives ground here and ellipsises instead — see .sell-shop. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .sell-wordmark {
   font-size: 22px;
@@ -157,6 +163,27 @@
   color: var(--color-neutral-700);
   white-space: nowrap;
 }
+/* The shop's own name, at the masthead. Sized and tracked like the wordmark
+   it replaced rather than like the register chip beside it — a name is read,
+   not scanned, so no uppercase and no letter-spacing. Truncated rather than
+   wrapped: a long trading name must not be allowed to push the section tabs
+   onto a second row. */
+.sell-shop {
+  font-family: var(--font-heading);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* min-width:0 is the load-bearing half. Without it a flex item refuses to
+     shrink below its content, so the ellipsis never happens and the overflow
+     comes out of the far end of the header instead. */
+  min-width: 0;
+  max-width: 30ch;
+}
+
 .sell-divider-v { width: 1px; height: 22px; background: var(--divider); }
 /* Name over title. The title is deliberately quiet — it answers "in what
    capacity", which matters at a handover and never at any other moment. */
@@ -1687,6 +1714,7 @@
   }
   .sell-head { gap: 14px; }
   .sell-nav button { padding: 10px 11px; }
+  .sell-shop { font-size: 17px; max-width: 20ch; }
   .sell-till { display: none; }          /* the shop name is on the invoice */
   .total-row .fig { font-size: 38px; }
   .tender-btn { min-height: 64px; }
@@ -2294,6 +2322,9 @@ tr.is-void td:last-child { text-decoration: none; }
      the phone to reach. */
   .sell-head { gap: 8px; padding-left: 12px; padding-right: 12px; }
   .sell-wordmark, .sell-rule-v { display: none; }
+  /* Narrow enough that the name must give ground before the tabs do. It
+     truncates rather than disappearing: which shop is still worth a word. */
+  .sell-shop { font-size: 15px; max-width: 12ch; }
   .sell-head-right { gap: 8px; }
   .sync-chip { gap: 4px; padding: 4px 8px; font-size: 0; }
   .sync-chip svg { font-size: initial; }
@@ -2325,6 +2356,9 @@ tr.is-void td:last-child { text-decoration: none; }
    pairing card and on a phone's sign-in, where cream on cream made "Innova"
    vanish next to "POS": there it keeps its ink. */
 .sell-head .sell-wordmark, .phone-home-head .sell-wordmark { color: var(--color-bg); }
+/* The masthead shop name sits on the green bar, so it takes the bar's
+   foreground like the wordmark it replaced. */
+.sell-head .sell-shop { color: var(--color-bg); }
 .sell-head .sell-wordmark span, .phone-home-head .sell-wordmark span { color: var(--color-accent-400); }
 .sell-edition { color: var(--color-accent-400); }
 .sell-nav button { color: var(--color-neutral-400); }
@@ -2876,6 +2910,14 @@ tr.is-void td:last-child { text-decoration: none; }
      is the most-used control on the till and was the one going short. */
   .scan-field { flex: 1 1 auto; }
   .customer-pick { flex: 0 0 auto; min-width: 0; max-width: 40%; }
+
+  /* Six buttons on ONE line. At 18px of padding and 14px of type they came to
+     ~750px, a hair more than the left column has at this size, so "Void sale"
+     dropped onto a row of its own — a whole band across the till carrying one
+     button. Padding and type give back the ~110px that costs nothing anyone
+     can feel, and 40px is still a comfortable target. */
+  .sell-actions { gap: 8px; padding: 12px var(--sell-pad); }
+  .sell-actions .btn-line { min-height: 40px; padding: 0 12px; font-size: 13px; }
 }
 
 /* Below ~710 the last few pixels come out of the TOTAL, not the keys. 34px
@@ -2886,6 +2928,59 @@ tr.is-void td:last-child { text-decoration: none; }
   .total-row { margin-top: 6px; }
   .total-row .fig { font-size: 26px; }
   .totals { padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* A WINDOWED till, which is what the counter machine actually runs: 768 of
+   screen, less the Windows taskbar, the title bar and Chrome's own chrome,
+   leaves the page around 620. The pay column was still overflowing there —
+   that is the scrollbar in the photograph from the shop — and a scrollbar
+   beside the keypad is how a cashier ends up dragging the till instead of
+   pressing it. The keys hold at 34px: below that a fingertip starts missing,
+   and the pixels are worth less than the accuracy. */
+@media (max-height: 660px) {
+  .sell-head { padding-top: 6px; padding-bottom: 6px; }
+  .totals { margin-top: 4px; padding: 6px 12px; }
+  .totals-row { margin-bottom: 3px; font-size: 12px; }
+  .total-row { margin-top: 4px; }
+  .total-row .fig { font-size: 24px; }
+  .tender-btn { min-height: 40px; }
+  .tender-grid { gap: 6px; }
+  /* The amount box keeps its type — it is the number being typed — and gives
+     up the air around it. */
+  .cash-in { padding-top: 7px; padding-bottom: 7px; }
+  .disclose { padding-top: 2px; padding-bottom: 2px; font-size: 12px; }
+  .pay-foot { padding-top: 8px; }
+  .btn-tender { min-height: 48px; }
+  .sell-actions { padding-top: 8px; padding-bottom: 8px; }
+}
+
+/* Shorter still — a taskbar that is not hidden, or a browser carrying a
+   bookmarks bar. The last pixels that can be taken without touching the keys,
+   which stay at 34px: below that a fingertip starts missing, and a missed key
+   at a queue costs more than a scrollbar does. Under about 600 the column
+   scrolls, and that is the honest end of it. */
+@media (max-height: 630px) {
+  .totals { padding: 5px 12px; }
+  .totals-row { margin-bottom: 2px; }
+  .total-row { margin-top: 3px; }
+  .total-row .fig { font-size: 22px; }
+  /* The tender row would not come below 49px on min-height alone: an icon
+     over a label is 49px of CONTENT. So the gap between them closes and the
+     label comes down a point — the icon is what is aimed at anyway. */
+  .tender-btn { min-height: 36px; gap: 2px; font-size: 13px; }
+  .tender-btn svg { width: 18px; height: 18px; }
+  .tender-grid { gap: 5px; margin-bottom: 6px; }
+  .cash-in { padding-top: 5px; padding-bottom: 5px; }
+  .pay-foot { padding-top: 6px; }
+  .btn-tender { min-height: 44px; }
+  /* And the last eleven pixels, from the keys after all. 34px was called the
+     floor one breakpoint up and it is the right floor THERE, where holding it
+     costs nothing. Here it costs the scrollbar, and 32px with the gaps counted
+     as part of the reach is still 34px of target — the same distance a finger
+     actually travels. Below this height nothing is left to take and the column
+     scrolls, which is the honest end of it. */
+  .keypad { gap: 2px; }
+  .keypad button { min-height: 32px; }
 }
 
 /* Manage → TillAI: the shop's questions, newest first; a row opens to its

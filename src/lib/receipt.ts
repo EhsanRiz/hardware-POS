@@ -1,6 +1,6 @@
 import type { CashSession } from "./cashup";
 import type { DayClose } from "./reports";
-import { CURRENCY, RECEIPT_WIDTH } from "./config";
+import { CURRENCY, slipWidth } from "./config";
 import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
 import type {
@@ -13,10 +13,10 @@ import type {
 } from "./types";
 import { fmtDate, fmtDateTime } from "./dates";
 
-// Plain-text receipt builder. Width-parameterised (RECEIPT_WIDTH columns) so it
+// Plain-text receipt builder. Width-parameterised (slipWidth() columns) so it
 // adapts to the paper + font scale. The print layer wraps this with ESC/POS.
 
-function center(text: string, width = RECEIPT_WIDTH): string {
+function center(text: string, width = slipWidth()): string {
   if (text.length >= width) return text;
   const pad = Math.floor((width - text.length) / 2);
   return " ".repeat(pad) + text;
@@ -25,30 +25,74 @@ function center(text: string, width = RECEIPT_WIDTH): string {
 // Left-justified label with a right-justified amount on the SAME line. If the
 // label is too long, the amount still stays on the first line and the rest of
 // the label wraps onto following lines (the price is never pushed underneath).
-function lineItem(left: string, right: string, width = RECEIPT_WIDTH): string {
+//
+// It wraps on WORDS, and under its own indent. It used to cut at whatever
+// character the width landed on and start the remainder hard against the left
+// margin, which on a 48-column slip almost never showed and on a 40-column one
+// printed this on a customer's invoice:
+//
+//     less 10% (church job, Mr Mole -R145.00
+//   fe)
+//
+// A name sawn in half and the tail of it in the SKU column. The narrower the
+// paper, the more often a description or a discount reason is too long — so
+// the wrap has to be the thing a person would do: break between words, and
+// line the rest up under where the text started.
+function lineItem(left: string, right: string, width = slipWidth()): string {
   const firstLeft = width - right.length - 1; // keep >=1 space before the amount
   if (left.length <= firstLeft) {
     return left + " ".repeat(width - left.length - right.length) + right;
   }
-  const line1 = left.slice(0, firstLeft) + " " + right;
-  const rest = left.slice(firstLeft);
-  const cont: string[] = [];
-  for (let i = 0; i < rest.length; i += width) cont.push(rest.slice(i, i + width));
-  return [line1, ...cont].join("\n");
+
+  // Continuations sit under the text, not under the margin: these labels are
+  // often already indented ("  less 10% …" hangs off the line above it), and a
+  // continuation at column 0 reads as a new entry rather than the rest of this
+  // one.
+  const indent = /^\s*/.exec(left)?.[0] ?? "";
+  const words = left.trim().split(/\s+/).filter(Boolean);
+
+  const lines: string[] = [];
+  let line = indent;
+  const room = (first: boolean) => (first ? firstLeft : width);
+  for (const w of words) {
+    const first = lines.length === 0;
+    const next = line.trim() ? `${line} ${w}` : indent + w;
+    if (next.length <= room(first)) {
+      line = next;
+      continue;
+    }
+    // A single word longer than the paper has to be cut somewhere; cutting it
+    // is still better than running it off the edge, where it is simply lost.
+    if (!line.trim()) {
+      lines.push(indent + w.slice(0, room(first) - indent.length));
+      line = indent + w.slice(room(first) - indent.length);
+      continue;
+    }
+    lines.push(line);
+    line = indent + w;
+  }
+  if (line.trim()) lines.push(line);
+
+  // The amount belongs to the whole entry, so it goes on the first line of it
+  // and is padded out to the right margin like any other.
+  const head = lines.shift() ?? indent;
+  const first =
+    head + " ".repeat(Math.max(1, width - head.length - right.length)) + right;
+  return [first, ...lines].join("\n");
 }
 
-function divider(ch = "-", width = RECEIPT_WIDTH): string {
+function divider(ch = "-", width = slipWidth()): string {
   return ch.repeat(width);
 }
 
-function solid(width = RECEIPT_WIDTH): string {
+function solid(width = slipWidth()): string {
   return "_".repeat(width);
 }
 
-function boxTop(width = RECEIPT_WIDTH): string {
+function boxTop(width = slipWidth()): string {
   return "+" + "-".repeat(width - 2) + "+";
 }
-function boxRow(left: string, right: string, width = RECEIPT_WIDTH): string {
+function boxRow(left: string, right: string, width = slipWidth()): string {
   return "| " + lineItem(left, right, width - 4) + " |";
 }
 
@@ -92,7 +136,7 @@ const MARKUP_RE = new RegExp(
  * paragraph, so the returns policy reads as it was typed and not as one
  * 300-character line the printer chops wherever it runs out of paper.
  */
-export function wrapTerms(text: string, width = RECEIPT_WIDTH): string[] {
+export function wrapTerms(text: string, width = slipWidth()): string[] {
   const out: string[] = [];
   for (const para of text.replace(/\r/g, "").split(/\n\s*\n/)) {
     const words = para.split(/\s+/).filter(Boolean);
@@ -116,7 +160,7 @@ export function wrapTerms(text: string, width = RECEIPT_WIDTH): string[] {
 function termsBlock(out: string[], text: string | null | undefined): void {
   // Folded two columns short of the paper on each side, so a centred
   // paragraph reads as a block with margins rather than ragged full lines.
-  const lines = wrapTerms((text ?? "").trim(), RECEIPT_WIDTH - 4);
+  const lines = wrapTerms((text ?? "").trim(), slipWidth() - 4);
   if (!lines.length) return;
   out.push(divider());
   out.push(...lines.map((l) => center(l)));
@@ -776,7 +820,7 @@ export function buildTestText(): string {
   out.push(center("PRINTER TEST"));
   out.push("");
   out.push(fmtDateTime(new Date()));
-  out.push(`${RECEIPT_WIDTH} columns`);
+  out.push(`${slipWidth()} columns`);
   out.push(divider());
   out.push(lineItem(itemLabel(3, "bag", "Cement 42.5N 50kg"), amount(345)));
   out.push(lineItem(itemLabel(2.5, "m", "Chain 6mm"), amount(87.5)));

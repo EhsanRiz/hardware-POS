@@ -150,21 +150,22 @@ button {
    * 100vw is the page box, so the font is a fraction of the paper and 48
    * columns fit whatever the paper is.
    *
-   * The divisor is the measured one. A monospace character is nearer 0.69em
-   * than the 0.6em usually quoted — 6.875px on a 10px font — so 48 columns
-   * want 33.1em. 34 is that plus a hair, and with the page margin now zero
-   * there is nothing else eating the width.
+   * The divisor follows the COLUMN COUNT, which is a per-device setting, so
+   * it is published as a variable by config.ts rather than written here: a
+   * monospace character is nearer 0.69em than the 0.6em usually quoted, so
+   * n columns want n x 0.69em and the divisor is n x 0.71, that plus a hair.
    *
-   * It cannot go further without clipping, and this is the whole tension of
-   * the slip: 48 columns across 80mm of paper IS small type, about 1.5mm a
-   * character. The only lever that makes the print meaningfully bigger is
-   * fewer columns — the receipt builder is width-parameterised for exactly
-   * that reason (RECEIPT_WIDTH / VITE_PRINT_WIDTH_SCALE).
+   * Which makes the real lever obvious, and it is the only one. A character
+   * is about (paper / columns) wide whatever else is done: 48 columns across
+   * 80mm IS 1.5mm type. Everything else here — the page margin, the hair of
+   * slack — is worth a few percent. Fewer columns is worth the rest, and
+   * that is why the receipt builder is width-parameterised. The fallback 28.4
+   * is the 40-column default, for a page rendered before the script runs.
    */
   #print-area pre {
     margin: 0;
     font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-    font-size: calc(100vw / 34);
+    font-size: calc(100vw / var(--slip-div, 28.4));
     line-height: 1.35;
     white-space: pre;
   }
@@ -180,13 +181,15 @@ button {
     max-width: 100%;
     height: auto;
   }
-  /* No page margin on a till slip.
-     A thermal printer already leaves its own unprintable edge, so 4mm a side
-     was 8mm of an 80mm roll — a tenth of the paper — given away twice over.
-     The font here is sized to the page width, so every millimetre surrendered
-     to a margin comes straight off the size of the print. */
+  /* Nearly no page margin on a till slip — but not none.
+     4mm a side was 8mm of an 80mm roll, a tenth of the paper, and the font is
+     sized to the page width so every millimetre of it came straight off the
+     size of the print. Zero was a millimetre too far in the other direction:
+     a thermal printer cannot lay ink right to the edge of the roll, so a slip
+     starting at x=0 came out of the shop's Epson with its left-hand column
+     shaved off. 2mm is inside the head's reach and costs 5% of the type. */
   @page {
-    margin: 0;
+    margin: 2mm;
   }
 }
 
@@ -371,16 +374,16 @@ button {
     print-color-adjust: exact;
   }
   /* The sheet is the page: no shadow, no rounding, and it may break across
-     pages if a delivery ran long. Its margin is entirely its own now. @page
-     used to hold 4mm back for the thermal slip and this padding added the
-     rest; the roll has since taken that 4mm, so the padding grew by the same
-     amount. Shrink it and the letterhead and the totals sit hard against the
-     paper's edge — the printer will not necessarily even lay ink there. */
+     pages if a delivery ran long. The margin is shared with @page, which the
+     thermal roll has pushed from 4mm down to 2mm — so this padding carries
+     the other 2mm it used to not have, and the paper is unchanged at 14mm
+     and 16mm. Shrink it and the letterhead and the totals sit hard against
+     the paper's edge, where a printer will not necessarily lay ink at all. */
   /* One page tall, so the foot lands at the foot of the paper as it does on
      screen — but a page, not a fixed 297mm, which would spill onto a second
      blank sheet the moment @page took anything at all. In print vh is the
      page box. */
-  .doc-a4 { width: auto; min-height: 100vh; padding: 14mm 16mm; }
+  .doc-a4 { width: auto; min-height: 100vh; padding: 12mm 14mm; }
   /* A line item should not be split down the middle by a page break. */
   .doc-lines tr { break-inside: avoid; }
   .doc-accept, .doc-totals, .doc-page-foot { break-inside: avoid; }

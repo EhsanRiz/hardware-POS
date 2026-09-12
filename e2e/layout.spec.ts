@@ -319,6 +319,49 @@ test.describe("the shop's own till", () => {
       });
       expect(hidden, "payment panel content hidden below the fold").toBeLessThanOrEqual(1);
     });
+
+    test("the sale's actions are one row, not two", async ({ page }) => {
+      await signedIn(page);
+      // WITH A SALE PARKED, which is the state the photograph from the shop was
+      // taken in and the only state that shows the bug: "Resume parked · 2" is
+      // a sixth button and ~156px, and it is what tips the row over. Without it
+      // five buttons fit at any width this till is ever run at, and a test that
+      // skips this step passes with the fix removed — it did.
+      await page.getByRole("button", { name: /Park sale/i }).click();
+      await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+      await page.keyboard.press("Enter");
+      const resume = page.getByRole("button", { name: /Resume parked/i });
+      await expect(resume).toBeVisible();
+
+      // Measured by TOP EDGE rather than by row height: a wrapped button is the
+      // only way two of these end up at different heights, and the wrap is what
+      // put "Void sale" on a band of its own across the till.
+      const tops = await page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".sell-actions .btn-line")].map(
+          (b) => Math.round(b.getBoundingClientRect().top)
+        )
+      );
+      expect(tops.length, "buttons in the action row").toBeGreaterThanOrEqual(6);
+      expect(new Set(tops).size, "distinct rows the actions occupy").toBe(1);
+    });
+
+    test("the masthead carries the shop's name, not the software's", async ({ page }) => {
+      await signedIn(page);
+      // Whoever is standing here knows what the software is. What is worth the
+      // corner of the eye is which shop — a counter can run more than one.
+      const head = page.locator(".sell-head .sell-shop");
+      await expect(head).toBeVisible();
+      await expect(head).toHaveText("Ladybrand Hardware");
+      // And it does not cost the section tabs their row.
+      const rows = await page.evaluate(() =>
+        new Set(
+          [...document.querySelectorAll<HTMLElement>(".sell-nav button")].map((b) =>
+            Math.round(b.getBoundingClientRect().top)
+          )
+        ).size
+      );
+      expect(rows, "rows the section tabs occupy").toBe(1);
+    });
   });
 
   test.describe("windowed, 590", () => {
@@ -369,6 +412,60 @@ test.describe("the shop's own till", () => {
         return { w: i.getBoundingClientRect().width, chars: i.placeholder.length };
       });
       expect(ph.w, "scan input width").toBeGreaterThan(ph.chars * 6);
+    });
+
+    test("the sale's actions are one row here too", async ({ page }) => {
+      await signedIn(page);
+      await page.getByRole("button", { name: /Park sale/i }).click();
+      await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("button", { name: /Resume parked/i })).toBeVisible();
+      const tops = await page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".sell-actions .btn-line")].map(
+          (b) => Math.round(b.getBoundingClientRect().top)
+        )
+      );
+      expect(tops.length, "buttons in the action row").toBeGreaterThanOrEqual(6);
+      expect(new Set(tops).size, "distinct rows the actions occupy").toBe(1);
+    });
+  });
+
+  /**
+   * The counter machine as it is actually run: NOT fullscreen.
+   *
+   * 768 of screen, less the Windows taskbar, the app's title bar and Chrome's
+   * own chrome, leaves the page around 620 — and the photograph from the shop
+   * showed a scrollbar down the pay column at exactly that. A scrollbar beside
+   * a keypad is how a cashier ends up dragging the till instead of pressing
+   * it, so this is the height the no-scrollbar promise is made at.
+   *
+   * 590 above keeps its older bargain — there the keypad MAY scroll, because
+   * below about 600 there is genuinely nothing left to take that is not a key.
+   */
+  test.describe("windowed on the counter machine, 620", () => {
+    test.use({ viewport: { width: 1024, height: 620 } });
+
+    test("nothing in the pay column is behind a scrollbar", async ({ page }) => {
+      await signedIn(page);
+      const hidden = await page.evaluate(() => {
+        const t = document.querySelector(".tender")!;
+        return t.scrollHeight - t.clientHeight;
+      });
+      expect(hidden, "payment panel content hidden below the fold").toBeLessThanOrEqual(1);
+    });
+
+    test("and the keys are still worth pressing", async ({ page }) => {
+      await signedIn(page);
+      // The pixels came from somewhere, and this says where they may not come
+      // from. A key plus its share of the gaps is what a finger actually
+      // travels between presses, and that stays at 34.
+      const reach = await page.evaluate(() => {
+        const keys = [...document.querySelectorAll<HTMLElement>(".keypad button")];
+        const pad = document.querySelector(".keypad") as HTMLElement;
+        const gap = parseFloat(getComputedStyle(pad).rowGap || "0");
+        return Math.min(...keys.map((k) => k.getBoundingClientRect().height)) + gap;
+      });
+      expect(reach, "keypad target including its gap").toBeGreaterThanOrEqual(34);
     });
   });
 });

@@ -22,15 +22,20 @@ export function isAndroid(): boolean {
 /**
  * How a slip gets to paper.
  *
- *   auto     — Android goes to RawBT, everything else shows the slip on screen
+ *   auto     — Android goes to RawBT; everything else prints straight
  *   thermal  — force RawBT (a tablet reporting an odd user-agent)
- *   browser  — force the on-screen slip
- *   direct   — hand it straight to the browser's printer, no slip on screen
+ *   browser  — force the on-screen slip, for a device with no printer
+ *   direct   — force straight to the printer
  *
- * "direct" is for a counter with a till printer already set as the machine's
- * default — the shop's Epson. The slip on screen is a preview of something
- * that is about to come out of a printer anyway, and at a busy counter it is
- * one more thing to dismiss on every sale.
+ * auto USED to mean "show the slip on screen" off Android, and that was the
+ * wrong default for the thing this app actually runs on: a counter machine
+ * whose default printer is the till printer. The slip on screen was a preview
+ * of something already on its way out of the Epson — one more thing to
+ * dismiss on every sale, with a customer waiting. Straight to paper is what a
+ * till does.
+ *
+ * "browser" is the escape hatch and the reason this stayed a setting: a
+ * manager's laptop with no printer attached still wants to read a slip.
  *
  * It removes OUR dialog. The browser's own print dialog is not ours to remove:
  * Chrome only skips that when it is launched with --kiosk-printing, which is a
@@ -151,8 +156,14 @@ export function printReceipt(text: string, title = "Receipt", action?: PreviewAc
    * the browser is asked to print. The caller's `action` — "Cancel this sale"
    * — is not lost: the till's banner carries it too, which is where a cashier
    * looks once the paper is out.
+   *
+   * This is what "auto" now does on anything that is not an Android tablet,
+   * not just what the explicit setting does. Chrome still shows ITS print
+   * dialog and no web page can switch that off; --kiosk-printing on the
+   * shortcut is the rest of the answer, and ShopSettings says so.
    */
-  if (getPrintMode() === "direct") {
+  const mode = getPrintMode();
+  if (mode === "direct" || (mode === "auto" && !useThermal())) {
     printWithoutPreview(text, title);
     return;
   }

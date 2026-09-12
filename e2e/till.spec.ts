@@ -5,6 +5,29 @@ import {
   signInOnSecondTill, USERS,
 } from "./fake-backend";
 
+/**
+ * The words on a slip, with the money columns taken out.
+ *
+ * A receipt is a fixed-width document and a long description does not fit on
+ * one line of it — the narrower the paper the more often that is true. The
+ * builder wraps such a line on a word boundary and carries the rest onto the
+ * next, with the amount padded out to the right margin of the FIRST line, so
+ * the raw text of "less 10% (church job, Mr Molefe)  -R145.00" reads
+ *
+ *     less 10% (church job, Mr      -R145.00
+ *     Molefe)
+ *
+ * which is right on paper and useless to a substring match. Stripping the
+ * amounts and collapsing the whitespace puts the sentence back together — and
+ * asserting on THAT is the stronger test: a phrase only survives it if every
+ * word survived whole and in order. The old cut-anywhere wrap ("Mr Mole" /
+ * "fe)") fails it, which is the bug this exists to catch.
+ */
+async function slipWords(slip: import("@playwright/test").Locator): Promise<string> {
+  const raw = (await slip.textContent()) ?? "";
+  return raw.replace(/-?R\d[\d.,]*/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** The till's status line. Print previews repeat its text, so target it directly. */
 const banner = (page: import("@playwright/test").Page) =>
   page.locator(".sell-banner").first();
@@ -277,8 +300,10 @@ test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) 
   }
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(page.getByText("Sam")).toBeVisible();
-  // And on the green header the wordmark is cream, as the frame wears it.
-  await expect(page.locator(".sell-head .sell-wordmark")).toHaveCSS("color", "rgb(245, 242, 234)");
+  // And on the green header the masthead is cream, as the frame wears it. The
+  // wordmark used to be what stood there; the shop's own name has the spot now
+  // and takes the same colour, because the reason was the bar, not the words.
+  await expect(page.locator(".sell-head .sell-shop")).toHaveCSS("color", "rgb(245, 242, 234)");
 });
 
 test("the till says who is serving, and in what capacity", async ({ page }) => {
@@ -1145,7 +1170,11 @@ test("a line discount says why, and the words reach the record", async ({ page }
   // On the paper, beside the money rather than on a line of its own — a basket
   // of ten marked-down lines would otherwise add ten rows to an 80mm slip.
   const slip = page.locator("#print-area");
-  await expect(slip).toContainText("less 10% (church job, Mr Molefe)");
+  await expect(slip).toContainText("less 10%");
+  // The whole reason, every word of it whole — see slipWords. At this width it
+  // is carried onto a second line, which is what the paper does and what the
+  // customer reads; what must never happen is a name sawn in half.
+  expect(await slipWords(slip)).toContain("less 10% (church job, Mr Molefe)");
 
   // And on the record, where the month-end asks who decided this and on what
   // grounds. The percentage keeps its own field: one fact stored twice is two
@@ -2587,7 +2616,9 @@ test("a day is opened on a float, cashed up, and the variance is what prints", a
   const slip = page.locator("#print-area");
   await expect(slip).toContainText("CASH-UP");
   await expect(slip).toContainText("Opening float");
-  await expect(slip).toContainText("Diesel for the bakkie");
+  // Carried onto a second line at this width, with the amount on the first —
+  // so matched on the words rather than the raw text. See slipWords.
+  expect(await slipWords(slip)).toContain("Diesel for the bakkie");
   await expect(slip).toContainText("SHORT");
   expect(be.closedSessions[0].variance).toBe(-5);
 });
@@ -5830,13 +5861,13 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
   // The mark itself, not just the words.
   await expect(doc.locator(".doc-colophon svg")).toHaveCount(1);
 
-  // And on paper it keeps a margin — the WHOLE of it. @page used to hold 4mm
-  // back and this padding added the rest; the thermal roll has since taken
-  // that 4mm (a tenth of an 80mm slip is not a margin's to spend), so the
-  // sheet has to carry the lot or the letterhead ends up against the edge of
-  // the paper, where a printer may not lay ink at all. The floors below are
-  // just under 16mm and 14mm: they go red if the padding is put back to what
-  // it was when @page was still paying half.
+  // And on paper it keeps its margin. It is shared with @page, which the
+  // thermal roll has pushed down from 4mm to 2mm — a tenth of an 80mm slip is
+  // not a page margin's to spend — so this padding carries the 2mm difference
+  // and the paper stays at the 14mm and 16mm it always had. The floors below
+  // are just under those: they go red if the padding is put back to what it
+  // was when @page was still paying 4mm, which would put the letterhead hard
+  // against the edge of the sheet where a printer may not lay ink at all.
   await page.emulateMedia({ media: "print" });
   // Addressed off the page, not through the dialog: print hides everything but
   // the sheet, and a hidden wrapper takes its role with it. The padding is on
@@ -5847,8 +5878,8 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
     left: parseFloat(getComputedStyle(el).paddingLeft),
     top: parseFloat(getComputedStyle(el).paddingTop),
   }));
-  expect(pad.left, "side margin on the printed sheet").toBeGreaterThan(55);
-  expect(pad.top, "head margin on the printed sheet").toBeGreaterThan(48);
+  expect(pad.left, "side margin on the printed sheet").toBeGreaterThan(48);
+  expect(pad.top, "head margin on the printed sheet").toBeGreaterThan(40);
   // The foot survives print too.
   await expect(sheet.locator(".doc-page-foot")).toBeVisible();
   await page.emulateMedia({ media: "screen" });
@@ -7624,7 +7655,7 @@ test("the slip on screen is big enough to read, and none of it is off the edge",
       widest: (pre.textContent || "").split("\n").reduce((w, l) => Math.max(w, l.length), 0),
     };
   });
-  expect(m.widest, "the slip is a 48-column document").toBeGreaterThanOrEqual(40);
+  expect(m.widest, "the slip is a fixed-width document").toBeGreaterThanOrEqual(32);
   expect(m.px, "preview font size").toBeGreaterThanOrEqual(13);
   expect(m.hidden, "slip hidden past the right edge").toBeLessThanOrEqual(1);
 });
@@ -7662,12 +7693,143 @@ test("the printed slip fits the paper instead of losing its right-hand column", 
   // the page by not much more than 34 — a floor here and the clipping check
   // above leave the divisor almost no room to drift in either direction.
   //
-  // Not guarded, and worth saying: @page { margin: 0 } is a further ~10% of
-  // the paper, and Playwright's print emulation has no page box for a margin
-  // to come off — restoring 12mm left this test green. That one was checked
-  // by reading the rule, not by a failing assertion.
-  expect(slip.size, "printed slip's type").toBeGreaterThanOrEqual(slip.page / 35);
+  // Not guarded, and worth saying: the @page margin is another few percent of
+  // the paper either way, and Playwright's print emulation has no page box for
+  // a margin to come off — changing it leaves this test green. That rule (2mm,
+  // so the Epson's head can actually reach the left-hand column) was checked
+  // by reading it, not by a failing assertion.
+  expect(slip.size, "printed slip's type").toBeGreaterThanOrEqual(slip.page / 29);
   await page.emulateMedia({ media: "screen" });
+});
+
+test("asking for the invoice details brings them to the cashier", async ({ page }) => {
+  // They sit under the keypad, at the bottom of the column that scrolls. On a
+  // counter screen unfolding them put them below the fold: the cashier tapped
+  // the button, saw nothing appear, and had to scroll to find the thing they
+  // had just asked for.
+  await page.setViewportSize({ width: 1024, height: 590 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: /Invoice details/i }).click();
+
+  const po = page.getByLabel("Purchase order number");
+  await expect(po).toBeVisible();
+
+  // On the screen, not merely in the document. Measured against the pay
+  // column's own box, because that is what scrolls — the field can be inside
+  // the window and still be under the fold of the panel it lives in.
+  const seen = await po.evaluate((el) => {
+    const box = el.closest(".tender")!.getBoundingClientRect();
+    const f = el.getBoundingClientRect();
+    return { above: box.top - f.top, below: f.bottom - box.bottom };
+  });
+  expect(seen.above, "field above the top of the pay column").toBeLessThanOrEqual(1);
+  expect(seen.below, "field below the bottom of the pay column").toBeLessThanOrEqual(1);
+
+  // And it is ready to be typed into, which is the next thing that happens.
+  await expect(po).toBeFocused();
+  await po.fill("PO-4471");
+  await expect(po).toHaveValue("PO-4471");
+});
+
+test("a narrower slip is a bigger slip, which is the only lever there is", async ({ page }) => {
+  // The counter asked for bigger print twice. There is exactly one thing that
+  // delivers it: the type is sized so a full line just fits the paper, so a
+  // character is about (paper / columns) and every other trick here — the page
+  // margin, the hair of slack in the divisor — is worth a few percent against
+  // this one's tens of percent. So the shop gets the dial, and this is the
+  // test that the dial is connected to anything.
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  const typeAt = async (cols: number | null) => {
+    await page.evaluate((c) => {
+      if (c == null) localStorage.removeItem("pos.slipWidth");
+      else localStorage.setItem("pos.slipWidth", String(c));
+    }, cols);
+    await page.reload();
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Cash", exact: true }).click();
+    await page.getByRole("button", { name: /Tender & print/i }).click();
+    await page.setViewportSize({ width: 320, height: 600 });
+    await page.emulateMedia({ media: "print" });
+    const out = await page.evaluate(() => {
+      const pre = document.querySelector("#print-area pre") as HTMLElement;
+      return {
+        size: parseFloat(getComputedStyle(pre).fontSize),
+        widest: (pre.textContent || "").split("\n").reduce((w, l) => Math.max(w, l.length), 0),
+        over: pre.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    await page.emulateMedia({ media: "screen" });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    return out;
+  };
+
+  const wide = await typeAt(48);
+  const narrow = await typeAt(32);
+
+  // The slip really is built narrower — not just drawn smaller.
+  expect(wide.widest, "columns at the 48 setting").toBeGreaterThan(40);
+  expect(narrow.widest, "columns at the 32 setting").toBeLessThanOrEqual(32);
+
+  // And the type really is bigger for it. A third, near enough — which is the
+  // difference between a figure the counter can read at arm's length and one
+  // they hold up to the light.
+  expect(narrow.size, "type at 32 columns against 48").toBeGreaterThan(wide.size * 1.3);
+
+  // Both still fit the paper, which is the constraint the whole rule exists
+  // for: a line wider than the page is not wrapped, it is CUT, and the
+  // rightmost thing on every line is the amount.
+  expect(wide.over, "48-column slip past the page edge").toBeLessThanOrEqual(0);
+  expect(narrow.over, "32-column slip past the page edge").toBeLessThanOrEqual(0);
+});
+
+test("a counter machine prints without being asked twice", async ({ page }) => {
+  // "Work it out" used to mean "show the slip on screen" on anything that is
+  // not an Android tablet — which is exactly what the shop's counter machine
+  // is. The slip was a preview of something already on its way out of the
+  // Epson, and dismissing it was a tap on every single sale. Nothing is set
+  // here: this is the DEFAULT doing the right thing.
+  await pairAndSignIn(page, USERS.manager.pin);
+  // The harness pins every other test to the on-screen slip so it can read the
+  // receipt off the page. This test is about what the shop gets with nothing
+  // set at all, so the pin comes off — in an init script, not a one-off
+  // evaluate, because the harness sets it again on EVERY load and a single
+  // removeItem was simply put back by the reload below. Init scripts run in
+  // the order they were added, and the harness added its before this one.
+  await page.addInitScript(() => {
+    localStorage.removeItem("pos.printMode");
+    (window as unknown as { __prints: number }).__prints = 0;
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    (window as unknown as { __prints: number }).__prints = 0;
+    window.print = () => {
+      const w = window as unknown as { __prints: number; __printed: string };
+      w.__prints += 1;
+      w.__printed = document.querySelector("#print-area")?.textContent ?? "";
+    };
+  });
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Paper, with the sale on it.
+  const out = await page.evaluate(() => {
+    const w = window as unknown as { __prints: number; __printed: string };
+    return { prints: w.__prints, printed: w.__printed };
+  });
+  expect(out.prints, "times the printer was asked").toBeGreaterThanOrEqual(1);
+  expect(out.printed).toContain("Cement 42.5N 50kg");
+
+  // And no slip over the till to dismiss.
+  await expect(page.locator(".animate-scale-in pre")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Close" })).toHaveCount(0);
 });
 
 test("the scan box gets the room, not the buyer chip", async ({ page }) => {
@@ -7682,6 +7844,23 @@ test("the scan box gets the room, not the buyer chip", async ({ page }) => {
   }));
   expect(w.input, "scan input width").toBeGreaterThan(220);
   expect(w.chip, "buyer chip width").toBeLessThan(w.input);
+
+  // And the chip is now a chip. "Walk-in customer" was ~70px of the word
+  // "customer" saying nothing the icon and the other six letters do not, on a
+  // row the scan box was going short on. A quarter of the row is the ceiling;
+  // below that the label stops being readable and this stops being a saving.
+  const row = await page.evaluate(
+    () => document.querySelector(".scan-bar")!
+      .getBoundingClientRect().width
+  );
+  expect(w.chip, "buyer chip against the row").toBeLessThan(row * 0.25);
+
+  // The full sentence survives where it always belonged — the button's
+  // accessible name — so nothing was lost to anyone driving this by voice or
+  // by screen reader.
+  await expect(
+    page.getByRole("button", { name: /Walk-in customer — tap to add their details/i })
+  ).toBeVisible();
 });
 
 test("set to print straight, the counter gets paper and no popup at all", async ({ page }) => {

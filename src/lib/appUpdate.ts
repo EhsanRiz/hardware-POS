@@ -20,29 +20,69 @@ import { registerSW } from "virtual:pwa-register";
     worker update cannot be staged in a browser test. */
 const READY = "pos:update-ready";
 
-/** A till left open all week still wants Tuesday's fix on Tuesday. */
-const CHECK_EVERY_MS = 15 * 60 * 1000;
+/**
+ * A till left open all week still wants Tuesday's fix on Tuesday.
+ *
+ * Five minutes, not fifteen. This is the whole delay between a change being
+ * deployed and the counter being ABLE to take it, and the thing being waited
+ * on is one conditional request for a file the size of a sentence.
+ */
+const CHECK_EVERY_MS = 5 * 60 * 1000;
 
 let apply: ((reload?: boolean) => Promise<void>) | null = null;
+let waiting = false;
 
 export function startUpdateWatch(): void {
   if (typeof window === "undefined") return;
   apply = registerSW({
     onNeedRefresh() {
+      waiting = true;
       window.dispatchEvent(new Event(READY));
     },
     onRegisteredSW(_url, registration) {
       if (!registration) return;
-      window.setInterval(() => void registration.update(), CHECK_EVERY_MS);
+
+      // A check that cannot happen is not an error: offline is the normal
+      // state of a shop whose line is down, and it will be asked again.
+      const look = () => void registration.update().catch(() => {});
+
+      window.setInterval(look, CHECK_EVERY_MS);
+
+      // And at the moments a new version is most likely to have appeared AND
+      // somebody is about to look at the screen. A counter machine sits on one
+      // page for days, so a timer alone means the news is up to five minutes
+      // stale exactly when the shop is waiting for it — coming back to the
+      // window, or coming back online, are both better cues than the clock.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") look();
+      });
+      window.addEventListener("focus", look);
+      window.addEventListener("online", look);
+
+      // The waiting worker may already be sitting there from a previous
+      // visit: registerSW only announces one it saw arrive.
+      if (registration.waiting) {
+        waiting = true;
+        window.dispatchEvent(new Event(READY));
+      }
     },
   });
 }
 
-/** Take the update: activate the waiting worker and reload onto it. */
+/**
+ * Take the update.
+ *
+ * Activates the worker that is waiting and reloads the page onto it, so every
+ * change in that version — markup, styles, and the service worker's own
+ * precache — is what the till is running afterwards. Nobody has to refresh
+ * anything by hand; pressing the button IS the refresh, and it is one press
+ * because the cashier is the only one who knows this second is between sales.
+ */
 export function applyUpdate(): void {
-  if (apply) void apply(true);
-  // No worker registered (a dev build, or a browser that refused one) — a
-  // plain reload still fetches the new files rather than doing nothing.
+  // No waiting worker to activate (a dev build, a browser that refused one, or
+  // a version that landed before this tab registered): a plain reload still
+  // fetches the new files rather than doing nothing at all.
+  if (apply && waiting) void apply(true);
   else window.location.reload();
 }
 

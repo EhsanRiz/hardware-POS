@@ -172,7 +172,15 @@ export default function ScanBar({
         >
           <UserIcon />
           <span>
-            <span className="who">{customer ? customer.name : "Walk-in customer"}</span>
+            {/* "Walk-in", not "Walk-in customer". The chip shares its row with
+                the scan box, which is the most-used control on the till, and
+                the word "customer" was ~70px of a row that control was going
+                short on. It says nothing the icon and the other six letters do
+                not — and the button's accessible name still spells it out in
+                full for anyone driving the till by screen reader.
+                A buyer who HAS been chosen keeps their whole name: that is not
+                a label, it is the answer to "who am I selling to". */}
+            <span className="who">{customer ? customer.name : "Walk-in"}</span>
             {/* One line, not three. The second line used to read "Retail price ·
                 tap to add their details" on every walk-in sale — which is most
                 of them — and on a 1024 till that is a paragraph where a chip

@@ -7,6 +7,7 @@ import { trackVisualViewport } from "./lib/visualViewport";
 import { installErrorReporting } from "./lib/errorReport";
 import "./index.css";
 import { startUpdateWatch } from "./lib/appUpdate";
+import { publishSlipMetrics } from "./lib/config";
 
 /**
  * Boot.
@@ -47,3 +48,8 @@ void boot();
 // Watch for a newer till, and say so rather than reloading underneath
 // whoever is serving a customer. See src/lib/appUpdate.ts.
 startUpdateWatch();
+
+// The printed slip's type is sized off how many columns this device prints
+// at, which is a setting — so the CSS cannot know it and is told. See
+// config.ts, and the #print-area rule in index.css.
+publishSlipMetrics();

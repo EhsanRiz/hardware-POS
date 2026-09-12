@@ -939,6 +939,26 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
   // A second page on the SAME backend is a second till in the same shop.
   const be = shared ?? new Backend();
 
+  /**
+   * Pin the slip to the screen for the suite.
+   *
+   * Printing now defaults to STRAIGHT TO THE PRINTER, which is right for the
+   * machine on the counter and wrong for a test: most of what this file's
+   * assertions know about a receipt they read off #print-area while the slip
+   * is on screen, and the direct path clears it the instant the browser has
+   * taken it. So the suite pins the device to the "show me the slip" mode —
+   * a real, supported setting, not a fiction — and the DEFAULT is covered by
+   * its own two tests, which clear this key first and assert that paper comes
+   * out with no slip over the till at all.
+   *
+   * Put here, before app boot, because print.ts reads the key when it prints.
+   */
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("pos.printMode")) {
+      localStorage.setItem("pos.printMode", "browser");
+    }
+  });
+
   // PRODUCTS is module state and the catalogue editor now writes to it, so a
   // cap set by one test would still be there for the next one in the same
   // worker. Put it back rather than leaving tests to depend on their order.

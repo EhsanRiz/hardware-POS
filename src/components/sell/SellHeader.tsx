@@ -1,4 +1,4 @@
-import { InnovaLockup } from "../InnovaMark";
+import InnovaMark from "../InnovaMark";
 import { CalcIcon, CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
 import { applyUpdate, useUpdateReady } from "../../lib/appUpdate";
 import { registerName } from "../../lib/device";
@@ -55,7 +55,22 @@ export default function SellHeader({
 
   return (
     <header className="sell-head">
-      <InnovaLockup edition="Hardware" onGreen />
+      {/* The SHOP's name at the masthead, not the software's.
+          This is the one screen whose whole audience already knows what they
+          are looking at, and a counter serves more than one till: which shop,
+          and which register, is the useful thing in the corner of the eye.
+          InnovaPOS keeps the mark beside it, signs the footer, and is on every
+          slip that leaves the building — nothing is lost by not spelling it
+          out here, and the name of the shop costs no more width than the
+          wordmark it replaces.
+          Falls back to the wordmark when the settings have not arrived yet, so
+          a till mid-boot never shows an empty corner. */}
+      <div className="sell-lockup">
+        <InnovaMark size={26} onGreen />
+        <span className="sell-shop" title={registerName()}>
+          {shopSettings().shop_name || "InnovaPOS"}
+        </span>
+      </div>
 
       {/* Every section lives on the till, because the people doing this work
           are standing at this tablet: the cashier quoting a builder, the
@@ -142,8 +157,10 @@ export default function SellHeader({
 
         {/* Which till this is — and only that. It carried the shop name too,
             which at 0.11em tracking in capitals came to 315px of header and
-            was what pushed Sign out off a 1366 laptop. Nobody standing in the
-            shop needs to be told which shop it is; the invoice says so. */}
+            was what pushed Sign out off a 1366 laptop. The shop's name is now
+            at the masthead instead, where it costs nothing: this stays the
+            register, because on a counter with two of them that is the part
+            that differs. */}
         <span className="sell-till" title={shopSettings().shop_name}>
           {registerName()}
         </span>

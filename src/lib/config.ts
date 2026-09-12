@@ -25,8 +25,59 @@ export const PRINT_HEIGHT_SCALE = clamp(
 );
 
 // Columns available for layout, derived from paper width / width scale.
-const BASE_COLS = Number(import.meta.env.VITE_RECEIPT_WIDTH ?? 48);
+const BASE_COLS = Number(import.meta.env.VITE_RECEIPT_WIDTH ?? 40);
 export const RECEIPT_WIDTH = Math.max(16, Math.floor(BASE_COLS / PRINT_WIDTH_SCALE));
+
+/**
+ * How many columns the slip is printed at, per device.
+ *
+ * This is THE lever on the size of the print, and the only one. The type is
+ * sized so that a full line just fits the paper, so a character is roughly
+ * (paper width / columns): fewer columns is bigger print and nothing else is.
+ * Everything else — the page margin, the divisor — is worth a few percent.
+ *
+ *   48  the most a 80mm roll holds. A description and an amount, comfortably.
+ *   40  the default. ~20% bigger type; descriptions start to be cut.
+ *   32  big enough to read at arm's length, and names are properly short.
+ *
+ * Per device rather than per shop, and for the same reason the print mode is:
+ * the counter's 80mm Epson and a manager's A4 laser are not the same paper.
+ * It is a build default with a local override, so a shop that has never opened
+ * the setting still gets something sensible.
+ */
+export const SLIP_WIDTHS = [48, 40, 32] as const;
+export type SlipWidth = (typeof SLIP_WIDTHS)[number];
+const SLIP_WIDTH_KEY = "pos.slipWidth";
+
+export function slipWidth(): number {
+  if (typeof localStorage === "undefined") return RECEIPT_WIDTH;
+  const n = Number(localStorage.getItem(SLIP_WIDTH_KEY));
+  return (SLIP_WIDTHS as readonly number[]).includes(n) ? n : RECEIPT_WIDTH;
+}
+
+export function setSlipWidth(n: SlipWidth): void {
+  localStorage.setItem(SLIP_WIDTH_KEY, String(n));
+}
+
+/**
+ * The divisor the print rule sizes the type by: 100vw / (columns x 0.71).
+ *
+ * 0.69 is the measured width of a monospace character in ems — not the 0.6
+ * usually quoted — and the rest is the hair of slack that keeps the longest
+ * line off the edge. Published as a CSS variable because only JavaScript
+ * knows how many columns this device prints at.
+ */
+export function slipTypeDivisor(cols = slipWidth()): number {
+  return Math.round(cols * 0.71 * 10) / 10;
+}
+
+/** Hand the print rule the number only this side knows. Called at boot, and
+    again whenever the width is changed, so the setting takes without a
+    reload. */
+export function publishSlipMetrics(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty("--slip-div", String(slipTypeDivisor()));
+}
 
 /**
  * South African VAT, as a fraction. Shelf prices INCLUDE it, so this is used to
