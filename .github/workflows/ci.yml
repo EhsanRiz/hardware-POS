@@ -157,10 +157,30 @@ jobs:
           }
           npm run build
 
+      # Checked here rather than left to wrangler, which reports a missing
+      # token as a wall of generic advice about how to create one — true, but
+      # useless when the real answer is "it is saved under Variables instead of
+      # Secrets", or "the name has a typo in it". This says which.
+      - name: Check the Cloudflare token is there
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::secrets.CLOUDFLARE_API_TOKEN is empty or missing."
+            echo "::error::Check https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "::error::It must be under the SECRETS tab (not Variables),"
+            echo "::error::named exactly CLOUDFLARE_API_TOKEN, as a Repository secret."
+            exit 1
+          fi
+          echo "Token present (${#TOKEN} characters)."
+
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Match the version wrangler.toml was written against. The action
+          # defaults to wrangler 3, which warns on sight that it is out of date.
+          wranglerVersion: "4.131.1"
           # wrangler.toml names the worker (hardware-pos) and attaches
           # app.innovaearth.com itself, so there is no dashboard step.
           command: deploy
