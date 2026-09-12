@@ -4868,4 +4868,54 @@ begin
   perform assert_eq((v_row->>'total')::numeric, 3450.00::numeric, 'with both invoices on it');
 end $$;
 
+-- 0085: fix a buyer's details at the counter ---------------------------------
+
+do $$
+declare v_tok text; v_emp uuid; v_mgr uuid; v_org uuid; v_a record; v_b record; v_r record; v_why text;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id, employee_id into v_org, v_mgr, v_emp from fixture;
+
+  -- Two buyers recorded at the counter, one of them with a wrong digit.
+  select * into v_a from public.pos_quick_customer(v_tok, v_emp, '082 555 0185', 'Zaib Ahmed', null, null);
+  select * into v_b from public.pos_quick_customer(v_tok, v_emp, '082 555 0186', 'Thabo Mokoena', null, null);
+  -- The back office gives the first one an account, which the counter may not touch.
+  update public.customers set credit_limit = 5000, is_trade = true, code = 'TRD-085', vat_number = '4123456789'
+   where id = v_a.id;
+
+  -- THE CASHIER PUTS IT RIGHT: name, number, address.
+  select * into v_r from public.pos_customer_fix_details(
+    v_tok, v_emp, v_a.id, ' Zaib Ahmad ', '082 555 0187', '14 Mabille Rd, Maseru');
+  perform assert_eq(v_r.name, 'Zaib Ahmad', 'the spelling is fixed, trimmed');
+  perform assert_eq(v_r.phone, '082 555 0187', 'the number is fixed');
+  perform assert_eq(v_r.address, '14 Mabille Rd, Maseru', 'and the address is on file');
+  perform assert(exists (select 1 from public.customers c where c.id = v_a.id and c.phone_e164 = '+27825550187'),
+    'found again under the corrected number');
+  -- AND NOTHING ABOUT MONEY MOVED.
+  perform assert(exists (select 1 from public.customers c where c.id = v_a.id
+    and c.credit_limit = 5000 and c.is_trade and c.code = 'TRD-085' and c.vat_number = '4123456789'),
+    'credit, trade price, code and VAT number are exactly as the back office set them');
+  perform assert_eq(v_r.code, 'TRD-085', 'the row comes back whole');
+
+  -- A number belongs to one buyer. Taking another's is refused by name.
+  begin
+    perform public.pos_customer_fix_details(v_tok, v_emp, v_a.id, 'Zaib Ahmad', '0825550186', null);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%already on file for Thabo Mokoena%', 'another buyer''s number is refused: ' || v_why);
+  -- A blank name, or no number at all, is not a correction.
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, v_a.id, '  ', '0825550187'), 'a blank name is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, v_a.id, 'Zaib Ahmad', 'no number'), 'a non-number is refused');
+  -- A stranger's till and an unknown cashier are refused.
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    'not-a-token', v_emp, v_a.id, 'Zaib Ahmad', '0825550187'), 'a stranger''s till is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, gen_random_uuid(), v_a.id, 'Zaib Ahmad', '0825550187'), 'an unknown cashier is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, gen_random_uuid(), 'Zaib Ahmad', '0825550187'), 'a customer the shop does not have is refused');
+end $$;
+
 select 'all database tests passed' as result;

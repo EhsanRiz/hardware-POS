@@ -274,6 +274,16 @@ filed by hand — has "Read this document" on it: the filed pages go to the
 reader and the reading lands on the same document
 (`pos_purchasing_read_filed_document`). The kind the person chose stands.
 
+## Fixing a buyer at the counter
+
+Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone
+number and delivery address, and nothing else: credit, trade pricing, the
+account code and the VAT number are the back office's, under Accounts.
+Authorised like recording a buyer, by the cashier's own right to take payments
+(`pos_customer_fix_details`). A number belongs to one buyer; another's is
+refused by name. The corrected row replaces the old one in the list, the
+offline cache, and the open sale if it is theirs.
+
 ## Approving a request
 
 The request form emails InnovaEarth with an **Approve** button. One click

@@ -1286,6 +1286,22 @@ export async function installBackend(page: Page): Promise<Backend> {
         be.customers.push(made);
         return json([made]);
       }
+      case "rpc/pos_customer_fix_details": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const row = be.customers.find((c) => c.id === body.p_customer_id);
+        if (!row) return fail("No such customer");
+        const name = String(body.p_name ?? "").trim();
+        if (!name) return fail("A name is needed");
+        const want = e164(String(body.p_phone ?? ""));
+        if (!want) return fail("That does not look like a phone number");
+        const other = be.customers.find((c) => c.id !== row.id && e164(c.phone) === want);
+        if (other) return fail(`That number is already on file for ${other.name}`);
+        // Only these three move; the money fields are the back office's.
+        row.name = name;
+        row.phone = String(body.p_phone ?? "").trim();
+        row.address = String(body.p_address ?? "").trim() || null;
+        return json([row]);
+      }
       case "rpc/pos_customer_history": {
         if (!tokenOk) return fail("Register not paired or revoked");
         // Newest first, as 0023 lists them; the number is the one the Sales

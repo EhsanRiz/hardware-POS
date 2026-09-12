@@ -1283,6 +1283,19 @@ export default function POS() {
               return next;
             });
           }}
+          onChanged={(c) => {
+            // The corrected row replaces the old one everywhere it is held:
+            // the list, the cache, and the sale if it is theirs, so the slip
+            // carries the right name.
+            setCustomers((prev) => {
+              const next = [...prev.filter((p) => p.id !== c.id), c].sort((a, b) =>
+                a.name.localeCompare(b.name)
+              );
+              cacheSet(CUSTOMERS_KEY, next);
+              return next;
+            });
+            setCustomer((cur) => (cur && cur.id === c.id ? c : cur));
+          }}
           onClose={() => setShowCustomers(false)}
           // The same popup a scanned slip opens: reprint, or a return.
           onOpenSale={(d) => {
