@@ -6,11 +6,17 @@ import {
   checkApprovalCode,
   closeQuote,
   createDelivery,
+  deleteParkedSale,
   deliveryProduct,
   fetchCatalogue,
   fetchCategories,
   listCustomers,
+  listParkedSales,
   NotPairedError,
+  parkSale,
+  unparkSale,
+  type ParkedLine,
+  type ParkedSaleRow,
   quoteByNumber,
   quoteItems,
   saleByNumber,
@@ -46,7 +52,7 @@ import { printReceipt } from "../lib/print";
 import { buildQuoteText, buildReceiptText, cartQuoteLines } from "../lib/receipt";
 import { refreshSettings, shopSettings, vatRate } from "../lib/settings";
 import { fmtDate } from "../lib/dates";
-import ParkedPicker, { type ParkedSale } from "../components/sell/ParkedPicker";
+import ParkedPicker, { localEntry, parkedTotal, type ParkedEntry, type ParkedSale } from "../components/sell/ParkedPicker";
 import { quoteSheet } from "../lib/quoteSheet";
 import { archiveSheet } from "../lib/sendSheet";
 import DeliveryForm, { type DeliveryDetails } from "../components/sell/DeliveryForm";
@@ -157,9 +163,13 @@ export default function POS() {
   // a second copy, and voiding it asks rather than losing it.
   const [parkedFrom, setParkedFrom] = useState<{ id: string; at: string } | null>(null);
   const [askVoid, setAskVoid] = useState(false);
+  // This device's own parked sales: the line down, or a basket recovered
+  // after a refresh. Drained to the shop's list as soon as it can be.
   const [parked, setParked] = useState<ParkedSale[]>(() =>
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
+  // The shop's parked sales (0086): parked on any till, picked up on any.
+  const [shared, setShared] = useState<ParkedSaleRow[]>([]);
 
   /**
    * A sale that was open when the screen reloaded becomes a parked sale.
@@ -184,7 +194,7 @@ export default function POS() {
       // A sale resumed from a parked slot goes back into that slot; a sale
       // that was never parked gets one now.
       const fromSlot = live.id !== "live";
-      const entry = fromSlot ? live : { ...live, id: String(Date.now()), at: new Date().toISOString() };
+      const entry = fromSlot ? live : { ...live, id: crypto.randomUUID(), at: new Date().toISOString() };
       const next = [...prev.filter((x) => x.id !== entry.id), entry].sort((a, b) => a.at.localeCompare(b.at));
       cacheSet(PARKED_KEY, next);
       return next;
@@ -193,15 +203,85 @@ export default function POS() {
     setBanner("The sale that was open here has been parked. Resume it below.");
   }, []);
 
-  // On a tablet the payment column is a sheet raised from the bar; on a wide
-  // screen it is always docked and this flag is ignored by the stylesheet.
-  const [payOpen, setPayOpen] = useState(false);
   // Which section fills the frame. Sell is home; the others swap the counter
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
   const [section, setSection] = useState<
     "sell" | "accounts" | "stock" | "quotes" | "deliveries"
   >("sell");
+
+  /** A cart line as it is parked, and back. */
+  const toParkedLines = (ls: CartLine[]): ParkedLine[] =>
+    ls.map((l) => ({
+      product_id: l.product.id, qty: l.qty,
+      discount: l.discount ?? null, discount_percent: l.discountPercent ?? null,
+      discount_reason: l.discountReason ?? null,
+    }));
+
+  /**
+   * Keep the shop's list current, and hand it anything this device was
+   * holding. Polled while the counter is open: another till's park has to
+   * show up here without anybody refreshing, because the customer just
+   * walked over. The device's own list is drained first, so a basket parked
+   * with the line down, or recovered after a refresh, becomes the shop's the
+   * moment it can.
+   */
+  const refreshShared = useCallback(async () => {
+    if (!online || !user) return;
+    const local = cacheGet<ParkedSale[]>(PARKED_KEY, []);
+    if (local.length) {
+      const kept: ParkedSale[] = [];
+      for (const p of local) {
+        try {
+          await parkSale(user.id, {
+            id: p.id, lines: toParkedLines(p.lines), customerId: p.customer?.id ?? null,
+            discount: p.discount, discountReason: p.discountReason, total: parkedTotal(p), parkedAt: p.at,
+          });
+        } catch {
+          kept.push(p);
+        }
+      }
+      setParked(kept);
+      cacheSet(PARKED_KEY, kept);
+    }
+    try {
+      setShared(await listParkedSales());
+    } catch {
+      /* the list stays as it was; the next poll tries again */
+    }
+  }, [online, user]);
+
+  useEffect(() => {
+    if (!online || !user || section !== "sell") return;
+    void refreshShared();
+    const t = window.setInterval(() => void refreshShared(), 6000);
+    const onFocus = () => void refreshShared();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [online, user, section, refreshShared]);
+
+  /** Both lists as rows, oldest first. */
+  const parkedEntries = useMemo<ParkedEntry[]>(() => {
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const rows: ParkedEntry[] = shared.map((r) => ({
+      id: r.id, at: r.parked_at, where: r.register_name, who: r.parked_by_name,
+      customerName: r.customer_name, total: r.total,
+      lineCount: r.lines.length,
+      units: r.lines.reduce((n, l) => n + l.qty, 0),
+      names: r.lines.map((l) => byId.get(l.product_id)?.name ?? "?").join(", "),
+    }));
+    for (const p of parked) if (!shared.some((r) => r.id === p.id)) rows.push(localEntry(p));
+    return rows.sort((a, b) => a.at.localeCompare(b.at));
+  }, [shared, parked, products]);
+
+  // On a tablet the payment column is a sheet raised from the bar; on a wide
+  // screen it is always docked and this flag is ignored by the stylesheet.
+  const [payOpen, setPayOpen] = useState(false);
   // The product being looked at closely, and what confirming it means. From a
   // search result it ADDS the quantity chosen; from a line already in the sale
   // it REPLACES that line's quantity.
@@ -700,33 +780,68 @@ export default function POS() {
     }
   }
 
-  /** Set the sale aside so the next customer can be served. */
-  function park() {
+  /**
+   * Set the sale aside so the next customer can be served — on the shop's
+   * list, so any till can pick it up. With the line down it is kept on this
+   * device and handed over when the line returns.
+   */
+  async function park() {
     if (lines.length === 0) return;
     // Back into its own slot, at the time it was first parked: a customer
     // who stepped away at 09:19 is still the 09:19 customer.
-    const entry = {
-      id: parkedFrom?.id ?? String(Date.now()),
+    const entry: ParkedSale = {
+      id: parkedFrom?.id ?? crypto.randomUUID(),
       at: parkedFrom?.at ?? new Date().toISOString(),
       lines,
       customer,
       discount,
       discountReason,
     };
-    const next = [...parked.filter((x) => x.id !== entry.id), entry]
-      .sort((a, b) => a.at.localeCompare(b.at));
-    setParked(next);
-    cacheSet(PARKED_KEY, next);
+    // The counter is cleared at once, before the server answers: the next
+    // customer's first scan must not land in a basket that is about to be
+    // wiped. If the park does not reach the shop, the device keeps it.
     clearSale();
-    setBanner("Sale parked. Resume it from the button below.");
+    if (online && user) {
+      try {
+        await parkSale(user.id, {
+          id: entry.id, lines: toParkedLines(entry.lines), customerId: entry.customer?.id ?? null,
+          discount: entry.discount, discountReason: entry.discountReason,
+          total: parkedTotal(entry), parkedAt: entry.at,
+        });
+        setBanner("Sale parked. Any till can pick it up from the button below.");
+        void refreshShared();
+        return;
+      } catch {
+        /* the line, most likely: kept here and handed over when it returns */
+      }
+    }
+    setParked((prev) => {
+      const next = [...prev.filter((x) => x.id !== entry.id), entry]
+        .sort((a, b) => a.at.localeCompare(b.at));
+      cacheSet(PARKED_KEY, next);
+      return next;
+    });
+    setBanner("Sale parked on this till. It goes to every till when the line returns.");
   }
 
   /** A parked sale nobody is coming back for. */
-  function deleteParked(id: string) {
+  async function deleteParked(id: string) {
+    if (shared.some((r) => r.id === id)) {
+      try {
+        await deleteParkedSale(id);
+      } catch (e) {
+        setBanner(errorMessage(e, "That parked sale could not be deleted"));
+      }
+      const rest = shared.filter((r) => r.id !== id);
+      setShared(rest);
+      if (rest.length + parked.length < 2) setShowParked(false);
+      void refreshShared();
+      return;
+    }
     const rest = parked.filter((x) => x.id !== id);
     setParked(rest);
     cacheSet(PARKED_KEY, rest);
-    if (rest.length < 2) setShowParked(false);
+    if (rest.length + shared.length < 2) setShowParked(false);
   }
 
   /**
@@ -740,29 +855,66 @@ export default function POS() {
     else clearSale();
   }
 
-  /** Bring one parked sale back to the counter. */
-  function resume(p: ParkedSale) {
+  /** Bring one parked sale back to the counter, from whichever list holds it. */
+  async function resume(id: string) {
     // Parking the current sale first would be surprising; refusing to lose it
     // is not. The cashier parks or clears deliberately.
     if (lines.length > 0) {
       setBanner("Finish or park this sale before resuming another.");
       return;
     }
-    const rest = parked.filter((x) => x.id !== p.id);
-    setParked(rest);
-    cacheSet(PARKED_KEY, rest);
+    const local = parked.find((x) => x.id === id);
+    if (local) {
+      const rest = parked.filter((x) => x.id !== id);
+      setParked(rest);
+      cacheSet(PARKED_KEY, rest);
+      setShowParked(false);
+      setParkedFrom({ id: local.id, at: local.at });
+      setLines(local.lines);
+      setCustomer(local.customer);
+      setDiscount(local.discount);
+      setDiscountReason(local.discountReason);
+      scanRef.current?.focus();
+      return;
+    }
+    // The shop's: taken off the list as it is taken, so two tills cannot
+    // both have it. If another till got there first, the list says so.
+    let row: ParkedSaleRow;
+    try {
+      row = await unparkSale(id);
+    } catch (e) {
+      setBanner(errorMessage(e, "That parked sale could not be picked up"));
+      void refreshShared();
+      return;
+    }
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const cart: CartLine[] = [];
+    let missing = 0;
+    for (const l of row.lines) {
+      const product = byId.get(l.product_id);
+      if (!product) { missing++; continue; }
+      cart.push({
+        product, qty: l.qty,
+        discount: l.discount ?? undefined, discountPercent: l.discount_percent ?? null,
+        discountReason: l.discount_reason ?? null,
+      });
+    }
+    setShared((prev) => prev.filter((r) => r.id !== id));
     setShowParked(false);
-    setParkedFrom({ id: p.id, at: p.at });
-    setLines(p.lines);
-    setCustomer(p.customer);
-    setDiscount(p.discount);
-    setDiscountReason(p.discountReason);
+    setParkedFrom({ id: row.id, at: row.parked_at });
+    setLines(cart);
+    setCustomer(customers.find((c) => c.id === row.customer_id) ?? null);
+    setDiscount(row.discount);
+    setDiscountReason(row.discount_reason);
+    if (missing) {
+      setBanner(`${missing} line${missing === 1 ? "" : "s"} not in this till's catalogue were left off.`);
+    }
     scanRef.current?.focus();
   }
   /** One parked sale comes straight back; two or more are chosen from. */
   function resumeParked() {
-    if (parked.length === 0) return;
-    if (parked.length === 1) return resume(parked[0]);
+    if (parkedEntries.length === 0) return;
+    if (parkedEntries.length === 1) return void resume(parkedEntries[0].id);
     if (lines.length > 0) {
       setBanner("Finish or park this sale before resuming another.");
       return;
@@ -1240,14 +1392,14 @@ export default function POS() {
             <button
               className="btn-line"
               disabled={lines.length === 0}
-              onClick={park}
+              onClick={() => void park()}
             >
               Park sale
             </button>
 
-            {parked.length > 0 && (
+            {parkedEntries.length > 0 && (
               <button className="btn-line" onClick={resumeParked}>
-                Resume parked · {parked.length}
+                Resume parked · {parkedEntries.length}
               </button>
             )}
 
@@ -1305,9 +1457,9 @@ export default function POS() {
           there is no picker without one signed in. */}
       {showParked && (
         <ParkedPicker
-          parked={parked}
-          onPick={resume}
-          onDelete={deleteParked}
+          parked={parkedEntries}
+          onPick={(id) => void resume(id)}
+          onDelete={(id) => void deleteParked(id)}
           onClose={() => setShowParked(false)}
         />
       )}
@@ -1328,7 +1480,7 @@ export default function POS() {
               <button className="btn-cancel" onClick={() => setAskVoid(false)}>
                 Cancel
               </button>
-              <button className="btn-line" onClick={park}>
+              <button className="btn-line" onClick={() => void park()}>
                 Put it back
               </button>
               <button className="btn-fill" onClick={clearSale}>
