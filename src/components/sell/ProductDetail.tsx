@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { money, quantity } from "../../lib/money";
 import { imageSrc } from "../../lib/images";
+import { listProductImages } from "../../lib/adminApi";
 import type { Product } from "../../lib/types";
 
 /**
@@ -64,6 +65,44 @@ export default function ProductDetail({
   // Cut and weighed goods step in halves, whole goods in ones. Constraint 7:
   // a quantity is a decimal with a unit, never a count.
   const step = p.allows_fraction ? 0.5 : 1;
+  /**
+   * Every photograph of this item, primary first.
+   *
+   * Starts as the one the catalogue already carries, so the picture is on
+   * screen the instant the card opens — the list is a round trip and the
+   * counter should not wait for it. It is only ASKED for when the catalogue
+   * says there is more than one (image_count), and a failure leaves the
+   * single cached photo in place: a till in an outage still shows what it
+   * has rather than going blank.
+   */
+  const [shots, setShots] = useState<string[]>(() => {
+    const first = imageSrc(p.image_url);
+    return first ? [first] : [];
+  });
+  const [shot, setShot] = useState(0);
+
+  useEffect(() => {
+    setShot(0);
+    const first = imageSrc(p.image_url);
+    setShots(first ? [first] : []);
+    if ((p.image_count ?? 0) <= 1) return;
+    let alive = true;
+    void listProductImages(p.id)
+      .then((rows) => {
+        if (!alive) return;
+        const srcs = rows
+          .map((r) => imageSrc(r.url))
+          .filter((u): u is string => !!u);
+        if (srcs.length) setShots(srcs);
+      })
+      .catch(() => {
+        /* No line, or the call refused: keep the cached photograph. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [p.id, p.image_url, p.image_count]);
+
   const [qtyText, setQtyText] = useState(() =>
     String(mode === "edit" && inSale > 0 ? inSale : 1)
   );
@@ -117,13 +156,51 @@ export default function ProductDetail({
         aria-modal="true"
         aria-label={p.name}
       >
-        <div className="detail-photo">
-          {imageSrc(p.image_url) ? (
-            <img src={imageSrc(p.image_url)!} alt={p.name} />
-          ) : (
-            <span className="detail-nophoto">No photograph yet</span>
-          )}
-        </div>
+        {/* No photograph, no photograph BOX. It used to reserve 300px to say
+            "No photograph yet" — a third of the till's screen spent on the
+            absence of a picture, which is what pushed Close and Add to sale
+            off the bottom. Most of this shop's catalogue has no photo. */}
+        {shots.length > 0 && (
+          <div className="detail-photo">
+            <img src={shots[shot]} alt={p.name} />
+
+            {/* Only when there is somewhere to go. One photograph gets no
+                arrows and no dots — controls for a choice that does not
+                exist are just furniture. */}
+            {shots.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="detail-shot-nav is-prev"
+                  aria-label="Previous photograph"
+                  onClick={() => setShot((i) => (i - 1 + shots.length) % shots.length)}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  className="detail-shot-nav is-next"
+                  aria-label="Next photograph"
+                  onClick={() => setShot((i) => (i + 1) % shots.length)}
+                >
+                  ›
+                </button>
+                <div className="detail-shot-dots" aria-label={`Photograph ${shot + 1} of ${shots.length}`}>
+                  {shots.map((src, i) => (
+                    <button
+                      type="button"
+                      key={src}
+                      className={i === shot ? "is-on" : undefined}
+                      aria-label={`Photograph ${i + 1}`}
+                      aria-current={i === shot ? "true" : undefined}
+                      onClick={() => setShot(i)}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="detail-body">
           <h2 className="detail-name">{p.name}</h2>
@@ -242,19 +319,22 @@ export default function ProductDetail({
               </span>
             )}
           </div>
+        </div>
 
-          <div className="modal-actions detail-actions">
-            <button className="btn-line" onClick={onClose}>
-              Close
-            </button>
-            <button
-              className="btn-fill"
-              disabled={out || qty <= 0}
-              onClick={confirm}
-            >
-              {out ? "Out of stock" : `${action} · ${money(total)}`}
-            </button>
-          </div>
+        {/* Outside the body on purpose. The body is what scrolls when the card
+            is taller than the screen, and these two are the whole point of
+            opening it — they must not scroll away. */}
+        <div className="modal-actions detail-actions">
+          <button className="btn-line" onClick={onClose}>
+            Close
+          </button>
+          <button
+            className="btn-fill"
+            disabled={out || qty <= 0}
+            onClick={confirm}
+          >
+            {out ? "Out of stock" : `${action} · ${money(total)}`}
+          </button>
         </div>
       </div>
     </div>

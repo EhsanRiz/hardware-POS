@@ -218,7 +218,29 @@ export default function PaymentColumn({
     sole != null && sole !== m && outstanding <= 0.005;
 
   function tap(method: PaymentMethod) {
-    if (canFlipTo(method)) return take(method, []);
+    if (canFlipTo(method)) {
+      /**
+       * Flipping to CASH is not the same as flipping to a card.
+       *
+       * A card, an EFT and an account all settle to the exact cent, so
+       * swapping to one of them is a finished decision and taking it at once
+       * is right. Cash is the only tender where the next question is "how much
+       * did they hand over" — and taking it immediately answers that question
+       * as "exactly the total", settles the sale, and shuts the amount box. So
+       * the counter tapped Cash, saw it go back to cash, and had no way left
+       * to enter the R500 note. It looked like the button had not worked.
+       *
+       * So this clears the tenders and stops. The sale is unsettled, the keys
+       * are live, and the till is back where it was before anything was
+       * tendered: type what they handed over, then tap Cash.
+       */
+      if (method === "cash") {
+        setTaken([]);
+        setEntry("");
+        return;
+      }
+      return take(method, []);
+    }
     take(method);
   }
 

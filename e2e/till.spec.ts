@@ -1334,9 +1334,18 @@ test("the till says where to put the buyer's details", async ({ page }) => {
   await pairAndSignIn(page);
 
   // The name, number and address were always one tap away, behind a button
-  // whose second line only reported the price band.
-  const pick = page.getByRole("button", { name: /Walk-in customer/i });
-  await expect(pick).toContainText(/tap to add their details/i);
+  // whose second line only reported the price band. The instruction is still
+  // there — it is now the button's accessible name rather than a second
+  // visible line, because on a 1024 till "Retail price · tap to add their
+  // details" is a paragraph where a chip should be, and it is on screen for
+  // every walk-in sale, which is most of them.
+  const pick = page.getByRole("button", {
+    name: /Walk-in customer — tap to add their details/i,
+  });
+  await expect(pick).toBeVisible();
+  // One line of visible text, not three.
+  await expect(pick).not.toContainText(/tap to add their details/i);
+  await expect(pick).not.toContainText(/Retail price/i);
 
   await pick.click();
   await expect(page.getByPlaceholder(/Name, account code or phone/i)).toBeVisible();
@@ -7430,4 +7439,163 @@ test("the counter does not offer a tender the shop does not take", async ({ page
   for (const m of ["Cash", "Card", "EFT", "Account"]) {
     await expect(page.getByRole("button", { name: m, exact: true })).toBeVisible();
   }
+});
+
+test("a trade customer still says so, because it changes the money", async ({ page }) => {
+  // The chip lost its second line — except this. "Trade price" is not a label
+  // for the button, it is a statement that this sale is priced off a different
+  // list, and the caption that used to repeat it is hidden on a short screen.
+  be.customers.push({
+    id: "k9", code: "TRD-009", name: "Ledger Builders",
+    phone: "051 924 2222", is_trade: true, credit_limit: 40000,
+    balance: 0, available: 40000,
+  });
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.locator(".customer-pick").click();
+  await page.locator(".modal-row", { hasText: "Ledger Builders" }).click();
+
+  await expect(page.locator(".customer-pick")).toContainText("Ledger Builders");
+  await expect(page.locator(".customer-pick .band")).toHaveText("Trade price");
+});
+
+test("changing back to cash asks what they handed over", async ({ page }) => {
+  // Card, EFT and account settle to the exact cent, so swapping to one is a
+  // finished decision. Cash is the only tender where the next question is
+  // "how much did they give you" — and taking it at once answered that as
+  // "exactly the total", settled the sale and shut the amount box. The counter
+  // tapped Cash, watched it go back to cash, and had nowhere left to enter the
+  // R200 note. It looked like the button had not worked.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: "Card", exact: true }).click();
+  await expect(page.locator(".taken-row:not(.is-outstanding)")).toHaveCount(1);
+
+  // Back to cash: the card tender goes, and the till is where it was before
+  // anything was tendered — nothing taken, keys live.
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await expect(page.locator(".taken-row:not(.is-outstanding)")).toHaveCount(0);
+  const amount = page.getByLabel("Amount for the next tender");
+  await expect(amount).toBeEnabled();
+
+  // And the change comes out right.
+  await amount.fill("200");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await expect(page.locator(".taken-row.is-outstanding")).toContainText(/R\s?85\.00/);
+
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  expect(be.storedSales[0].amount_tendered).toBe(200);
+  expect(be.storedSales[0].change_due).toBe(85);
+  expect(be.sales.at(-1)!.payments.map((p) => p.method)).toEqual(["cash"]);
+});
+
+test("a closer look fits the till, and does not reserve room for a photo that is not there", async ({ page }) => {
+  // The photo box reserved 300px to say "No photograph yet" — a third of the
+  // till's height spent on the absence of a picture — which pushed Close and
+  // Add to sale off the bottom of the screen. Most of this shop's catalogue
+  // has no photograph.
+  await page.setViewportSize({ width: 1024, height: 590 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("cement");
+  await page.locator(".result-row").first().click();
+
+  await expect(page.locator(".detail-photo")).toHaveCount(0);
+  await expect(page.getByText(/No photograph yet/i)).toHaveCount(0);
+
+  // Measured without scrolling: the two buttons that are the whole point of
+  // opening the card must be on the screen.
+  const box = await page.evaluate(() => {
+    const el = [...document.querySelectorAll(".detail-actions button")]
+      .find((b) => /Add to sale/.test(b.textContent || ""));
+    if (!el) return null;
+    const b = el.getBoundingClientRect();
+    return { bottom: b.bottom, top: b.top };
+  });
+  expect(box, "Add to sale is not in the card").not.toBeNull();
+  expect(box!.bottom, "Add to sale bottom").toBeLessThanOrEqual(590);
+  expect(box!.top, "Add to sale top").toBeGreaterThanOrEqual(0);
+});
+
+test.describe("a touchscreen that is not an Android tablet", () => {
+  // The shop's counter is a Windows all-in-one WITH a touchscreen. The print
+  // path used to treat any touchscreen as the shop's Android tablet and
+  // navigate to "rawbt:base64,…" — a scheme only RawBT, an Android app,
+  // registers. On Windows that goes nowhere: no slip, no paper, no error.
+  // "Tender & print" appeared to do nothing, on a sale whose money was taken.
+  test.use({ hasTouch: true });
+
+  test("prints a slip the counter can actually see", async ({ page }) => {
+    await pairAndSignIn(page, USERS.manager.pin);
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Cash", exact: true }).click();
+    await page.getByRole("button", { name: /Tender & print/i }).click();
+
+    // The slip is on the screen, with the sale on it. (The preview is not a
+    // dialog role; .animate-scale-in is the card, as the other preview tests
+    // target it.)
+    const slip = page.locator(".animate-scale-in");
+    await expect(slip).toBeVisible();
+    await expect(slip).toContainText("Cement 42.5N 50kg");
+    await expect(slip).toContainText(/INV-\d+/);
+  });
+});
+
+test("an item with several photographs gets a carousel, and one photograph does not", async ({ page }) => {
+  // The closer look showed only the primary photograph, so the second and
+  // third — the ones that show the fitting from the other side — were taken,
+  // stored, and never seen at the counter.
+  const cement = PRODUCTS.find((p) => p.id === "p1")!;
+  cement.image_url = "/catalogue/cement-a.png";
+  cement.image_count = 3;
+  cement.photos = [
+    "/catalogue/cement-a.png",
+    "/catalogue/cement-b.png",
+    "/catalogue/cement-c.png",
+  ];
+  // Both seeded BEFORE sign-in: the catalogue is fetched and cached once, at
+  // sign-in, so a product edited after that is not the product the till sees.
+  const padlock = PRODUCTS.find((p) => p.id === "p5")!;
+  padlock.image_url = "/catalogue/padlock.png";
+  padlock.image_count = 1;
+  padlock.photos = ["/catalogue/padlock.png"];
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("cement");
+  // By name, not by position: the result list lags a keystroke, so "the first
+  // row" can still be the previous search's.
+  await page.locator(".result-row", { hasText: "Cement 42.5N 50kg" }).first().click();
+  await expect(page.locator(".detail-name")).toHaveText("Cement 42.5N 50kg");
+
+  const shot = page.locator(".detail-photo img");
+  // The cached photograph is up immediately; the rest arrive behind it.
+  await expect(shot).toHaveAttribute("src", "/catalogue/cement-a.png");
+  await expect(page.locator(".detail-shot-dots button")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "Next photograph" }).click();
+  await expect(shot).toHaveAttribute("src", "/catalogue/cement-b.png");
+
+  // And it wraps, so a thumb going one way can always get back.
+  await page.getByRole("button", { name: "Previous photograph" }).click();
+  await expect(shot).toHaveAttribute("src", "/catalogue/cement-a.png");
+  await page.getByRole("button", { name: "Previous photograph" }).click();
+  await expect(shot).toHaveAttribute("src", "/catalogue/cement-c.png");
+
+  // A dot goes straight there.
+  await page.locator(".detail-shot-dots button").nth(1).click();
+  await expect(shot).toHaveAttribute("src", "/catalogue/cement-b.png");
+
+  // One photograph gets no arrows and no dots: controls for a choice that
+  // does not exist are furniture.
+  await page.getByRole("button", { name: /^Close$/ }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("padlock");
+  await page.locator(".result-row", { hasText: "Padlock 50mm Brass" }).first().click();
+  await expect(page.locator(".detail-name")).toHaveText("Padlock 50mm Brass");
+  await expect(page.locator(".detail-photo img")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Next photograph" })).toHaveCount(0);
+  await expect(page.locator(".detail-shot-dots")).toHaveCount(0);
 });

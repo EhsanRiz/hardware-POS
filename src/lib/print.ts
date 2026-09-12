@@ -34,18 +34,27 @@ export function setPrintMode(m: PrintMode): void {
 // mouse-only desktop does not. We use this so the routing works even when the
 // tablet's browser reports an unexpected user-agent (e.g. Samsung DeX / desktop
 // mode), where isAndroid() can be false.
-function isTouchDevice(): boolean {
-  return (navigator.maxTouchPoints ?? 0) > 0;
-}
-
 function useThermal(): boolean {
   const m = getPrintMode();
   if (m === "thermal") return true; // explicitly forced to RawBT
   if (m === "browser") return false; // explicitly forced to on-screen preview
-  // Auto: the shop tablet (Android or any touchscreen) prints straight to RawBT
-  // via the rawbt: channel, so the Android "select printer" dialog never shows.
-  // Mouse-only desktops fall back to the on-screen preview.
-  return isAndroid() || isTouchDevice();
+  /**
+   * Auto: ANDROID, and only Android.
+   *
+   * The thermal path is `window.location.href = "rawbt:base64,…"`, and RawBT
+   * is an Android app — `rawbt:` is a scheme nothing else on earth registers.
+   * This used to return true for any touchscreen, on the assumption that a
+   * touchscreen meant the shop's Android tablet.
+   *
+   * The shop's counter turned out to be a Windows all-in-one with a
+   * touchscreen. It matched, took the thermal path, and navigated to a URL
+   * Windows has no handler for: no slip, no paper, no error — "Tender & print"
+   * appeared to do nothing at all. A sale that is rung up and not printed is
+   * the worst way for this to fail, because the money is taken either way.
+   *
+   * Touch is not the question. Whether RawBT can possibly be there is.
+   */
+  return isAndroid();
 }
 
 function b64ToBytes(b64: string): number[] {

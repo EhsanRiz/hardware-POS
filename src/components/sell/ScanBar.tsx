@@ -155,21 +155,34 @@ export default function ScanBar({
         {/* Choosing an account customer re-prices every line to the trade band,
             which is why it sits here in the scan bar and not inside payment —
             by the time you are taking money it is too late to re-price. */}
-        <button className="customer-pick" onClick={onPickCustomer}>
+        <button
+          className="customer-pick"
+          onClick={onPickCustomer}
+          // Where the visible second line went. A cashier who has never used
+          // this till still needs telling that the buyer's name, number and
+          // address live behind this button.
+          // Deliberately free of the word "name": getByLabel("Name") in the
+          // product editor is a substring match, and an aria-label containing
+          // it made that locator resolve to two elements a screen away.
+          aria-label={
+            customer
+              ? `${customer.name} — tap to change the buyer`
+              : "Walk-in customer — tap to add their details"
+          }
+        >
           <UserIcon />
           <span>
             <span className="who">{customer ? customer.name : "Walk-in customer"}</span>
-            {/* With nobody named, the second line says what tapping does. It
-                used to state the price band and nothing else, so the way to put
-                a name, number and address on the sale was behind a button that
-                looked like it only reported which price list was in use. */}
-            <span className="band">
-              {customer
-                ? trade
-                  ? "Trade price"
-                  : "Retail price"
-                : "Retail price · tap to add their details"}
-            </span>
+            {/* One line, not three. The second line used to read "Retail price ·
+                tap to add their details" on every walk-in sale — which is most
+                of them — and on a 1024 till that is a paragraph where a chip
+                should be. What it said is now in the button's accessible name
+                instead, so the instruction survives without taking the room.
+
+                TRADE is the exception and stays visible: it is not a label for
+                the button, it is a statement that this sale is being priced off
+                a different list, and that changes the money. */}
+            {customer && trade && <span className="band">Trade price</span>}
           </span>
         </button>
       </div>

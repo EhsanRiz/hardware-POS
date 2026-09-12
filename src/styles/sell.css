@@ -226,8 +226,10 @@
 }
 
 .customer-pick {
-  min-width: 216px;
-  min-height: 62px;
+  /* Smaller: one line of text needs neither 216px of width nor the 62px the
+     scan box beside it has to be. It is a chip, not a field. */
+  min-width: 0;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2043,7 +2045,11 @@ tr.is-void td:last-child { text-decoration: none; }
   max-height: 88vh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  /* min-height:0 so the body below can actually shrink; without it a flex
+     child refuses to go below its content and the card grows past the
+     viewport instead, which is how Close and Add to sale ended up off the
+     bottom of the screen. */
+  min-height: 0;
   background: var(--color-bg);
   border: 1px solid var(--divider);
   border-radius: var(--radius-md);
@@ -2055,16 +2061,77 @@ tr.is-void td:last-child { text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 300px;
+  /* A share of the screen rather than a fixed slab: 300px is a third of the
+     till's height, and the card has a name, a price, a quantity stepper and
+     two buttons to fit under it. */
+  height: min(300px, 30vh);
   background: var(--color-surface);
   border-bottom: 1px solid var(--divider);
 }
 /* Contained, not cropped: a catalogue photograph is already framed, and
    filling a square with it turns a tap fitting into a length of pipe. */
+.detail-photo { position: relative; }
 .detail-photo img { max-width: 92%; max-height: 92%; object-fit: contain; }
+
+/* The carousel, for the items that have more than one photograph. Arrows sit
+   ON the picture rather than beside it: the card is 560px at most and a column
+   of chrome either side would take it out of the middle. */
+.detail-shot-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--divider);
+  background: rgba(245, 242, 234, 0.92);
+  color: var(--color-text);
+  font-size: 24px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.detail-shot-nav.is-prev { left: 8px; }
+.detail-shot-nav.is-next { right: 8px; }
+.detail-shot-nav:hover { border-color: var(--color-accent); }
+
+.detail-shot-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+.detail-shot-dots button {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-neutral-700);
+  background: transparent;
+  cursor: pointer;
+}
+.detail-shot-dots button.is-on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
 .detail-nophoto { font-size: 13px; color: var(--color-neutral-700); }
 
-.detail-body { padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+/* The part that gives: everything between the picture and the buttons
+   scrolls, so the two things a cashier must reach never move. */
+.detail-body {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
 .detail-name {
   font-size: 22px;
   font-weight: 700;
@@ -2111,7 +2178,13 @@ tr.is-void td:last-child { text-decoration: none; }
 .detail-note { font-size: 12px; color: var(--color-neutral-700); }
 .detail-note.is-short { color: var(--color-owing); }
 .detail-desc { font-size: 14px; color: var(--color-neutral-800); }
-.detail-actions { margin-top: 4px; }
+.detail-actions {
+  margin-top: 0;
+  flex: none;
+  padding: 14px 22px;
+  border-top: 1px solid var(--divider);
+  background: var(--color-bg);
+}
 
 /* How many, decided before the line exists. Stepper for the thumb, field for
    the keyboard: 44px targets per the hit-target constraint, and the field opens

@@ -36,6 +36,16 @@ export interface FakeProduct {
   stock_qty: number | null;
   reorder_level: number | null;
   image_url: string | null;
+  /**
+   * How many photographs this item has, and what they are.
+   *
+   * The catalogue carries the COUNT (it is what the closer look uses to decide
+   * whether to ask for the rest), and pos_product_images serves the list. The
+   * fake had neither, so a carousel could have been built, shipped and tested
+   * green against a backend that could only ever return one picture.
+   */
+  image_count?: number | null;
+  photos?: string[];
   sort_order: number;
   bin: string | null;
   /** The shop's ceiling on discounting this line. Null means uncapped. */
@@ -101,7 +111,8 @@ function mk(
     category_id: "c1", category_name: "Building",
     unit_code, unit_name, allows_fraction,
     price_retail, price_trade, tax_code: "standard",
-    stock_qty, reorder_level, image_url: null, sort_order: 0, bin: "A1",
+    stock_qty, reorder_level, image_url: null, image_count: null, photos: [],
+    sort_order: 0, bin: "A1",
     max_discount_percent: null, max_discount_amount: null,
     // What the shop paid. Stated once, here, rather than hardcoded separately
     // in the catalogue route and again on a sale line — booking a delivery in
@@ -940,6 +951,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     p.max_discount_amount = null;
     // The shelf screen writes photographs and price fixes onto module state.
     p.image_url = null;
+    p.image_count = null;
+    p.photos = [];
     p.price_retail = SEED_RETAIL.get(p.id)!;
     p.stock_qty = SEED_STOCK.get(p.id) ?? null;
     // Booking a delivery in against an order writes cost onto module state too.
@@ -3491,6 +3504,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           assigned_name:
             be.staff.find((u) => u.id === reg!.assigned_to)?.name ?? null,
         }]);
+      }
+
+      case "rpc/pos_product_images": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const p = PRODUCTS.find((x) => x.id === body.p_product_id);
+        const shots = p?.photos ?? [];
+        // Primary first, exactly as the real one orders them.
+        return json(
+          shots.map((url, i) => ({ id: `img-${p?.id}-${i}`, url, sort_order: i }))
+        );
       }
 
       case "rpc/pos_staff_for_login":
