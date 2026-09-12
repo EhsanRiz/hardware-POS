@@ -5,7 +5,7 @@
 // On desktop we fall back to a printable text preview.
 import { PRINT_HEIGHT_SCALE, PRINT_WIDTH_SCALE } from "./config";
 import { LOGO_ESCPOS_B64 } from "./logoRaster";
-import { openPrintPreview, type PreviewAction } from "./printPreview";
+import { openPrintPreview, printWithoutPreview, type PreviewAction } from "./printPreview";
 import { stripMarkup } from "./receipt";
 
 const ESC = 0x1b;
@@ -19,13 +19,30 @@ export function isAndroid(): boolean {
 
 // Print mode lets the shop force the thermal (RawBT) path even when the device
 // isn't auto-detected as Android (some tablets report unusual user-agents).
-export type PrintMode = "auto" | "thermal" | "browser";
+/**
+ * How a slip gets to paper.
+ *
+ *   auto     — Android goes to RawBT, everything else shows the slip on screen
+ *   thermal  — force RawBT (a tablet reporting an odd user-agent)
+ *   browser  — force the on-screen slip
+ *   direct   — hand it straight to the browser's printer, no slip on screen
+ *
+ * "direct" is for a counter with a till printer already set as the machine's
+ * default — the shop's Epson. The slip on screen is a preview of something
+ * that is about to come out of a printer anyway, and at a busy counter it is
+ * one more thing to dismiss on every sale.
+ *
+ * It removes OUR dialog. The browser's own print dialog is not ours to remove:
+ * Chrome only skips that when it is launched with --kiosk-printing, which is a
+ * property of the shortcut, not of the page. See the note in ShopSettings.
+ */
+export type PrintMode = "auto" | "thermal" | "browser" | "direct";
 const PRINT_MODE_KEY = "pos.printMode";
 
 export function getPrintMode(): PrintMode {
   const v =
     typeof localStorage !== "undefined" ? localStorage.getItem(PRINT_MODE_KEY) : null;
-  return v === "thermal" || v === "browser" ? v : "auto";
+  return v === "thermal" || v === "browser" || v === "direct" ? v : "auto";
 }
 export function setPrintMode(m: PrintMode): void {
   localStorage.setItem(PRINT_MODE_KEY, m);
@@ -127,6 +144,18 @@ export function buildEscPos(text: string): number[] {
 }
 
 export function printReceipt(text: string, title = "Receipt", action?: PreviewAction): void {
+  /**
+   * Straight to paper: no slip on screen at all.
+   *
+   * The hidden #print-area is filled the same way the preview fills it, then
+   * the browser is asked to print. The caller's `action` — "Cancel this sale"
+   * — is not lost: the till's banner carries it too, which is where a cashier
+   * looks once the paper is out.
+   */
+  if (getPrintMode() === "direct") {
+    printWithoutPreview(text, title);
+    return;
+  }
   if (useThermal()) {
     // Straight to paper; there is no popup to put the action on. The till
     // offers it in the banner instead, which is where the cashier looks next.

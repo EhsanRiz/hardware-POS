@@ -5,6 +5,7 @@ import {
 import { errorMessage } from "../../lib/errors";
 import { downscaleImage, imageSrc } from "../../lib/images";
 import { refreshSettings, shopSettings } from "../../lib/settings";
+import { getPrintMode, setPrintMode, type PrintMode } from "../../lib/print";
 
 /** The text fields only — the one boolean is edited by its own control. */
 type TextKey = {
@@ -59,6 +60,8 @@ const BANK_FIELDS: Field[] = [
 export default function ShopSettings({ pin }: { pin: string }) {
   const [f, setF] = useState<ShopDetails>(() => toDetails(shopSettings()));
   const [busy, setBusy] = useState(false);
+  // Per-device, so it is read from the device rather than the shop record.
+  const [printMode, setPrintModeState] = useState<PrintMode>(getPrintMode);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   // Read-only, and served rather than compiled in — see the note beside it.
@@ -379,6 +382,56 @@ export default function ShopSettings({ pin }: { pin: string }) {
             onChange={(e) => void pickLogo(e.target.files?.[0])}
           />
         </div>
+      </div>
+
+      <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
+        <div>
+          <h2 className="font-medium">Printing</h2>
+          <p className="text-sm text-stone-500">
+            Kept on this device, not on the shop's account — the counter and a
+            manager's laptop print to different things.
+          </p>
+        </div>
+
+        {(
+          [
+            ["auto", "Work it out", "An Android tablet prints through RawBT; anything else shows the slip on screen."],
+            ["direct", "Straight to the printer", "No slip on screen. Goes to whatever this machine prints to by default — set that to the till printer."],
+            ["browser", "Always show the slip", "Useful with no printer attached, or to read a slip before it is printed."],
+            ["thermal", "Always RawBT", "For a tablet that reports an unusual browser and is not recognised as Android."],
+          ] as [PrintMode, string, string][]
+        ).map(([value, label, blurb]) => (
+          <label key={value} className="flex gap-3 items-start">
+            <input
+              type="radio"
+              name="printmode"
+              className="mt-1"
+              checked={printMode === value}
+              onChange={() => {
+                setPrintMode(value);
+                setPrintModeState(value);
+              }}
+            />
+            <span>
+              <span className="block text-sm text-stone-800">{label}</span>
+              <span className="block text-xs text-stone-500">{blurb}</span>
+            </span>
+          </label>
+        ))}
+
+        {/* The half of this that is not ours to fix. Said here, next to the
+            setting, because this is where somebody stands when they wonder why
+            a dialog is still appearing. */}
+        {printMode === "direct" && (
+          <p className="text-xs text-stone-500 border-t border-stone-200 pt-3">
+            The shop's own dialog is now gone. Chrome still shows ITS print
+            dialog, and no web page can switch that off — it is a property of
+            how Chrome was started, not of this app. To lose it too, launch the
+            till with <code>--kiosk-printing</code>: right-click the shortcut,
+            Properties, and add it to the end of the Target box, after a space.
+            Chrome then prints to the default printer with no dialog at all.
+          </p>
+        )}
       </div>
 
       <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">

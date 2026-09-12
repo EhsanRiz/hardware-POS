@@ -7683,3 +7683,50 @@ test("the scan box gets the room, not the buyer chip", async ({ page }) => {
   expect(w.input, "scan input width").toBeGreaterThan(220);
   expect(w.chip, "buyer chip width").toBeLessThan(w.input);
 });
+
+test("set to print straight, the counter gets paper and no popup at all", async ({ page }) => {
+  // At a counter with the till printer as the machine's default, the slip on
+  // screen is a preview of something already on its way out of a printer —
+  // one more thing to dismiss on every sale. This removes OUR dialog; the
+  // browser's own is a property of how Chrome was started, not of the page.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.evaluate(() => localStorage.setItem("pos.printMode", "direct"));
+
+  // window.print() would block a headless run, so it is counted, not called.
+  await page.addInitScript(() => {
+    (window as unknown as { __prints: number }).__prints = 0;
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    (window as unknown as { __prints: number }).__prints = 0;
+    window.print = () => {
+      const w = window as unknown as { __prints: number; __printed: string };
+      w.__prints += 1;
+      // Captured HERE, not afterwards: the component clears the print area as
+      // soon as the browser has taken it, so reading it later reads nothing
+      // and would pass whether or not the slip was ever in the page.
+      w.__printed = document.querySelector("#print-area")?.textContent ?? "";
+    };
+  });
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+
+  // The sale went through, the browser was asked to print, and nothing was
+  // ever drawn over the till.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints))
+    .toBeGreaterThan(0);
+  await expect(page.locator(".animate-scale-in")).toHaveCount(0);
+
+  // And the slip really was in the page when the printer read it — printing an
+  // empty #print-area is a blank sheet and a cashier with no idea why.
+  const printed = await page.evaluate(
+    () => (window as unknown as { __printed?: string }).__printed ?? ""
+  );
+  expect(printed).toContain("Cement 42.5N 50kg");
+  expect(printed).toMatch(/INV-\d+/);
+});

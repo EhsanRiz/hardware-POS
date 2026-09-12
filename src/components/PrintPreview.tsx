@@ -84,12 +84,37 @@ function renderMarkup(text: string): ReactNode[] {
 // thermal printer). On the tablet, printing goes straight to RawBT and this
 // never shows.
 export default function PrintPreview() {
-  const [slip, setSlip] = useState<{ text: string; title: string; action?: PreviewAction } | null>(null);
+  const [slip, setSlip] = useState<{
+    text: string;
+    title: string;
+    action?: PreviewAction;
+    /** Print it and show nothing — see printWithoutPreview. */
+    direct?: boolean;
+  } | null>(null);
 
   useEffect(() => {
-    setPrintPreviewHandler((text, title, action) => setSlip({ text, title, action }));
+    setPrintPreviewHandler((text, title, action, direct) =>
+      setSlip({ text, title, action, direct })
+    );
     return () => setPrintPreviewHandler(null);
   }, []);
+
+  /**
+   * Straight to paper.
+   *
+   * No frame-waiting here, though it was written that way first: an effect
+   * runs after React has committed the DOM, so #print-area is already in the
+   * page when this fires. Deferring it by two animation frames changed
+   * nothing, which the test proved by removing them — so the simpler version
+   * is the honest one. The slip is cleared straight after, which is why the
+   * test captures the page inside its own window.print() stub rather than
+   * reading the DOM afterwards.
+   */
+  useEffect(() => {
+    if (!slip?.direct) return;
+    window.print();
+    setSlip(null);
+  }, [slip]);
 
   // Close on Escape for convenience.
   useEffect(() => {
@@ -100,11 +125,21 @@ export default function PrintPreview() {
   }, [slip]);
 
   if (!slip) return null;
-  const { text, title, action } = slip;
+  const { text, title, action, direct } = slip;
 
   // The browser prints the whole page, but our @media print CSS hides
   // everything except #print-area — so only the logo + slip text comes out.
   const handlePrint = () => window.print();
+
+  // Nothing on the screen at all: the print area exists for the printer to
+  // read and is gone again the moment the browser has taken it.
+  if (direct) {
+    return (
+      <div id="print-area" aria-hidden="true">
+        <pre>{renderMarkup(text)}</pre>
+      </div>
+    );
+  }
 
   return (
     <>
