@@ -437,6 +437,32 @@
 .btn-line.quiet { border-color: transparent; color: var(--color-neutral-700); }
 .btn-line.quiet:hover:not(:disabled) { color: var(--color-owing); background: rgba(176, 58, 43, 0.08); border-color: transparent; }
 
+/* The way out of a pop-up. No box, so it cannot be mistaken for a row or for
+   the action beside it: it read as a third option in a list of two, and as
+   a twin of the outlined button next to it. Underlined like a link, and red
+   only under the finger. */
+.btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-neutral-700);
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.btn-cancel:hover:not(:disabled) { color: var(--color-owing); background: rgba(176, 58, 43, 0.08); }
+.btn-cancel:active:not(:disabled) { background: rgba(176, 58, 43, 0.14); }
+.btn-cancel:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* The committing button inside a modal. Solid, so that in a two-button row the
    eye lands on the action rather than on Cancel. */
 .btn-fill {

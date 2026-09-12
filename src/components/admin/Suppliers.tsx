@@ -626,7 +626,7 @@ function SupplierForm({
         ))}
         {error && <p className="acc-note is-bad" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn-fill" disabled={busy || !f.name.trim()}>
@@ -840,7 +840,7 @@ function NewDocument({
         {progress && <p className="acc-note">{progress}</p>}
         {error && <p className="acc-note is-bad" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button

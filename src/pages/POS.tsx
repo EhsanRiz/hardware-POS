@@ -152,6 +152,11 @@ export default function POS() {
   const freshTimer = useRef<number>();
 
   const [showParked, setShowParked] = useState(false);
+  // The parked slot the open sale came from, if it came from one. Parking it
+  // again goes back into that slot at its original time rather than adding
+  // a second copy, and voiding it asks rather than losing it.
+  const [parkedFrom, setParkedFrom] = useState<{ id: string; at: string } | null>(null);
+  const [askVoid, setAskVoid] = useState(false);
   const [parked, setParked] = useState<ParkedSale[]>(() =>
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
@@ -176,7 +181,11 @@ export default function POS() {
     const live = cacheGet<ParkedSale | null>(LIVE_KEY, null);
     if (!live || !live.lines?.length) return;
     setParked((prev) => {
-      const next = [...prev, { ...live, id: String(Date.now()), at: new Date().toISOString() }];
+      // A sale resumed from a parked slot goes back into that slot; a sale
+      // that was never parked gets one now.
+      const fromSlot = live.id !== "live";
+      const entry = fromSlot ? live : { ...live, id: String(Date.now()), at: new Date().toISOString() };
+      const next = [...prev.filter((x) => x.id !== entry.id), entry].sort((a, b) => a.at.localeCompare(b.at));
       cacheSet(PARKED_KEY, next);
       return next;
     });
@@ -438,13 +447,19 @@ export default function POS() {
     cacheSet(
       LIVE_KEY,
       lines.length
-        ? { id: "live", at: new Date().toISOString(), lines, customer, discount, discountReason }
+        ? {
+            id: parkedFrom?.id ?? "live",
+            at: parkedFrom?.at ?? new Date().toISOString(),
+            lines, customer, discount, discountReason,
+          }
         : null
     );
-  }, [lines, customer, discount, discountReason]);
+  }, [lines, customer, discount, discountReason, parkedFrom]);
 
   function clearSale() {
     setPayOpen(false);
+    setAskVoid(false);
+    setParkedFrom(null);
     setLines([]);
     setCustomer(null);
     setDiscount(0);
@@ -688,21 +703,41 @@ export default function POS() {
   /** Set the sale aside so the next customer can be served. */
   function park() {
     if (lines.length === 0) return;
-    const next = [
-      ...parked,
-      {
-        id: String(Date.now()),
-        at: new Date().toISOString(),
-        lines,
-        customer,
-        discount,
-        discountReason,
-      },
-    ];
+    // Back into its own slot, at the time it was first parked: a customer
+    // who stepped away at 09:19 is still the 09:19 customer.
+    const entry = {
+      id: parkedFrom?.id ?? String(Date.now()),
+      at: parkedFrom?.at ?? new Date().toISOString(),
+      lines,
+      customer,
+      discount,
+      discountReason,
+    };
+    const next = [...parked.filter((x) => x.id !== entry.id), entry]
+      .sort((a, b) => a.at.localeCompare(b.at));
     setParked(next);
     cacheSet(PARKED_KEY, next);
     clearSale();
     setBanner("Sale parked. Resume it from the button below.");
+  }
+
+  /** A parked sale nobody is coming back for. */
+  function deleteParked(id: string) {
+    const rest = parked.filter((x) => x.id !== id);
+    setParked(rest);
+    cacheSet(PARKED_KEY, rest);
+    if (rest.length < 2) setShowParked(false);
+  }
+
+  /**
+   * Void: gone at once for a sale that was never parked, as before. A sale
+   * that came off the parked list is asked about, because the customer who
+   * parked it may be on their way back.
+   */
+  function voidSale() {
+    if (lines.length === 0) return;
+    if (parkedFrom) setAskVoid(true);
+    else clearSale();
   }
 
   /** Bring one parked sale back to the counter. */
@@ -717,6 +752,7 @@ export default function POS() {
     setParked(rest);
     cacheSet(PARKED_KEY, rest);
     setShowParked(false);
+    setParkedFrom({ id: p.id, at: p.at });
     setLines(p.lines);
     setCustomer(p.customer);
     setDiscount(p.discount);
@@ -1218,7 +1254,7 @@ export default function POS() {
             <button
               className="btn-line quiet push"
               disabled={lines.length === 0}
-              onClick={clearSale}
+              onClick={voidSale}
             >
               Void sale
             </button>
@@ -1268,7 +1304,39 @@ export default function POS() {
       {/* Recording a buyer is authorised by the cashier's own permission, so
           there is no picker without one signed in. */}
       {showParked && (
-        <ParkedPicker parked={parked} onPick={resume} onClose={() => setShowParked(false)} />
+        <ParkedPicker
+          parked={parked}
+          onPick={resume}
+          onDelete={deleteParked}
+          onClose={() => setShowParked(false)}
+        />
+      )}
+
+      {askVoid && (
+        <div className="modal-backdrop" onClick={() => setAskVoid(false)}>
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="This sale was parked"
+          >
+            <h2 className="modal-title">This sale was parked</h2>
+            <p className="acc-note">
+              Put it back for whoever parked it, or delete it for good.
+            </p>
+            <div className="modal-actions" style={{ marginTop: 14 }}>
+              <button className="btn-cancel" onClick={() => setAskVoid(false)}>
+                Cancel
+              </button>
+              <button className="btn-line" onClick={park}>
+                Put it back
+              </button>
+              <button className="btn-fill" onClick={clearSale}>
+                Delete it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showCustomers && user && (
@@ -1385,6 +1453,7 @@ export default function POS() {
         <DeliveryForm
           initial={delivery}
           suggestedName={customer?.name ?? null}
+          suggestedAddress={customer?.address ?? null}
           onCancel={() => setAskDelivery(false)}
           onConfirm={(d) => void agreeDelivery(d)}
         />

@@ -854,7 +854,7 @@ function AskDate({
           onKeyDown={(e) => { if (e.key === "Enter") onSave(when || null); }}
         />
         <div className="modal-actions">
-          <button className="btn-line" onClick={onCancel}>Cancel</button>
+          <button className="btn-cancel" onClick={onCancel}>Cancel</button>
           {/* A bill can lose its date as well as gain one. */}
           <button className="btn-line quiet" onClick={() => onSave(null)}>
             No date
@@ -920,7 +920,7 @@ function AskAmount({
                 : `${money(-left)} more than is owed.`}
         </p>
         <div className="modal-actions">
-          <button className="btn-line" onClick={onCancel}>Cancel</button>
+          <button className="btn-cancel" onClick={onCancel}>Cancel</button>
           <button className="btn-fill" disabled={!ok} onClick={() => onSave(amount)}>
             {ok ? `Pay ${money(amount)}` : "Pay"}
           </button>

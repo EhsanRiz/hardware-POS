@@ -466,7 +466,7 @@ export default function ProductEditor({
           )}
           <button
             onClick={onClose}
-            className="ml-auto px-4 py-2.5 rounded-xl bg-stone-100"
+            className="btn-cancel ml-auto"
           >
             Cancel
           </button>

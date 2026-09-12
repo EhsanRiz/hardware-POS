@@ -283,6 +283,17 @@ row says when it was parked, whose it is, what is in it and what it comes
 to, and the one tapped is the one that comes back. A sale that is open
 cannot be overwritten by a resume; finish or park it first.
 
+A parked sale stays parked until it is sold or deleted. A resumed sale keeps
+its slot: parking it again goes back in at its original time, a refresh with
+it open puts it back there too, and voiding it asks ("Put it back" or "Delete
+it") rather than losing it. Each row in "Which parked sale?" has a cross for
+the customer who never came back, behind a confirm.
+
+Every pop-up's Cancel is `.btn-cancel`: no box, underlined, red only under
+the finger, so it is neither a row nor the action beside it. A delivery form
+opens with the buyer's address on file already in it, still editable; the
+record itself is not changed by a one-off delivery elsewhere.
+
 ## Fixing a buyer at the counter
 
 Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone

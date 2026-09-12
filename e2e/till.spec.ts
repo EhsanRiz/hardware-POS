@@ -2005,13 +2005,167 @@ test("two parked sales are chosen between, not resumed blind", async ({ page }) 
   await expect(banner(page)).toContainText(/Finish or park this sale/);
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
 
-  // ONE PARKED: straight back, no question asked.
+  // ONE PARKED: straight back, no question asked. (Voiding a sale that came
+  // off the parked list asks first; that is the next test's subject.)
   await page.getByRole("button", { name: "Void sale" }).click();
+  await page.getByRole("dialog", { name: "This sale was parked" }).getByRole("button", { name: "Delete it" }).click();
   await expect(page.locator(".line-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Resume parked · 1" }).click();
   await expect(page.getByRole("dialog", { name: "Which parked sale?" })).toHaveCount(0);
   await expect(page.locator(".line-row")).toContainText("Twin & Earth 2.5mm 100m");
   await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+});
+
+test("a parked sale stays parked until it is sold or deleted", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const park = async () => { await page.getByRole("button", { name: "Park sale" }).click(); };
+  const scanCement = async () => {
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".line-row")).toHaveCount(1);
+  };
+  await scanCement(); await park();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "2"); await park();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  const rows = which.locator(".modal-row");
+
+  // RESUMED AND PARKED AGAIN IS THE SAME SALE, in the same slot at the same
+  // time — not a third entry with a new time.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await park();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+
+  // VOIDING A RESUMED SALE ASKS. The customer who parked it may be on their
+  // way back; a slip of the finger must not lose their basket.
+  await rows.nth(0).click();
+  await page.getByRole("button", { name: "Void sale" }).click();
+  const ask = page.getByRole("dialog", { name: "This sale was parked" });
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Put it back" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+
+  // A SALE NOBODY IS COMING BACK FOR is deleted from the list itself, after
+  // a confirm; the other stays where it was.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Keep it" }).click();
+  await expect(rows).toHaveCount(2);
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Delete it" }).click();
+  await expect(which).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // AND "DELETE IT" ON THE VOID PROMPT IS THE OTHER WAY OUT.
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await ask.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+
+  // SOLD IS GONE: a resumed sale that is tendered leaves nothing parked.
+  await scanCement(); await park();
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close", { exact: true }).click();
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+
+  // A REFRESH WITH A RESUMED SALE OPEN puts it back in its own slot, not a
+  // new one: still two parked, not three.
+  await scanCement(); await park();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1"); await park();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await expect(banner(page)).toContainText(/has been parked/i);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  // In its own slot: still first, at the time it was first parked.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+});
+
+test("Cancel is neither a row nor the action, anywhere", async ({ page }) => {
+  // It read as a third option under a list of two, and as the twin of the
+  // outlined button beside it. Asserted as computed style, on three
+  // pop-ups built three different ways.
+  const style = (l: import("@playwright/test").Locator) =>
+    l.evaluate((el) => {
+      const c = getComputedStyle(el);
+      return { underline: c.textDecorationLine, bg: c.backgroundColor, border: c.borderTopColor };
+    });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // The customer picker: a list, then Cancel.
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  const cancel = await style(picker.getByRole("button", { name: "Cancel" }));
+  const row = await style(picker.locator(".modal-row").first());
+  expect(cancel.underline).toBe("underline");
+  expect(cancel.bg).toBe("rgba(0, 0, 0, 0)");
+  expect(row.underline).toBe("none");
+  await picker.getByRole("button", { name: "Cancel" }).click();
+
+  // The delivery form: Cancel beside a filled action, and an outlined one.
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  const c2 = await style(form.getByRole("button", { name: "Cancel" }));
+  const add = await style(form.getByRole("button", { name: "Add to the sale" }));
+  expect(c2.underline).toBe("underline");
+  expect(add.underline).toBe("none");
+  expect(add.bg).not.toBe("rgba(0, 0, 0, 0)");
+  await form.getByRole("button", { name: "Cancel" }).click();
+
+  // The discount modal, which was styled by hand rather than by the sheet.
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  const dlg = page.getByRole("dialog", { name: "Apply discount" });
+  const c3 = await style(dlg.getByRole("button", { name: "Cancel" }));
+  expect(c3.underline).toBe("underline");
+  expect(c3.bg).toBe("rgba(0, 0, 0, 0)");
+});
+
+test("a delivery takes the buyer's address off their record, and it can still be changed", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+    credit_limit: 0, balance: 0, available: 0, address: "14 Diale Rd, Bloemfontein",
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+
+  // The address on file is offered, not typed again.
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await expect(form.getByLabel("Deliver to")).toHaveValue("Zaib Ahmad");
+  await expect(form.locator("textarea")).toHaveValue("14 Diale Rd, Bloemfontein");
+  // And it is theirs to change: this load goes to the site, not the house.
+  await form.locator("textarea").fill("Plot 7, Bainsvlei");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+  await expect(page.locator(".line-row", { hasText: "Delivery" })).toBeVisible();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.deliveries).toHaveLength(1);
+  expect(be.deliveries[0].customer_name).toBe("Zaib Ahmad");
+  expect(be.deliveries[0].address).toBe("Plot 7, Bainsvlei");
+  // The record itself was not changed by a one-off delivery elsewhere.
+  expect(be.customers[0].address).toBe("14 Diale Rd, Bloemfontein");
 });
 
 test("a completed sale does not come back parked", async ({ page }) => {

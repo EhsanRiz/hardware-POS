@@ -214,7 +214,7 @@ export default function PaymentModal({
           <button
             onClick={onCancel}
             disabled={busy}
-            className="flex-1 py-3 rounded-xl bg-stone-100 text-stone-700"
+            className="btn-cancel flex-1"
           >
             Cancel
           </button>

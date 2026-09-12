@@ -326,7 +326,7 @@ export default function ReceiveDocument({
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button
