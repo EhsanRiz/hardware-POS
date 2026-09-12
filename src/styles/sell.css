@@ -2791,12 +2791,14 @@ tr.is-void td:last-child { text-decoration: none; }
    the machine at both sizes: ~590 windowed and 768 with the browser out of the
    way. A 1080p laptop maximised is ~950 and keeps the roomy layout. */
 @media (max-height: 820px) {
-  /* The colophon is 34px of a 590px screen, on every tab, and nobody has ever
-     read it at a counter. It stays on taller screens. */
-  .sell-foot { display: none; }
+  /* The colophon STAYS. Hiding it was a taste call of mine — 34px of a 590px
+     screen that nobody reads at a counter — and it moved the action row down
+     into the band where the TillAI bubble floats (fixed, bottom-left), so the
+     bubble began intercepting clicks on Save as quote. The 34px is bought
+     below instead, from padding and type that had it to give. */
 
   .sell-head { padding-top: 8px; padding-bottom: 8px; }
-  .totals { margin-top: 10px; padding: 12px 18px 14px; }
+  .totals { margin-top: 8px; padding: 10px 16px 10px; }
 
   /* Five tenders in two rows have to fit beside a total, a button and a hint.
      These come down together rather than one of them collapsing. */
@@ -2812,8 +2814,9 @@ tr.is-void td:last-child { text-decoration: none; }
      the 44px-ish target a finger needs once the 5px gaps are counted as part
      of the reach, and this is a screen you press with a fingertip, not a
      thumb held at arm's length. */
-  .keypad { gap: 5px; }
-  .keypad button { min-height: 40px; font-size: 16px; }
+  .keypad { gap: 4px; }
+  .keypad button { min-height: 38px; font-size: 16px; }
+  .tender-btn { min-height: 52px; }
 
   /* The total keeps its job — the figure a customer reads from a metre away —
      but 46px with 26px of air above it is a poster on a screen this short.
