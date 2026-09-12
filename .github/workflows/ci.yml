@@ -106,3 +106,61 @@ jobs:
             test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # ------------------------------------------------------------------------
+  # The till in the shop, updated.
+  #
+  # Deploying was a person running two commands on the one machine that had
+  # both a .env and a Cloudflare login. That meant every fix sat finished and
+  # unshipped until somebody was at that machine — and on the day the slip
+  # stopped printing, the fix existed for hours before it reached the counter.
+  #
+  # NEEDS BOTH TEST JOBS. A till a shop sells on must never take a build whose
+  # migrations would not apply or whose suite is red; "deploy on green" is the
+  # whole point of putting this behind them rather than beside them.
+  #
+  # Only on a push to main. A pull request builds and tests; it does not ship.
+  # ------------------------------------------------------------------------
+  deploy:
+    name: Deploy the till
+    needs: [database, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One at a time, and never cancel a half-finished upload.
+    concurrency:
+      group: deploy-app
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # The only value the bundle cannot do without. Everything else in
+      # .env.example now has a fallback in the code, or comes from the server:
+      # the shop's name, address and VAT number are settings, not build flags.
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$VITE_SUPABASE_ANON_KEY" || {
+            echo "::error::VITE_SUPABASE_ANON_KEY is not set. The bundle would"
+            echo "::error::build and then fail on load at the counter."
+            exit 1
+          }
+          npm run build
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # wrangler.toml names the worker (hardware-pos) and attaches
+          # app.innovaearth.com itself, so there is no dashboard step.
+          command: deploy
