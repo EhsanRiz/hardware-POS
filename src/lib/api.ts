@@ -451,6 +451,30 @@ export async function quickCustomer(
   return (data as Customer[])[0];
 }
 
+/**
+ * Put a buyer's name, number or address right, at the counter (0085).
+ *
+ * Authorised like recording one: the cashier's own right to take payments.
+ * It cannot touch money — credit, trade price, code and VAT number stay as
+ * the back office set them.
+ */
+export async function fixCustomerDetails(
+  cashierId: string,
+  customerId: string,
+  details: { name: string; phone: string; address?: string | null }
+): Promise<Customer> {
+  const { data, error } = await supabase.rpc("pos_customer_fix_details", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_customer_id: customerId,
+    p_name: details.name,
+    p_phone: details.phone,
+    p_address: details.address ?? null,
+  });
+  if (error) throw error;
+  return (data as Customer[])[0];
+}
+
 // --- Accounts ---------------------------------------------------------------
 
 /** Every account, with what is owed and how old it is. */

@@ -6067,6 +6067,56 @@ test("a delivery costs the shop, and a free one costs it just the same", async (
   await expect(del).not.toContainText("No cost is recorded against a delivery");
 });
 
+test("a buyer's name, number or address is put right at the counter, and nothing about money moves", async ({ page }) => {
+  be.customers.push(
+    { id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+      credit_limit: 0, balance: 0, available: 0 },
+    { id: "k2", code: "TRD-001", name: "Thabo Mokoena", phone: "082 555 0186", is_trade: true,
+      credit_limit: 25000, balance: 0, available: 25000 },
+  );
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  await picker.locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+
+  // THE PENCIL. The cashier hears about the wrong digit standing in front
+  // of the person; they should not have to send it to the back office.
+  await page.getByRole("button", { name: /Zaib Ahmad/ }).click();
+  await picker.getByRole("button", { name: "Edit Zaib Ahmad" }).click();
+  const form = picker.getByRole("group", { name: "Edit Zaib Ahmad" });
+  await expect(form.getByLabel("Their name")).toHaveValue("Zaib Ahmad");
+  await expect(form.getByLabel("Their phone number")).toHaveValue("0673747474");
+  await expect(form).toContainText("Credit, trade pricing and the account itself are changed under Accounts");
+
+  // A number belongs to one buyer: another's is refused, by name.
+  await form.getByLabel("Their phone number").fill("0825550186");
+  await form.getByRole("button", { name: "Save changes" }).click();
+  await expect(picker).toContainText("That number is already on file for Thabo Mokoena");
+
+  await form.getByLabel("Their name").fill("Zaib Ahmed");
+  await form.getByLabel("Their phone number").fill("067 374 7475");
+  await form.getByLabel(/Delivery address/).fill("14 Mabille Rd, Maseru");
+  await form.getByRole("button", { name: "Save changes" }).click();
+
+  // Back on the list with the corrected row, and the record itself is right.
+  await expect(form).toHaveCount(0);
+  const row = picker.locator(".modal-row-pair", { hasText: "Zaib Ahmed" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("067 374 7475");
+  expect(be.customers[0]).toMatchObject({
+    name: "Zaib Ahmed", phone: "067 374 7475", address: "14 Mabille Rd, Maseru",
+    credit_limit: 0, is_trade: false, code: null,
+  });
+
+  // The sale follows: it was theirs, and the slip will carry the right name.
+  await picker.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: /Zaib Ahmed/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toHaveCount(0);
+});
+
 test("a buyer given by name is added right there, with the number that finds them again", async ({ page }) => {
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
