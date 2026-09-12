@@ -274,6 +274,15 @@ filed by hand — has "Read this document" on it: the filed pages go to the
 reader and the reading lands on the same document
 (`pos_purchasing_read_filed_document`). The kind the person chose stands.
 
+## Parked sales
+
+"Park sale" sets the basket aside so the next customer can be served; the
+parked sales live on the device (`sell.parked`). One parked sale comes back
+at a tap of "Resume parked · 1". Two or more open "Which parked sale?": each
+row says when it was parked, whose it is, what is in it and what it comes
+to, and the one tapped is the one that comes back. A sale that is open
+cannot be overwritten by a resume; finish or park it first.
+
 ## Fixing a buyer at the counter
 
 Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone

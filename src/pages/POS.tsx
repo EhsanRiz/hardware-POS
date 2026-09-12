@@ -46,6 +46,7 @@ import { printReceipt } from "../lib/print";
 import { buildQuoteText, buildReceiptText, cartQuoteLines } from "../lib/receipt";
 import { refreshSettings, shopSettings, vatRate } from "../lib/settings";
 import { fmtDate } from "../lib/dates";
+import ParkedPicker, { type ParkedSale } from "../components/sell/ParkedPicker";
 import { quoteSheet } from "../lib/quoteSheet";
 import { archiveSheet } from "../lib/sendSheet";
 import DeliveryForm, { type DeliveryDetails } from "../components/sell/DeliveryForm";
@@ -99,15 +100,6 @@ const PARKED_KEY = "sell.parked";
  */
 const LIVE_KEY = "sell.live";
 
-/** A sale set aside to serve the next customer while this one fetches a card. */
-interface ParkedSale {
-  id: string;
-  at: string;
-  lines: CartLine[];
-  customer: Customer | null;
-  discount: number;
-  discountReason: string | null;
-}
 
 /**
  * The Sell screen.
@@ -159,6 +151,7 @@ export default function POS() {
   const [freshId, setFreshId] = useState<string | null>(null);
   const freshTimer = useRef<number>();
 
+  const [showParked, setShowParked] = useState(false);
   const [parked, setParked] = useState<ParkedSale[]>(() =>
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
@@ -712,24 +705,35 @@ export default function POS() {
     setBanner("Sale parked. Resume it from the button below.");
   }
 
-  function resumeParked() {
-    const last = parked[parked.length - 1];
-    if (!last) return;
+  /** Bring one parked sale back to the counter. */
+  function resume(p: ParkedSale) {
     // Parking the current sale first would be surprising; refusing to lose it
     // is not. The cashier parks or clears deliberately.
     if (lines.length > 0) {
       setBanner("Finish or park this sale before resuming another.");
       return;
     }
-    const rest = parked.slice(0, -1);
+    const rest = parked.filter((x) => x.id !== p.id);
     setParked(rest);
     cacheSet(PARKED_KEY, rest);
-    setLines(last.lines);
-    setCustomer(last.customer);
-    setDiscount(last.discount);
-    setDiscountReason(last.discountReason);
+    setShowParked(false);
+    setLines(p.lines);
+    setCustomer(p.customer);
+    setDiscount(p.discount);
+    setDiscountReason(p.discountReason);
     scanRef.current?.focus();
   }
+  /** One parked sale comes straight back; two or more are chosen from. */
+  function resumeParked() {
+    if (parked.length === 0) return;
+    if (parked.length === 1) return resume(parked[0]);
+    if (lines.length > 0) {
+      setBanner("Finish or park this sale before resuming another.");
+      return;
+    }
+    setShowParked(true);
+  }
+
 
   function receiptItems(): ReceiptItem[] {
     // Mirror the server's pro-rata discount split so the printed slip and the
@@ -1263,6 +1267,10 @@ export default function POS() {
 
       {/* Recording a buyer is authorised by the cashier's own permission, so
           there is no picker without one signed in. */}
+      {showParked && (
+        <ParkedPicker parked={parked} onPick={resume} onClose={() => setShowParked(false)} />
+      )}
+
       {showCustomers && user && (
         <CustomerPicker
           customers={customers}
