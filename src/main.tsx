@@ -4,6 +4,7 @@ import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { trackVisualViewport } from "./lib/visualViewport";
+import { installErrorReporting } from "./lib/errorReport";
 import "./index.css";
 
 /**
@@ -20,6 +21,9 @@ async function boot() {
   // Before React mounts, so the first dialog opened on a tablet already knows
   // where the screen is.
   trackVisualViewport();
+  // Errors go to the server from here on, the line permitting. Installed
+  // before React mounts so a crash in the first render is heard too.
+  installErrorReporting();
 
   if (import.meta.env.VITE_DEMO === "1") {
     const { installDemoBackend } = await import("./demo/backend");

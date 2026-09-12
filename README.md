@@ -197,10 +197,157 @@ static HTML/CSS/JS, no build step, deployed separately from the till. Its search
 demo runs the same rules as `src/lib/search.ts`, so a visitor can verify the
 claim by typing into it. See [`landing/README.md`](landing/README.md).
 
+## TillAI
+
+The bubble in the corner of the till. A counter hand asks in plain words —
+"how much cement do we have", "when did Mr Molefe last buy" — and gets an
+answer from the shop's own records, with a line saying what was looked at.
+
+It is an intelligent way in to what the till already shows, not the till:
+
+- **It only reads**, through the same token-only RPCs the till calls, so a
+  shop's isolation applies to it exactly as it does to the counter. It cannot
+  ring up, void, discount or change stock.
+- **It sees an allowlist, not a row.** Each tool names the columns the model
+  may see; cost prices, bank details and balances never leave the server.
+  What it may touch is decided in `supabase/functions/tillai/tools.ts`, which
+  is pure and tested by `test/tillai.test.mjs`.
+- **It sees what the person can see.** Somebody whose rights open Manage's
+  reports or costs has their questions carry the PIN they signed in with, to
+  the same PIN-checked RPCs Manage calls: a manager can ask "how much did we
+  sell in the past 3 days", and a counter hand's PIN would get "Not
+  permitted", exactly as in Manage. The PIN is the session's, held in memory
+  only: a reload forgets it, the sheet asks once and keeps it for the rest of
+  the sign-in, and it is never stored or logged. A counter hand's questions
+  carry no PIN at all.
+- **It is on a phone too**, the same bubble in the same corner; the sheet it
+  opens is the whole screen, with the same rule and the phone owner's own PIN.
+- **Manage → TillAI** shows what the shop asked, newest first, with the
+  answer and what was looked at — behind the reports right. A question it
+  could not answer is a thing the till does not do yet.
+- **It never does sums with money.** It quotes the figures the tools return;
+  a report's totals are the report's.
+- **It needs the line**, and says so. The till sells without it.
+
+The Gemini key and model are the document reader's (`GEMINI_API_KEY`,
+`GEMINI_MODEL`). Questions are logged per shop in `tillai_questions`, which is
+also the counter behind a daily cap. Deploy with
+`npx supabase functions deploy tillai`.
+
+## What went wrong on a till
+
+A render crash, an uncaught error or an unhandled rejection on a till is
+reported to the server (`pos_report_error`, table `client_errors`): kind,
+message, stack and the screen it happened on, through the till's token and
+nobody's PIN. The line going down is not a bug and is not reported; the same
+error within five minutes is one report; with no line the report waits in an
+outbox and goes when the line is back. The RPC caps sizes and drops a till's
+reports after sixty in an hour. Nothing reads the table through the API.
+
+Every morning at 06:00 (SAST) the till's Worker calls the `error-digest`
+function on its cron (`wrangler.toml`, `[triggers]`), which emails InnovaEarth
+one line per shop — errors grouped and counted, and how many questions TillAI
+was asked — through Resend, from `RESEND_FROM` (an address on innovaearth.com,
+which is verified there; the sandbox sender only reaches the account's own
+inbox) to `POS_REQUEST_TO`. A quiet night sends nothing,
+and the function refuses to send twice within twenty hours whoever calls it.
+Deploy with `npx supabase functions deploy error-digest`.
+
+## Buying: orders as documents
+
+Every order on Buying → Orders has Print, PDF and Email in front of it. The
+document is the shop's own paper addressed to the supplier (`orderSheet`,
+lines ex VAT, VAT at the shop's rate); Email opens to the supplier's address
+on file, and emailing a draft marks it as with the supplier. A called-off
+order stays on the list, crossed out (`tr.is-called-off`); one that never
+went to the supplier can be deleted (`pos_po_delete`), one that did stays on
+the record.
+
+The till's calculator floats over the cart and can be dragged by its title
+bar to wherever it is least in the way; it stays there until the page
+reloads. On Reports → Suppliers each row is the supplier: clicking it opens
+the supplier's page under Suppliers (`pos_purchases_by_supplier` carries
+`supplier_id` since 0084).
+
+A supplier document filed without being read — the reading failed, or it was
+filed by hand — has "Read this document" on it: the filed pages go to the
+reader and the reading lands on the same document
+(`pos_purchasing_read_filed_document`). The kind the person chose stands.
+
+## Parked sales
+
+"Park sale" sets the basket aside so the next customer can be served; the
+parked sales live on the device (`sell.parked`). One parked sale comes back
+at a tap of "Resume parked · 1". Two or more open "Which parked sale?": each
+row says when it was parked, whose it is, what is in it and what it comes
+to, and the one tapped is the one that comes back. A sale that is open
+cannot be overwritten by a resume; finish or park it first.
+
+Parked sales are the shop's, not the device's (`parked_sales`, 0086): parked
+on one till, seen on every till within a few seconds, picked up on any, by
+anyone signed in. Taking one off the list (`pos_unpark_sale`) removes it as
+it is taken, so two tills cannot both have it. Each row says which till and
+who parked it. With the line down a sale is parked on the device ("this
+till only") and handed to the shop's list when the line returns; a basket
+recovered after a refresh is handed over the same way.
+
+A parked sale stays parked until it is sold or deleted. A resumed sale keeps
+its slot: parking it again goes back in at its original time, a refresh with
+it open puts it back there too, and voiding it asks ("Put it back" or "Delete
+it") rather than losing it. Each row in "Which parked sale?" has a cross for
+the customer who never came back, behind a confirm.
+
+Every pop-up's Cancel is `.btn-cancel`: no box, underlined, red only under
+the finger, so it is neither a row nor the action beside it. A delivery form
+opens with the buyer's address on file already in it, still editable; the
+record itself is not changed by a one-off delivery elsewhere.
+
+## Fixing a buyer at the counter
+
+Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone
+number and delivery address, and nothing else: credit, trade pricing, the
+account code and the VAT number are the back office's, under Accounts.
+Authorised like recording a buyer, by the cashier's own right to take payments
+(`pos_customer_fix_details`). A number belongs to one buyer; another's is
+refused by name. The corrected row replaces the old one in the list, the
+offline cache, and the open sale if it is theirs.
+
+## Approving a request
+
+The request form emails InnovaEarth with an **Approve** button. One click
+(`supabase/functions/pos-approve`, calling `innova_approve_request`) makes the
+shop, invites the contact as its manager on the number they gave (read as
+E.164 by their country), marks the request approved, and emails them how to
+enrol and pair a till. A second click says the shop is already set up and
+makes nothing. A number that cannot be read, or that already belongs to
+somebody, is refused with words; the email's SQL line is the fallback.
+Deploy with `npx supabase functions deploy pos-approve --no-verify-jwt`.
+
+## Wiping a shop, or deleting it
+
+A shop that was used for testing must start its books at invoice number 1
+on the day the real owner takes it on. Two operator functions, run from the
+Supabase SQL editor like `innova_create_org` and revoked from every API role:
+
+```sql
+-- Wipe the books, unpair every device, remove every person, restart the
+-- document numbers, keep the catalogue (stock set to nothing), and invite
+-- the real manager by phone. The name must match the id or nothing happens.
+select innova_reset_org('<org id>', '5 Star Hardware', 'Owner Name', '+27…');
+
+-- The same, then the catalogue and the shop itself.
+select innova_delete_org('<org id>', '5 Star Hardware');
+```
+
+Storage files (product photos, scanned supplier documents) are not touched;
+delete those from the dashboard if they matter.
+
 ## Deploying (Cloudflare Workers)
 
 The till deploys as its own Worker, `hardware-pos`, served at
-**app.innovaearth.com**:
+**till.innovaearth.com** (its old address, app.innovaearth.com, still answers
+and sends a typed visit on to the new one; a till paired on the old address
+keeps working until it is re-paired):
 
 ```bash
 npm run build
@@ -208,7 +355,7 @@ npx wrangler deploy
 ```
 
 Then attach the hostname: **Workers & Pages → hardware-pos → Settings →
-Domains & Routes → Add custom domain → app.innovaearth.com**. The
+Domains & Routes → Add custom domain → till.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.
 

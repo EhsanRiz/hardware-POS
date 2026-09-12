@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { canSignInOffline, loginRoster, signIn } from "../lib/auth";
 import { ENROL_URL } from "../lib/config";
 import { useAuth } from "../context/AuthContext";
-import { shopSettings } from "../lib/settings";
+import { useShopSettings } from "../lib/settings";
 import { clearPairing, registerName } from "../lib/device";
 import { errorMessage } from "../lib/errors";
 import { roleTitle } from "../lib/permissions";
-import { isOnline } from "../lib/offline";
+import { isOnline, useOnline } from "../lib/offline";
 import { usePendingSync } from "../lib/sync";
 import PinPad from "./PinPad";
 import InstallButton from "./InstallButton";
 import InnovaMark from "./InnovaMark";
+import LoginEngraving from "./LoginEngraving";
+import { todayLine } from "../lib/today";
 import type { LoginCandidate } from "../lib/types";
 
 /**
@@ -35,15 +37,29 @@ import type { LoginCandidate } from "../lib/types";
  * Two ways out, because a screen that can only be satisfied by remembering
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
+ *
+ * The frame speaks the brand and the workspace speaks the shop: the green
+ * side carries InnovaPOS and the edition, the cream side carries the shop's
+ * own name, large, with its address and phone under it and the till's name
+ * over it. Several shops share this server, and a device that says whose it
+ * is in big type is the visible half of keeping them apart. It all comes
+ * from the settings the till already caches, so it reads the same with the
+ * line down.
  */
 export default function Login() {
-  const { setUser } = useAuth();
-  const { pending } = usePendingSync();
+  const { setUser, setSessionPin } = useAuth();
+  const { pending, failed } = usePendingSync();
+  // Either queue holds real money: a sale waiting for the line, or one the
+  // server refused and somebody must look at. Unpairing throws the register
+  // token away, and the token is what replays them.
+  const held = pending + failed;
+  const online = useOnline();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
   const [roster, setRoster] = useState<LoginCandidate[] | null>(null);
   const [who, setWho] = useState<LoginCandidate | null>(null);
+  const shop = useShopSettings();
 
   useEffect(() => {
     void loginRoster().then(setRoster, () => setRoster([]));
@@ -68,6 +84,7 @@ export default function Login() {
         );
       } else {
         setUser(user);
+        setSessionPin(pin);
       }
     } catch (e) {
       setError(errorMessage(e, "Sign-in failed"));
@@ -78,18 +95,63 @@ export default function Login() {
 
   return (
     <div className="login">
-      <div className="login-head">
-        <div className="sell-lockup">
-          <InnovaMark size={30} onGreen />
-          <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
-            Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
-          </span>
+      {/* The green scene. On a wide screen it is the left half: the lockup,
+          the shop, an engraving of the bench, and the three things a manager
+          wants to know on arrival before touching anything — the day, the
+          till, and whether it is talking to the server. On a phone it folds
+          back to a band above the names, drawing gone, so the list is what
+          the thumb lands on. */}
+      <div className="login-scene">
+        {/* The aisle behind the bench: racks of blister packs and a trolley,
+            pulled into the identity as a green-and-amber duotone rather than
+            left as a colour photograph. It ships with the app and is
+            precached, so the door looks the same with the line down. */}
+        <img className="login-photo" src="/door.jpg" alt="" decoding="async" />
+        <div className="login-head">
+          <div className="sell-lockup">
+            <InnovaMark size={30} onGreen />
+            <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+              Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+            </span>
+          </div>
+          <p className="login-edition">Hardware edition</p>
         </div>
-        <h1 className="login-shop">{shopSettings().shop_name}</h1>
-        <p className="login-till">{registerName()}</p>
+
+        <LoginEngraving />
+
+        <dl className="login-status">
+          <div>
+            <dt>Today</dt>
+            <dd>{todayLine()}</dd>
+          </div>
+          <div>
+            <dt>Line</dt>
+            <dd className={online ? "" : "is-offline"}>
+              {/* Same words as the header chip after sign-in: a manager must
+                  not read "Offline · 3 queued" here and "Syncing" there for
+                  the same state. */}
+              {online
+                ? pending > 0
+                  ? `Online · syncing ${pending}`
+                  : "Online"
+                : pending > 0
+                  ? `Offline · ${pending} queued`
+                  : "Offline"}
+            </dd>
+          </div>
+        </dl>
       </div>
 
       <div className="login-body">
+        <header className="login-shophead">
+          <p className="login-till">{registerName()}</p>
+          <h1 className="login-shop">{shop.shop_name}</h1>
+          {(() => {
+            const where = [shop.address_line1, shop.address_line2].filter((x) => x && x.trim()).join(", ");
+            const line = [where, shop.phone].filter((x) => x && x.trim()).join(" · ");
+            return line ? <p className="login-shop-meta">{line}</p> : null;
+          })()}
+        </header>
         {!who ? (
           <>
             <p className="login-prompt">Who is on the till?</p>
@@ -143,15 +205,15 @@ export default function Login() {
           <span aria-hidden="true">·</span>
           <button onClick={() => setConfirmUnpair(true)}>Not this shop?</button>
         </div>
-      </div>
 
-      <footer className="login-foot">
-        <InstallButton className="mb-4" />
-        <p>
-          InnovaPOS · a product of InnovaEarth
-          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
-        </p>
-      </footer>
+        <footer className="login-foot">
+          <InstallButton className="mb-4" />
+          <p>
+            InnovaPOS · a product of InnovaEarth
+            <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+          </p>
+        </footer>
+      </div>
 
       {confirmUnpair && (
         <div className="modal-backdrop" onClick={() => setConfirmUnpair(false)}>
@@ -164,16 +226,24 @@ export default function Login() {
           >
             <h2 className="modal-title">Unpair this till?</h2>
 
-            {pending > 0 ? (
+            {held > 0 ? (
               <>
                 {/* The register token is what replays a queued sale. Unpairing
-                    with sales still waiting would strand real money, so this is
+                    with sales still waiting — or refused and waiting for
+                    somebody to look — would strand real money, so this is
                     refused rather than warned about. */}
                 <p className="modal-row-meta" style={{ fontSize: 14 }}>
-                  {pending} {pending === 1 ? "sale is" : "sales are"} still
-                  waiting to reach the server. Unpairing now would lose{" "}
-                  {pending === 1 ? "it" : "them"}. Connect to the internet, let
-                  the queue empty, then try again.
+                  {held} {held === 1 ? "sale is" : "sales are"} still on this
+                  till
+                  {failed > 0
+                    ? pending > 0
+                      ? ", waiting for the line or needing attention"
+                      : " and needs attention"
+                    : ", waiting to reach the server"}
+                  . Unpairing now would lose {held === 1 ? "it" : "them"}.
+                  {failed > 0
+                    ? " Sign in, open the sales that need attention and deal with them, then try again."
+                    : " Connect to the internet, let the queue empty, then try again."}
                 </p>
                 <button
                   className="btn-line"
@@ -188,7 +258,7 @@ export default function Login() {
                 <p className="modal-row-meta" style={{ fontSize: 14 }}>
                   This device will stop being{" "}
                   <strong>{registerName()}</strong> at{" "}
-                  <strong>{shopSettings().shop_name}</strong>, and a manager
+                  <strong>{shop.shop_name}</strong>, and a manager
                   will have to pair it again with their phone and PIN. Nobody's
                   PIN changes, and the shop's data is untouched.
                 </p>

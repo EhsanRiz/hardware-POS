@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { customerHistory, quickCustomer } from "../../lib/api";
+import { customerHistory, fixCustomerDetails, quickCustomer } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
@@ -24,12 +24,18 @@ import { fmtDate } from "../../lib/dates";
  * What a cashier CANNOT do here is grant credit. Recording a buyer produces a
  * retail-priced contact with no limit; turning that into a trade account is a
  * back-office decision, enforced server-side in `pos_quick_customer`.
+ *
+ * What they CAN do is put a name, a number or an address right (the pencil on
+ * each row): they are the one who hears about the wrong digit, standing in
+ * front of the person. Money stays the back office's — `pos_customer_fix_details`
+ * touches nothing else.
  */
 export default function CustomerPicker({
   customers,
   cashierId,
   onPick,
   onAdded,
+  onChanged,
   onClose,
   onOpenSale,
 }: {
@@ -39,6 +45,8 @@ export default function CustomerPicker({
   onPick: (c: Customer | null) => void;
   /** A newly recorded buyer, so the till's cached list stays current. */
   onAdded?: (c: Customer) => void;
+  /** A buyer whose details were put right, so the list and the sale follow. */
+  onChanged?: (c: Customer) => void;
   onClose: () => void;
   /** An invoice from a buyer's history, opened by number. */
   onOpenSale?: (docNumber: string) => void;
@@ -47,6 +55,7 @@ export default function CustomerPicker({
   const [term, setTerm] = useState("");
   const [view, setView] = useState<{ kind: "list" }
     | { kind: "new" }
+    | { kind: "edit"; customer: Customer }
     | { kind: "history"; customer: Customer }>({ kind: "list" });
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -82,6 +91,32 @@ export default function CustomerPicker({
   const typedPhone = phoneish ? term : "";
   const typedName = phoneish ? "" : term.trim();
   const phoneReady = looksLikePhone(newPhone);
+
+  function startEditing(c: Customer) {
+    setNewName(c.name);
+    setNewPhone(c.phone ?? "");
+    setNewAddress(c.address ?? "");
+    setError(null);
+    setView({ kind: "edit", customer: c });
+  }
+
+  async function saveEdit(c: Customer) {
+    setBusy(true);
+    setError(null);
+    try {
+      const fixed = await fixCustomerDetails(cashierId, c.id, {
+        name: newName,
+        phone: newPhone,
+        address: newAddress || null,
+      });
+      onChanged?.(fixed);
+      setView({ kind: "list" });
+    } catch (e) {
+      setError(errorMessage(e, "Those details could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function startRecording() {
     setNewPhone(typedPhone);
@@ -147,16 +182,88 @@ export default function CustomerPicker({
         />
 
         <div className="modal-list">
-          <button className="modal-row" onClick={() => onPick(null)}>
-            <span className="modal-row-name">Walk-in customer</span>
-            <span className="modal-row-meta">Retail price · cash or card</span>
-          </button>
+          {view.kind !== "edit" && (
+            <button className="modal-row" onClick={() => onPick(null)}>
+              <span className="modal-row-name">Walk-in customer</span>
+              <span className="modal-row-meta">Retail price · cash or card</span>
+            </button>
+          )}
 
-          {shown.map((c) => (
+          {view.kind === "edit" && (
+            <div className="modal-field" role="group" aria-label={`Edit ${view.customer.name}`}>
+              <label className="modal-row-meta" htmlFor="buyer-edit-name">Their name</label>
+              <input
+                id="buyer-edit-name"
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="modal-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy && phoneReady && newName.trim()) void saveEdit(view.customer);
+                }}
+              />
+              <label className="modal-row-meta" htmlFor="buyer-edit-phone">Their phone number</label>
+              <input
+                id="buyer-edit-phone"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                inputMode="tel"
+                className="modal-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy && phoneReady && newName.trim()) void saveEdit(view.customer);
+                }}
+              />
+              <label className="modal-row-meta" htmlFor="buyer-edit-address">
+                Delivery address, if there is one (optional)
+              </label>
+              <input
+                id="buyer-edit-address"
+                value={newAddress}
+                onChange={(e) => setNewAddress(e.target.value)}
+                className="modal-input"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy && phoneReady && newName.trim()) void saveEdit(view.customer);
+                }}
+              />
+              {/* Said plainly, because the pencil could be read as more than
+                  it is: an account, a limit, trade pricing are Accounts'. */}
+              <p className="modal-row-meta">
+                Name, number and address only. Credit, trade pricing and the
+                account itself are changed under Accounts.
+              </p>
+              <div className="modal-actions">
+                <button
+                  className="btn-line"
+                  onClick={() => { setView({ kind: "list" }); setError(null); }}
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  className="btn-fill"
+                  onClick={() => void saveEdit(view.customer)}
+                  disabled={busy || !phoneReady || !newName.trim()}
+                >
+                  {busy ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {view.kind !== "edit" && shown.map((c) => (
             <div key={c.id} className="modal-row-pair">
               <button className="modal-row" onClick={() => onPick(c)}>
                 <span className="modal-row-name">{c.name}</span>
                 <span className="modal-row-meta">{describe(c)}</span>
+              </button>
+              <button
+                className="modal-row-go"
+                onClick={() => startEditing(c)}
+                disabled={!online}
+                title={online ? "Fix their name, number or address" : "Needs a connection"}
+                aria-label={`Edit ${c.name}`}
+              >
+                <PencilGlyph />
               </button>
               <button
                 className="modal-row-go"
@@ -276,7 +383,7 @@ export default function CustomerPicker({
           </p>
         )}
 
-        <button className="btn-line" style={{ marginTop: 14 }} onClick={onClose}>
+        <button className="btn-cancel" style={{ marginTop: 14 }} onClick={onClose}>
           Cancel
         </button>
       </div>
@@ -434,6 +541,25 @@ function visitDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return fmtDate(d);
+}
+
+function PencilGlyph() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+      <path d="M12.5 7.5l4 4" />
+    </svg>
+  );
 }
 
 function ReceiptGlyph() {

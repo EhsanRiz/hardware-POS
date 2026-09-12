@@ -7,7 +7,7 @@
 // details and a serial number on one page. Both exist, for different people.
 import type { ShopSettings } from "./types";
 
-export type SheetKind = "quote" | "invoice" | "delivery" | "statement";
+export type SheetKind = "quote" | "invoice" | "delivery" | "statement" | "order";
 
 export interface SheetLine {
   /** The shop's own code, so a customer can quote it back. */
@@ -27,6 +27,8 @@ export interface SheetCustomer {
   phone?: string | null;
   /** Their VAT registration — what makes this a FULL tax invoice. */
   vatNumber?: string | null;
+  /** Where the document goes when it is emailed; a supplier's, on an order. */
+  email?: string | null;
 }
 
 /**
@@ -94,6 +96,8 @@ export const SHEET_TITLE: Record<SheetKind, string> = {
   invoice: "Tax Invoice",
   delivery: "Delivery Note",
   statement: "Statement",
+  // The shop buying, not selling: what it asks a supplier for.
+  order: "Purchase Order",
 };
 
 /**
@@ -109,6 +113,7 @@ export const SHEET_PRICED: Record<SheetKind, boolean> = {
   delivery: false,
   // A statement carries money, but not in the item table: see `statement`.
   statement: true,
+  order: true,
 };
 
 /**
@@ -197,7 +202,7 @@ export function sheetAsText(sheet: Sheet, s: ShopSettings): string {
     out.push(`Total ${money(sheet.total)}`);
   }
   const terms = sheet.kind === "quote" ? s.quote_terms
-    : sheet.kind === "delivery" ? null : s.receipt_terms;
+    : sheet.kind === "delivery" || sheet.kind === "order" ? null : s.receipt_terms;
   if (terms && terms.trim()) {
     out.push("");
     out.push(terms.trim());

@@ -1425,3 +1425,56 @@ export async function staffEnrolmentCode(
   if (!rows?.[0]) throw new Error("That code could not be issued");
   return rows[0];
 }
+
+// --- TillAI's log ------------------------------------------------------------
+
+export interface TillAIQuestion {
+  id: string;
+  asked_at: string;
+  register_name: string;
+  question: string;
+  answer: string | null;
+  tools: string[];
+  unlocked: boolean;
+}
+
+/** What the shop asked TillAI, newest first. Behind view_reports, like takings. */
+export async function tillaiQuestions(pin: string, limit = 200): Promise<TillAIQuestion[]> {
+  const { data, error } = await supabase.rpc("pos_tillai_questions", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []) as TillAIQuestion[];
+}
+
+/**
+ * A reading for a document that was filed without one (0082): it lands on
+ * the same document — number, date, totals and lines — which then reads and
+ * receives like any other. Returns how many lines landed.
+ */
+export async function readFiledDocument(pin: string, documentId: string, read: ReadDocument): Promise<number> {
+  const { data, error } = await supabase.rpc("pos_purchasing_read_filed_document", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_document_id: documentId,
+    p_kind: read.kind ?? null,
+    p_doc_number: read.doc_number ?? null,
+    p_doc_date: read.doc_date ?? null,
+    p_subtotal: read.subtotal ?? null,
+    p_tax_total: read.tax_total ?? null,
+    p_total: read.total ?? null,
+    p_lines: read.lines ?? [],
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+/** Delete a called-off order that never went to the supplier (0083). */
+export async function poDelete(pin: string, poId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_po_delete", {
+    p_register_token: requireToken(), p_pin: pin, p_po_id: poId,
+  });
+  if (error) throw error;
+}

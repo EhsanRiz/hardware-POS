@@ -24,9 +24,12 @@ import { useEffect, useState } from "react";
 export default function DocumentSheet({
   sheet,
   onClose,
+  autoPrint = false,
 }: {
   sheet: Sheet;
   onClose: () => void;
+  /** Opened by a Print button: go straight to the print dialog. */
+  autoPrint?: boolean;
 }) {
   const s = shopSettings();
   const logo = imageSrc(s.logo_url);
@@ -41,7 +44,7 @@ export default function DocumentSheet({
    */
   const copies: (string | null)[] =
     sheet.kind === "delivery" ? ["Customer copy", "Shop copy"] : [null];
-  const terms = (sheet.kind === "quote" ? s.quote_terms : s.receipt_terms) ?? "";
+  const terms = (sheet.kind === "quote" ? s.quote_terms : sheet.kind === "order" ? "" : s.receipt_terms) ?? "";
   // Where to pay. A statement is a request for money as much as an unpaid
   // invoice is, and sending one without bank details is asking twice.
   const owed = (sheet.kind === "invoice" && !sheet.paidWith)
@@ -57,6 +60,11 @@ export default function DocumentSheet({
   // The mark has to be bytes before anybody clicks: a PDF built inside a click
   // cannot stop and fetch a picture.
   useEffect(() => primeLogo(logo), [logo]);
+  useEffect(() => {
+    if (!autoPrint) return;
+    const t = setTimeout(() => window.print(), 250);
+    return () => clearTimeout(t);
+  }, [autoPrint]);
 
   return (
     <div
@@ -175,11 +183,12 @@ export default function DocumentSheet({
               <span className="doc-label">
                 {sheet.kind === "quote" ? "Quotation for"
                   : sheet.kind === "delivery" ? "Deliver to"
-                  : sheet.kind === "statement" ? "Statement for" : "Invoiced to"}
+                  : sheet.kind === "statement" ? "Statement for"
+                  : sheet.kind === "order" ? "Order from" : "Invoiced to"}
               </span>
               <div className="doc-to-name">
                 {sheet.customer.name ??
-                  (sheet.kind === "quote" ? "Walk-in customer" : "Cash sale")}
+                  (sheet.kind === "quote" ? "Walk-in customer" : sheet.kind === "order" ? "Supplier" : "Cash sale")}
               </div>
               {sheet.deliverTo && <div className="doc-address">{sheet.deliverTo}</div>}
               {sheet.customer.address && <div>{sheet.customer.address}</div>}

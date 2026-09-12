@@ -52,7 +52,7 @@ export default function ManagerPinModal({
         <button
           onClick={onCancel}
           disabled={busy}
-          className="mt-4 w-full h-12 rounded-lg bg-stone-100 text-stone-600 font-medium active:bg-stone-200 disabled:opacity-50"
+          className="btn-cancel mt-4 w-full"
         >
           Cancel
         </button>

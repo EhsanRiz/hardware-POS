@@ -451,6 +451,105 @@ export async function quickCustomer(
   return (data as Customer[])[0];
 }
 
+/**
+ * Put a buyer's name, number or address right, at the counter (0085).
+ *
+ * Authorised like recording one: the cashier's own right to take payments.
+ * It cannot touch money — credit, trade price, code and VAT number stay as
+ * the back office set them.
+ */
+export async function fixCustomerDetails(
+  cashierId: string,
+  customerId: string,
+  details: { name: string; phone: string; address?: string | null }
+): Promise<Customer> {
+  const { data, error } = await supabase.rpc("pos_customer_fix_details", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_customer_id: customerId,
+    p_name: details.name,
+    p_phone: details.phone,
+    p_address: details.address ?? null,
+  });
+  if (error) throw error;
+  return (data as Customer[])[0];
+}
+
+// --- Parked sales (0086): the shop's list, not the device's ------------------
+
+/** A cart line as it is parked: the product by id, and what came off it. */
+export interface ParkedLine {
+  product_id: string;
+  qty: number;
+  discount?: number | null;
+  discount_percent?: number | null;
+  discount_reason?: string | null;
+}
+
+export interface ParkedSaleRow {
+  id: string;
+  parked_at: string;
+  register_name: string;
+  parked_by_name: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  lines: ParkedLine[];
+  discount: number;
+  discount_reason: string | null;
+  total: number;
+}
+
+/** Park a sale for any till to pick up, or put one back in its slot. */
+export async function parkSale(
+  cashierId: string,
+  sale: {
+    id: string; lines: ParkedLine[]; customerId: string | null;
+    discount: number; discountReason: string | null; total: number; parkedAt?: string | null;
+  }
+): Promise<ParkedSaleRow> {
+  const { data, error } = await supabase.rpc("pos_park_sale", {
+    p_register_token: requireToken(),
+    p_cashier_id: cashierId,
+    p_id: sale.id,
+    p_lines: sale.lines,
+    p_customer_id: sale.customerId,
+    p_discount: sale.discount,
+    p_discount_reason: sale.discountReason,
+    p_total: sale.total,
+    p_parked_at: sale.parkedAt ?? null,
+  });
+  if (error) throw error;
+  return data as ParkedSaleRow;
+}
+
+/** Every parked sale in the shop, oldest first. */
+export async function listParkedSales(): Promise<ParkedSaleRow[]> {
+  const { data, error } = await supabase.rpc("pos_parked_sales", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  return (data as ParkedSaleRow[]) ?? [];
+}
+
+/** Take a parked sale onto this till; it leaves the list as it is taken. */
+export async function unparkSale(id: string): Promise<ParkedSaleRow> {
+  const { data, error } = await supabase.rpc("pos_unpark_sale", {
+    p_register_token: requireToken(),
+    p_id: id,
+  });
+  if (error) throw error;
+  return data as ParkedSaleRow;
+}
+
+/** A parked sale nobody is coming back for. */
+export async function deleteParkedSale(id: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_delete_parked_sale", {
+    p_register_token: requireToken(),
+    p_id: id,
+  });
+  if (error) throw error;
+}
+
 // --- Accounts ---------------------------------------------------------------
 
 /** Every account, with what is owed and how old it is. */

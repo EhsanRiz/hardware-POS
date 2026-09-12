@@ -88,7 +88,14 @@ const TENDER_LABEL: Record<string, string> = {
   cash: "Cash", card: "Card", eft: "EFT", zapper: "Zapper", account: "On account",
 };
 
-export default function Reports({ pin }: { pin: string }) {
+export default function Reports({
+  pin,
+  onOpenSupplier,
+}: {
+  pin: string;
+  /** A supplier on the spend report opens its page under Suppliers. */
+  onOpenSupplier?: (supplierId: string) => void;
+}) {
   const [section, setSection] = useState<Section>("day");
   const [range, setRange] = useState<RangeKey>("today");
   const [from, setFrom] = useState("");
@@ -237,7 +244,7 @@ export default function Reports({ pin }: { pin: string }) {
           <section aria-label="Debtors"><DebtorsView report={debtors} /></section>
         )}
         {section === "suppliers" && suppliers && (
-          <section aria-label="Suppliers"><SuppliersView rows={suppliers} /></section>
+          <section aria-label="Suppliers"><SuppliersView rows={suppliers} onOpen={onOpenSupplier} /></section>
         )}
         {section === "vat" && vat && (
           <section aria-label="VAT"><VatView rows={vat} /></section>
@@ -919,7 +926,13 @@ function DebtorsView({ report }: { report: DebtorsAgeing }) {
   );
 }
 
-function SuppliersView({ rows }: { rows: SupplierSpendRow[] }) {
+function SuppliersView({
+  rows,
+  onOpen,
+}: {
+  rows: SupplierSpendRow[];
+  onOpen?: (supplierId: string) => void;
+}) {
   const total = rows.reduce((t, r) => t + (r.total ?? 0), 0);
   return (
     <Card
@@ -942,10 +955,26 @@ function SuppliersView({ rows }: { rows: SupplierSpendRow[] }) {
               No supplier paperwork in this range. Scan an invoice under Manage → Suppliers.
             </Empty>
           )}
+          {/* Each row is the supplier: click it and its page opens, with
+              the paperwork these figures came from. */}
           {rows.map((r, i) => (
-            <tr key={i} className={ROW}>
+            <tr
+              key={r.supplier_id ?? i}
+              className={`${ROW}${onOpen ? " cursor-pointer hover:bg-stone-100" : ""}`}
+              onClick={onOpen ? () => onOpen(r.supplier_id) : undefined}
+            >
               <td className={TD}>
-                <span className="block">{r.supplier}</span>
+                {onOpen ? (
+                  <button
+                    type="button"
+                    className="block text-left underline-offset-2 hover:underline"
+                    aria-label={`Open ${r.supplier}`}
+                  >
+                    {r.supplier}
+                  </button>
+                ) : (
+                  <span className="block">{r.supplier}</span>
+                )}
                 {r.last_document && (
                   <span className="block text-xs text-stone-500">last {fmtDayMonth(r.last_document)}</span>
                 )}

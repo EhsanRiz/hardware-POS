@@ -218,7 +218,7 @@ export default function DiscountModal({
         <div className="flex gap-2 mt-4">
           <button
             onClick={onCancel}
-            className="flex-1 h-12 rounded-lg bg-stone-100 text-stone-600 font-medium active:bg-stone-200"
+            className="btn-cancel flex-1"
           >
             Cancel
           </button>

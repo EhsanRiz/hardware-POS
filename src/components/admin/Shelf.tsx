@@ -476,7 +476,7 @@ export default function Shelf({ user, pin }: { user: User | null; pin: string })
             />
           </label>
           <div className="flex gap-2">
-            <button className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700" onClick={reset} disabled={busy}>
+            <button className="btn-cancel flex-1" onClick={reset} disabled={busy}>
               Cancel
             </button>
             <button

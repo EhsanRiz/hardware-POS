@@ -1,7 +1,8 @@
 import { readFileSync } from "fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import {
-  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, USERS,
+  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, REGISTER_TOKEN,
+  signInOnSecondTill, USERS,
 } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
@@ -52,6 +53,193 @@ test("a till must be paired before anyone can sign in", async ({ page }) => {
   // No PIN pad until the device is a till — a cashier should never sign in to
   // a tablet that turns out to be unable to sell.
   await expect(page.locator('button:text-is("1")')).toHaveCount(0);
+  // The wordmark on this cream card is ink, not the cream it wears on the
+  // green header: cream on cream made "Innova" vanish next to "POS".
+  await expect(page.locator(".pair-card .sell-wordmark")).toHaveCSS("color", "rgb(27, 42, 36)");
+});
+
+/**
+ * The front door. One address serves every shop, and a device that is not
+ * paired yet is the only thing that ever sees this screen — so it has to work
+ * for a stranger who typed the address as well as for the manager with the
+ * new tablet. Nobody may be left with a form they cannot fill in.
+ */
+test("an unpaired device is the front door of InnovaPOS, with a way out for everyone", async ({ page }) => {
+  await page.goto("/");
+  const door = page.locator(".firstrun");
+  await expect(door).toBeVisible();
+  // It says why there is no shop on screen, rather than presenting a form.
+  await expect(door).toContainText(/not set up for a shop yet/i);
+  await expect(door.getByRole("button", { name: "This is a till" })).toBeVisible();
+  await expect(door.getByRole("button", { name: "This is my phone" })).toBeVisible();
+
+  // A manager who was invited but has not chosen a PIN cannot pair anything:
+  // they are sent to where the PIN is set. A shop that is not on InnovaPOS
+  // is sent to where it asks to be. Both open beside the app, not over it.
+  const pin = door.getByRole("link", { name: /Set your PIN/i });
+  await expect(pin).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
+  await expect(pin).toHaveAttribute("target", "_blank");
+  const request = door.getByRole("link", { name: /Request it for your shop/i });
+  await expect(request).toHaveAttribute("href", "https://pos.innovaearth.com/request/");
+  await expect(request).toHaveAttribute("target", "_blank");
+
+  // The same door as sign-in on a wide screen: the aisle behind the bench,
+  // the engraving, and the day and the line at the foot — so a stranger
+  // sees the product, not a form, and a manager sees whether it is online
+  // before pairing anything. Over it, what the product is for: a headline
+  // and three proofs. Each path says what it is for before it is chosen.
+  await expect(door.locator(".login-photo")).toBeVisible();
+  await expect(door.locator(".login-engraving")).toBeVisible();
+  await expect(door.locator(".login-status")).toContainText("Online");
+  await expect(door.locator(".firstrun-title")).toContainText(/This one listens/);
+  await expect(door.locator(".firstrun-proof li")).toHaveCount(3);
+  await expect(door.getByRole("button", { name: "This is a till" })).toContainText(/pairs it once/i);
+  await expect(door.getByRole("button", { name: "This is my phone" })).toContainText(/code from whoever manages staff/i);
+
+  // On a phone the drawing gets out of the way and nothing spills sideways:
+  // a stranger's first look is a phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(door.locator(".login-engraving")).toBeHidden();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // Either path leads to a card with ONE action at its foot, and the way
+  // back to this question is a quiet link in the card's top corner, above
+  // the heading — not a second full-width button under the gold one, which
+  // read as a peer of "Pair this till". Escape is the same way back.
+  await door.getByRole("button", { name: "This is a till" }).click();
+  const card = page.locator(".pair-card");
+  await expect(card.getByText("Set up this till")).toBeVisible();
+  await expect(card.locator(".btn-tender")).toHaveCount(1);
+  await expect(card.locator(".btn-line")).toHaveCount(0);
+  const back = card.getByRole("button", { name: /Back/ });
+  const backBox = (await back.boundingBox())!;
+  const headingBox = (await card.getByText("Set up this till").boundingBox())!;
+  const cardBox = (await card.boundingBox())!;
+  expect(backBox.y + backBox.height).toBeLessThanOrEqual(headingBox.y);
+  expect(backBox.x - cardBox.x).toBeLessThan(24);
+  expect(backBox.width).toBeLessThan(cardBox.width / 2);
+  await back.click();
+  await expect(door.getByRole("button", { name: "This is a till" })).toBeVisible();
+
+  await door.getByRole("button", { name: "This is my phone" }).click();
+  await expect(card.getByText("Put your phone on the shop")).toBeVisible();
+  await expect(card.locator(".btn-line")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(door.getByRole("button", { name: "This is my phone" })).toBeVisible();
+});
+
+/**
+ * Several real shops share the server, and a tablet can leave one shop and
+ * join another. Nothing of the first shop may travel with it: the roster
+ * and the credential hashes that let its staff sign in offline, its settings,
+ * the last session. The server keeps the shops apart (schema.test.sql, "Two
+ * shops, one database"); this is the device's half of the same promise.
+ */
+test("unpairing a till leaves nothing of the shop on the device", async ({ page }) => {
+  await pairAndSignIn(page);
+  // Signed in once, so the offline credential cache, the roster, the shop's
+  // settings and its catalogue are held. Polled: the settings and catalogue
+  // land when their fetches return, a beat after the screen is up.
+  const keys = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pos.")).sort());
+  await expect.poll(keys).toEqual(expect.arrayContaining([
+    "pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.catalogue.products",
+  ]));
+
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /Not this shop\?/i }).click();
+  await page.getByRole("dialog", { name: "Unpair this till" })
+    .getByRole("button", { name: /Unpair this till/i }).click();
+  await expect(page.getByText("What is this device?")).toBeVisible();
+
+  const after = await keys();
+  for (const k of ["pos.auth.creds", "pos.auth.roster", "pos.shop.settings", "pos.catalogue.products", "pos.session.user", "pos.device.registerToken"]) {
+    expect(after, `${k} must not survive unpairing`).not.toContain(k);
+  }
+});
+
+test("a till holding a refused sale cannot be unpaired", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // Taken with the line down, so it queues; when the line returns the server
+  // refuses it, so it lands where somebody must look at it.
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await page.route(/rpc\/pos_create_sale/, (r) =>
+    r.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ message: "Refused by the server for this test" }) })
+  );
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect(page.locator("header").getByText(/need attention/i)).toBeVisible({ timeout: 45_000 });
+
+  // The register token is what would replay it. Unpairing is refused, and
+  // says what to do instead.
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await page.getByRole("button", { name: /Not this shop\?/i }).click();
+  const dialog = page.getByRole("dialog", { name: "Unpair this till" });
+  await expect(dialog).toContainText(/needs attention/i);
+  await expect(dialog.getByRole("button", { name: /Unpair this till/i })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+});
+
+test("the door names the shop, large, on the cream side, and the brand stays on the green", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+  // The shop's own name at the head of the cream side, the till's name as a
+  // kicker over it, the address and phone under it — from the settings.
+  const head = page.locator(".login-body .login-shophead");
+  await expect(head.locator(".login-shop")).toHaveText("Ladybrand Hardware");
+  await expect(head.locator(".login-till")).toHaveText("Front Counter");
+  await expect(head.locator(".login-shop-meta")).toHaveText("12 Church St, Ladybrand, Free State · 051 924 0000");
+  // Large: bigger than anything else on that side, and above the names.
+  const shopPx = await head.locator(".login-shop").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  const promptPx = await page.locator(".login-prompt").first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  expect(shopPx).toBeGreaterThanOrEqual(promptPx * 2);
+  const headBox = (await head.boundingBox())!;
+  const promptBox = (await page.getByText("Who is on the till?").boundingBox())!;
+  expect(headBox.y + headBox.height).toBeLessThanOrEqual(promptBox.y);
+
+  // The green side speaks the brand and the edition, not the shop: the name
+  // is said once, on the shop's side.
+  const scene = page.locator(".login-scene");
+  await expect(scene).toContainText(/InnovaPOS/);
+  await expect(scene).toContainText(/Hardware edition/i);
+  await expect(scene).not.toContainText("Ladybrand Hardware");
+  await expect(scene).not.toContainText("Front Counter");
+
+  // With the line down it reads the same, from the cache.
+  be.offline = true;
+  await page.reload();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  await expect(head.locator(".login-shop")).toHaveText("Ladybrand Hardware");
+  await expect(head.locator(".login-shop-meta")).toContainText("051 924 0000");
+  await expect(page.locator(".login-status")).toContainText("Offline");
+});
+
+test("pairing takes the number as people write it", async ({ page }) => {
+  // The placeholder says 082 123 4567; a manager who has just set a PIN by
+  // SMS on 076 108 0024 types exactly that, and must not be told the number
+  // is wrong for want of a +27.
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  await page.locator("input[type=tel]").fill("082 000 0001");
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
 });
 
 test("pairing is refused with the wrong PIN", async ({ page }) => {
@@ -89,6 +277,8 @@ test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) 
   }
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(page.getByText("Sam")).toBeVisible();
+  // And on the green header the wordmark is cream, as the frame wears it.
+  await expect(page.locator(".sell-head .sell-wordmark")).toHaveCSS("color", "rgb(245, 242, 234)");
 });
 
 test("the till says who is serving, and in what capacity", async ({ page }) => {
@@ -142,6 +332,380 @@ test("a handover puts the next operator on their own name", async ({ page }) => 
   await page.getByRole("button", { name: /Tender & print/i }).click();
   await expect(banner(page)).toContainText(/INV-\d+/);
   expect(be.storedSales[0].cashier_id).toBe(USERS.employee.row.id);
+});
+
+/**
+ * The sign-in screen as a front door.
+ *
+ * It was a green band, an empty middle and three names. Now the green takes
+ * the left of a wide screen — a hairline engraving of the bench, with the day
+ * and the state of the line over it — and the names take the right. The
+ * drawing is decoration and is tested only for staying out of the way; the
+ * status is not decoration, because "Offline · 3 queued" on the door is how a
+ * manager opening up learns that last night's sales have not left the till.
+ */
+test("the sign-in screen says what day it is and whether the till is talking to the server", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+  // Wide screen: the scene has its drawing, and the day is written out the
+  // way a person would say it, not as digits.
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  const today = await page.evaluate(() => {
+    const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", o).format(new Date());
+    return `${part({ weekday: "long" })} ${part({ day: "numeric" })} ${part({ month: "long" })} ${part({ year: "numeric" })}`;
+  });
+  const status = page.locator(".login-status");
+  await expect(status).toContainText(today);
+  await expect(status).toContainText("Online");
+
+  // Behind the bench, the aisle: a photograph that has actually loaded, and
+  // is worn as a duotone rather than shown as a colour picture — greyed and
+  // screened onto the green, which is what keeps it inside the identity.
+  const photo = page.locator(".login-photo");
+  await expect(photo).toBeVisible();
+  expect(await photo.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  expect(await photo.evaluate((el) => getComputedStyle(el).filter)).toContain("grayscale(1)");
+  expect(await photo.evaluate((el) => getComputedStyle(el).mixBlendMode)).toBe("screen");
+
+  // A sale taken with the line down, then the operator signs out. The door
+  // must say the sale is still on the till, in the header chip's own words.
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(status).toContainText("Offline · 1 queued");
+
+  // The line returns while the screen is still on the door: the queue drains
+  // and the door says so without anyone signing in to make it happen.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 45_000 }).toBe(1);
+  await expect(status).toHaveText(/Online$/);
+  await expect(status).not.toContainText("queued");
+});
+
+test("the engraving draws itself in once, and not at all for someone who asked for less motion", async ({ page }) => {
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  const stroke = page.locator(".login-engraving rect").first();
+  await expect(stroke).toBeVisible();
+
+  // One run to completion: the stroke ends fully drawn (offset 0) and the
+  // animation does not repeat — a till idles on this screen all day and must
+  // not spend a core on it.
+  await expect
+    .poll(() => stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset), { timeout: 8_000 })
+    .toBe("0px");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("login-draw");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationIterationCount)).toBe("1");
+
+  // Reduced motion: the plate is simply there, nothing moves.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(page.locator(".login-engraving")).toBeVisible();
+  expect(await stroke.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  expect(await stroke.evaluate((el) => getComputedStyle(el).strokeDashoffset)).toBe("0px");
+});
+
+test("the door's photograph is part of the app shell, so it is there with the line down", async ({ page }) => {
+  // The service worker precaches the shell at install. The photograph has to
+  // be in that list, or a till that loses the line before its first sign-in
+  // opens on a green panel with a hole in it. Read from the built worker
+  // rather than exercised through it, because the suite blocks the worker
+  // to keep the fake backend in charge of every request.
+  const sw = await page.request.get("/sw.js");
+  expect(sw.ok()).toBe(true);
+  expect(await sw.text()).toMatch(/door\.jpg/);
+});
+
+test.describe("sign-in on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the drawing gets out of the way of the names", async ({ page }) => {
+    await pairAndSignIn(page);
+    await page.getByRole("button", { name: /Sign out/i }).click();
+    await expect(page.getByText("Who is on the till?")).toBeVisible();
+
+    // No engraving on a phone: it would only push the list below the fold.
+    await expect(page.locator(".login-engraving")).toBeHidden();
+    // The aisle photograph stays, in the band: it costs no height.
+    await expect(page.locator(".login-photo")).toBeVisible();
+    // The day and the line still show, in the band above the names.
+    await expect(page.locator(".login-status")).toContainText("Online");
+
+    // Every name is on screen without scrolling, and nothing spills sideways.
+    const names = page.locator(".login-who button");
+    await expect(names).toHaveCount(3);
+    for (const box of await names.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom))) {
+      expect(box).toBeLessThanOrEqual(844);
+    }
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+/**
+ * TillAI, the bubble in the corner. What the browser suite can hold it to:
+ * that it is there for a signed-in till and not on the door, that a
+ * question goes out with this till's token and comes back as words with a
+ * line saying what was looked at, that it says so when the line is down and
+ * leaves the till selling, and that it opens and closes from the keyboard.
+ * What it may read is the server's business and is decided in one tested
+ * file there (supabase/functions/tillai/tools.ts).
+ */
+test("TillAI answers from the shop's records and says what it looked at", async ({ page }) => {
+  await pairAndSignIn(page);
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  await expect(bubble).toBeVisible();
+
+  // F4 opens it and puts the caret in the question.
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toBeVisible();
+  // A counter hand is not asked for a PIN: there is nothing one would open.
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await expect(ask).toBeFocused();
+
+  await ask.fill("how much cement do we have");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement 42.5N 50kg");
+  await expect(sheet).toContainText("Looked at: products");
+
+  // The question carried this till's token and nothing else that identifies
+  // anyone: no PIN, no user. The server proves the token and scopes by it.
+  expect(be.tillaiAsked).toHaveLength(1);
+  expect(be.tillaiAsked[0].register_token).toBe(REGISTER_TOKEN);
+  expect(be.tillaiAsked[0].question).toBe("how much cement do we have");
+  expect(JSON.stringify(be.tillaiAsked[0])).not.toMatch(/pin|user_id/);
+
+  // A second question carries the first exchange, so "and how much sand?"
+  // means something.
+  await ask.fill("and the trade price?");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-model")).toHaveCount(2);
+  expect(be.tillaiAsked[1].history).toEqual([
+    { role: "user", text: "how much cement do we have" },
+    { role: "model", text: be.tillaiAnswer },
+  ]);
+
+  // A refusal is shown as a refusal, not as an answer.
+  be.tillaiFails = true;
+  await ask.fill("what about nails");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-failed")).toContainText(/could not answer just now/i);
+
+  // Escape closes it; the till underneath is untouched.
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("a manager's TillAI is unlocked by the PIN they signed in with, and asks once after a reload", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  // The PIN they typed a minute ago is the PIN: nobody is asked for it twice.
+  await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+
+  be.tillaiAnswer = "In the past 3 days: 14 sales, R 4 862.00 in total, of which cash R 3 100.00 and card R 1 762.00.";
+  be.tillaiLookedAt = ["the sales report"];
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("how much did we sell in the past 3 days");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("14 sales, R 4 862.00");
+  await expect(sheet).toContainText("Looked at: the sales report");
+  // The PIN went with the question, so the server's PIN-checked reports
+  // could answer; the token still went too.
+  expect(be.tillaiAsked[0].pin).toBe(USERS.manager.pin);
+  expect(be.tillaiAsked[0].register_token).toBe(REGISTER_TOKEN);
+
+  // The model's markdown never reaches the counter as asterisks.
+  be.tillaiAnswer = "Sales totals are in **Manage** on the till.";
+  await ask.fill("and profit?");
+  await page.keyboard.press("Enter");
+  await expect(sheet.locator(".tillai-msg.is-model p").last()).toHaveText("Sales totals are in Manage on the till.");
+
+  // The PIN lives in memory only. A reload keeps the person signed in but
+  // forgets it, so the sheet asks — once — and keeps it for the session.
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await page.keyboard.press("F4");
+  await expect(sheet).toContainText(/Enter your PIN/i);
+  await expect(sheet).not.toContainText(/Unlocked/i);
+  for (const d of USERS.manager.pin.split("")) {
+    await sheet.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(sheet).toContainText(/Unlocked/i);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.keyboard.press("F4");
+  await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+  // And nothing of it is on the device.
+  const stored = await page.evaluate(() => JSON.stringify(Object.entries(localStorage)));
+  expect(stored).not.toMatch(/"pin"\s*:|sessionPin/);
+  expect(stored).not.toContain(`\\"${USERS.manager.pin}\\"`);
+});
+
+test("TillAI is on a phone as the same bubble, and its sheet is the screen", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  // The bubble, in the corner, as on the till — not a tile among the errands.
+  await expect(page.locator(".phone-tiles")).not.toContainText(/TillAI/);
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  await expect(bubble).toBeVisible();
+  await bubble.click();
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toBeVisible();
+  // The whole display.
+  await expect(sheet).toHaveClass(/is-phone/);
+  const box = (await sheet.boundingBox())!;
+  const view = page.viewportSize()!;
+  expect(box.width).toBeGreaterThanOrEqual(view.width - 1);
+  expect(box.height).toBeGreaterThanOrEqual(view.height - 1);
+  // The owner signed in with their PIN a moment ago: unlocked, not asked.
+  await expect(sheet).toContainText(/Unlocked/i);
+  await expect(sheet).not.toContainText(/Enter your PIN/i);
+
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("what did we take today");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement");
+  expect(be.tillaiAsked[0].pin).toBe(USERS.manager.pin);
+  // The phone's own token, not a till's: the server scopes by it.
+  expect(String(be.tillaiAsked[0].register_token)).toMatch(/^personal-token-/);
+
+  // The header's chevron is the way back to the errands, bubble still there.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(bubble).toBeVisible();
+
+  // A counter hand's own phone has the same bubble and the counter's view:
+  // no PIN asked, nothing unlocked, and no PIN sent. (A phone offers only
+  // its owner's name, so this is a second phone, not a second sign-in.)
+  await page.evaluate(() => localStorage.clear());
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+  await page.getByRole("button", { name: "TillAI" }).click();
+  await expect(sheet).toBeVisible();
+  await expect(sheet).not.toContainText(/Enter your PIN|Unlocked/i);
+  await ask.fill("do we stock 2.5 twin and earth");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags of Cement");
+  expect(be.tillaiAsked[1].pin).toBeUndefined();
+});
+
+test("what the shop asked TillAI is in Manage, behind the reports right", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.keyboard.press("F4");
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  const ask = sheet.getByRole("textbox", { name: "Ask TillAI" });
+  await ask.fill("how much cement do we have");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toContainText("40 bags");
+  await page.keyboard.press("Escape");
+
+  await openManage(page);
+  await page.locator("button:not(.tillai-bubble)", { hasText: /^TillAI$/ }).click();
+  const log = page.locator(".tillai-log-page");
+  await expect(log).toContainText("how much cement do we have");
+  await expect(log).toContainText(/1 in the last day/);
+  await expect(log).toContainText(/Front Counter/);
+  await expect(log).toContainText(/unlocked/);
+  // A row opens to its answer and what was looked at.
+  await log.getByRole("button", { name: /how much cement/ }).click();
+  await expect(log).toContainText("40 bags of Cement 42.5N 50kg");
+  await expect(log).toContainText("Looked at: products");
+});
+
+test("TillAI needs the line, and says so while the till keeps selling", async ({ page }) => {
+  await pairAndSignIn(page);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: "TillAI" }).click();
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toContainText(/needs the line/i);
+  await expect(sheet.getByRole("textbox", { name: "Ask TillAI" })).toHaveCount(0);
+  expect(be.tillaiAsked).toHaveLength(0);
+
+  // The sale goes through regardless: the bubble is not in its path.
+  await page.keyboard.press("Escape");
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("TillAI is not on the door", async ({ page }) => {
+  await pairAndSignIn(page);
+  await expect(page.getByRole("button", { name: "TillAI" })).toBeVisible();
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  // Nobody is signed in, so there is nobody for it to answer.
+  await expect(page.getByRole("button", { name: "TillAI" })).toHaveCount(0);
+});
+
+/**
+ * What went wrong at the counter reaches the server (0078). The report is
+ * one small call through the till's token; the line going down is not a
+ * bug and is not reported; the same crash twice is one report; and with no
+ * line the report waits in the outbox and goes when the line is back.
+ */
+test("a till tells the server what went wrong, and only what is worth telling", async ({ page }) => {
+  await pairAndSignIn(page);
+  const crash = (message: string) =>
+    page.evaluate((m) => { setTimeout(() => { throw new TypeError(m); }, 0); }, message);
+
+  await crash("Cannot read properties of undefined (reading 'qty')");
+  await expect.poll(() => be.errorReports.length).toBe(1);
+  const r = be.errorReports[0];
+  expect(r.p_register_token).toBe(REGISTER_TOKEN);
+  expect(r.p_kind).toBe("error");
+  expect(r.p_message).toBe("TypeError: Cannot read properties of undefined (reading 'qty')");
+  expect(String(r.p_stack)).toContain("TypeError");
+  expect(r.p_url).toBe("/");
+  expect(r.p_version).toBeTruthy();
+  // No PIN, no user: a crash needs nobody's credential to be worth knowing.
+  expect(JSON.stringify(r)).not.toMatch(/p_pin|user_id/);
+
+  // The same crash again within minutes is not a second report.
+  await crash("Cannot read properties of undefined (reading 'qty')");
+  // The line going down is not a bug.
+  await page.evaluate(() => { setTimeout(() => { void Promise.reject(new TypeError("Failed to fetch")); }, 0); });
+  await page.waitForTimeout(400);
+  expect(be.errorReports).toHaveLength(1);
+
+  // A different failure, a rejection this time, is.
+  await page.evaluate(() => { setTimeout(() => { void Promise.reject(new RangeError("bad slip width")); }, 0); });
+  await expect.poll(() => be.errorReports.length).toBe(2);
+  expect(be.errorReports[1].p_kind).toBe("rejection");
+  expect(be.errorReports[1].p_message).toBe("RangeError: bad slip width");
+
+  // With the line down the report waits, and goes when the line is back.
+  be.offline = true;
+  await crash("the drawer did not open");
+  await page.waitForTimeout(400);
+  expect(be.errorReports).toHaveLength(2);
+  be.offline = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => be.errorReports.length).toBe(3);
+  expect(be.errorReports[2].p_message).toBe("TypeError: the drawer did not open");
 });
 
 test("scanning a barcode rings the item straight through", async ({ page }) => {
@@ -1405,6 +1969,314 @@ test("a sale open when the screen reloads comes back parked", async ({ page }) =
   expect(be.storedSales[0].total).toBe(1565);
 });
 
+test("two parked sales are chosen between, not resumed blind", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  // Two customers step away: one for a card, one for a bakkie.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "2");
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+
+  // TWO PARKED: the button asks which. It used to bring back the last one
+  // parked, silently, and the cashier parked it again to reach the other.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  await expect(which).toBeVisible();
+  const rows = which.locator(".modal-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(0)).toContainText("R 115.00");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(rows.nth(1)).toContainText("2 units");
+  await expect(rows.nth(1)).toContainText("R 2 900.00");
+
+  // The first one back is the one asked for, and the other stays parked.
+  await rows.nth(0).click();
+  await expect(which).toHaveCount(0);
+  await expect(page.locator(".line-row")).toHaveCount(1);
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // With a sale open, the other cannot be pulled over it.
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(banner(page)).toContainText(/Finish or park this sale/);
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+
+  // ONE PARKED: straight back, no question asked. (Voiding a sale that came
+  // off the parked list asks first; that is the next test's subject.)
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await page.getByRole("dialog", { name: "This sale was parked" }).getByRole("button", { name: "Delete it" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.getByRole("dialog", { name: "Which parked sale?" })).toHaveCount(0);
+  await expect(page.locator(".line-row")).toContainText("Twin & Earth 2.5mm 100m");
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+});
+
+test("a parked sale stays parked until it is sold or deleted", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const park = async () => { await page.getByRole("button", { name: "Park sale" }).click(); };
+  const scanCement = async () => {
+    await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".line-row")).toHaveCount(1);
+  };
+  await scanCement(); await park();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "2"); await park();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  const rows = which.locator(".modal-row");
+
+  // RESUMED AND PARKED AGAIN IS THE SAME SALE, in the same slot at the same
+  // time — not a third entry with a new time.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await park();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+
+  // VOIDING A RESUMED SALE ASKS. The customer who parked it may be on their
+  // way back; a slip of the finger must not lose their basket.
+  await rows.nth(0).click();
+  await page.getByRole("button", { name: "Void sale" }).click();
+  const ask = page.getByRole("dialog", { name: "This sale was parked" });
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Put it back" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+
+  // A SALE NOBODY IS COMING BACK FOR is deleted from the list itself, after
+  // a confirm; the other stays where it was.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Keep it" }).click();
+  await expect(rows).toHaveCount(2);
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Delete it" }).click();
+  await expect(which).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // AND "DELETE IT" ON THE VOID PROMPT IS THE OTHER WAY OUT.
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await ask.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+
+  // THE COUNTER CLEARS AT ONCE, before the server has answered: the next
+  // customer's first keystrokes must not land in a basket about to be wiped.
+  // A slow line is exactly when it happened (on the CI runner, first).
+  be.parkDelayMs = 1500;
+  await scanCement(); await park();
+  await page.getByPlaceholder(/Scan barcode/i).fill("twin");
+  await expect(page.locator(".result-row", { hasText: "Twin & Earth 2.5mm 100m" })).toBeVisible();
+  // Now the server answers — and the typing is still there.
+  await expect.poll(() => be.parkedSales.length, { timeout: 5000 }).toBe(1);
+  await page.waitForTimeout(600);
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveValue("twin");
+  await expect(page.locator(".result-row", { hasText: "Twin & Earth 2.5mm 100m" })).toBeVisible();
+  be.parkDelayMs = 0;
+  await page.getByPlaceholder(/Scan barcode/i).fill("");
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await ask.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+
+  // SOLD IS GONE: a resumed sale that is tendered leaves nothing parked.
+  await scanCement(); await park();
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close", { exact: true }).click();
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+
+  // A REFRESH WITH A RESUMED SALE OPEN puts it back in its own slot, not a
+  // new one: still two parked, not three.
+  await scanCement(); await park();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1"); await park();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await expect(banner(page)).toContainText(/has been parked/i);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  // In its own slot: still first, at the time it was first parked.
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
+  await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+});
+
+test("a sale parked on one till is picked up on another, by anyone", async ({ page, browser }) => {
+  be.customers.push({
+    id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+    credit_limit: 0, balance: 0, available: 0,
+  });
+  // Two tills on one shop: the front counter and the yard. Its own browser
+  // context, because a till is its own device with its own storage.
+  const yardContext = await browser.newContext();
+  const yard = await yardContext.newPage();
+  await installBackend(yard, be);
+  await pairAndSignIn(page, USERS.employee.pin);
+  await signInOnSecondTill(yard, USERS.manager.pin);
+
+  // SAM PARKS ZAIB'S BASKET AT THE FRONT COUNTER.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(banner(page)).toContainText(/Any till can pick it up/);
+  expect(be.parkedSales).toHaveLength(1);
+  expect(be.parkedSales[0]).toMatchObject({ register_name: "Front Counter", parked_by_name: "Sam", customer_id: "k1" });
+
+  // ZAIB WALKS OVER TO THE YARD, where the manager is on the till. The
+  // basket is there without anybody refreshing anything.
+  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
+  await yard.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(yard.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(yard.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+  // Taken off the list as it is taken: the front counter cannot also have it.
+  expect(be.parkedSales).toHaveLength(0);
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0, { timeout: 15000 });
+
+  // PARKED AGAIN IN THE YARD, it says so on the front counter's list, next
+  // to one parked there. And the yard's is picked up at the front.
+  await yard.getByRole("button", { name: "Park sale" }).click();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  const rows = which.locator(".modal-row");
+  await expect(rows.nth(0)).toContainText("Zaib Ahmad");
+  await expect(rows.nth(0)).toContainText("Yard till · Manager");
+  await expect(rows.nth(1)).toContainText("Front Counter · Sam");
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+
+  // DELETED ON ONE TILL IS GONE ON THE OTHER.
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
+  expect(be.parkedSales).toHaveLength(1);
+  await yardContext.close();
+});
+
+test("parked with the line down, a sale stays on this till until the line returns", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await expect(page.getByText(/offline/i).first()).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(banner(page)).toContainText(/on this till/);
+  expect(be.parkedSales).toHaveLength(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // Kept on the device, said so, and still resumable with the line down.
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  await expect(which.locator(".modal-row").nth(0)).toContainText("this till only");
+  await which.getByRole("button", { name: "Cancel" }).click();
+
+  // THE LINE RETURNS: both go to the shop's list by themselves.
+  be.offline = false;
+  await expect.poll(() => be.parkedSales.length, { timeout: 20000 }).toBe(2);
+  expect(be.parkedSales.map((p) => p.register_name)).toEqual(["Front Counter", "Front Counter"]);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(which.locator(".modal-row").nth(0)).toContainText("Front Counter · Sam");
+});
+
+test("Cancel is neither a row nor the action, anywhere", async ({ page }) => {
+  // It read as a third option under a list of two, and as the twin of the
+  // outlined button beside it. Asserted as computed style, on three
+  // pop-ups built three different ways.
+  const style = (l: import("@playwright/test").Locator) =>
+    l.evaluate((el) => {
+      const c = getComputedStyle(el);
+      return { underline: c.textDecorationLine, bg: c.backgroundColor, border: c.borderTopColor };
+    });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+
+  // The customer picker: a list, then Cancel.
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  const cancel = await style(picker.getByRole("button", { name: "Cancel" }));
+  const row = await style(picker.locator(".modal-row").first());
+  expect(cancel.underline).toBe("underline");
+  expect(cancel.bg).toBe("rgba(0, 0, 0, 0)");
+  expect(row.underline).toBe("none");
+  await picker.getByRole("button", { name: "Cancel" }).click();
+
+  // The delivery form: Cancel beside a filled action, and an outlined one.
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  const c2 = await style(form.getByRole("button", { name: "Cancel" }));
+  const add = await style(form.getByRole("button", { name: "Add to the sale" }));
+  expect(c2.underline).toBe("underline");
+  expect(add.underline).toBe("none");
+  expect(add.bg).not.toBe("rgba(0, 0, 0, 0)");
+  await form.getByRole("button", { name: "Cancel" }).click();
+
+  // The discount modal, which was styled by hand rather than by the sheet.
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  const dlg = page.getByRole("dialog", { name: "Apply discount" });
+  const c3 = await style(dlg.getByRole("button", { name: "Cancel" }));
+  expect(c3.underline).toBe("underline");
+  expect(c3.bg).toBe("rgba(0, 0, 0, 0)");
+});
+
+test("a delivery takes the buyer's address off their record, and it can still be changed", async ({ page }) => {
+  be.customers.push({
+    id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+    credit_limit: 0, balance: 0, available: 0, address: "14 Diale Rd, Bloemfontein",
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+
+  // The address on file is offered, not typed again.
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await expect(form.getByLabel("Deliver to")).toHaveValue("Zaib Ahmad");
+  await expect(form.locator("textarea")).toHaveValue("14 Diale Rd, Bloemfontein");
+  // And it is theirs to change: this load goes to the site, not the house.
+  await form.locator("textarea").fill("Plot 7, Bainsvlei");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+  await expect(page.locator(".line-row", { hasText: "Delivery" })).toBeVisible();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  expect(be.deliveries).toHaveLength(1);
+  expect(be.deliveries[0].customer_name).toBe("Zaib Ahmad");
+  expect(be.deliveries[0].address).toBe("Plot 7, Bainsvlei");
+  // The record itself was not changed by a one-off delivery elsewhere.
+  expect(be.customers[0].address).toBe("14 Diale Rd, Bloemfontein");
+});
+
 test("a completed sale does not come back parked", async ({ page }) => {
   // The other half: the device's copy has to be dropped when the sale leaves,
   // or every refresh resurrects the last thing sold.
@@ -2152,11 +3024,16 @@ test("a Sales row opens the sale, and the list is striped", async ({ page }) => 
   await openManage(page);
   await page.getByRole("button", { name: /^Sales$/ }).click();
 
-  // Neighbouring rows differ, so the eye can follow one across.
-  const [first, second] = await page.evaluate(() => {
-    const rows = document.querySelectorAll("li:has(button)");
-    return [getComputedStyle(rows[0]).backgroundColor, getComputedStyle(rows[1]).backgroundColor];
-  });
+  // Neighbouring rows differ, so the eye can follow one across. The list is
+  // fetched, so wait for the second row to exist before measuring anything:
+  // measured straight after the click, this read two rows that were not there
+  // yet on a runner slower than a laptop, and CI was red on main for it.
+  const rows = page.locator("li:has(button)");
+  await expect(rows.nth(1)).toBeVisible();
+  const [first, second] = await rows.evaluateAll((els) => [
+    getComputedStyle(els[0]).backgroundColor,
+    getComputedStyle(els[1]).backgroundColor,
+  ]);
   expect(first).not.toBe(second);
 
   // The row itself is the door; the buttons on it still do their own jobs.
@@ -3165,25 +4042,37 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
   // fold at all.
   await page.setViewportSize({ width: 360, height: 740 });
 
+  // The dialog scales in from 96% over a fifth of a second, and a measurement
+  // taken mid-way is of a shrunken slip. This test passed for a year on that
+  // accident: a blank line the preview drew under the barcode made the real
+  // count one too many, and the 4% shrink rounded it back down — whenever the
+  // timing landed. Measure only once nothing is moving.
+  await page
+    .locator(".animate-scale-in")
+    .evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+
   // Measured rather than asserted on a class name: count how many lines the
   // browser actually laid out and compare it with how many the text has.
   const folded = await page.evaluate(() => {
     const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre");
     if (!pre) return { drawn: -1, real: -1 };
     const lh = parseFloat(getComputedStyle(pre).lineHeight);
-    // A barcode is one line of the slip drawn taller on purpose; count it as
-    // the one line it is, not as the wrapping this test exists to catch.
+    // A barcode is a block of its own, not a line of text: take its height
+    // out of the measurement and it contributes no line to the text either.
     const bars = Array.from(pre.querySelectorAll<HTMLElement>("[data-barcode]"));
     const barHeight = bars.reduce((t, b) => t + b.getBoundingClientRect().height, 0);
     return {
-      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh) + bars.length,
+      drawn: Math.round((pre.getBoundingClientRect().height - barHeight) / lh),
       real: (pre.textContent ?? "").replace(/\n$/, "").split("\n").length,
+      bars: bars.length,
     };
   });
   expect(folded.real, "the preview was found and has content").toBeGreaterThan(5);
+  expect(folded.bars, "the document number is drawn as a barcode").toBe(1);
   // Drawn may come in a line under the text's own count — a trailing newline
   // does not get a line box of its own. It may never come in ABOVE it: that
-  // can only mean the browser folded something.
+  // can only mean the browser folded something, or drew a line the slip does
+  // not have (the blank under the barcode was exactly that).
   expect(
     folded.drawn,
     "lines drawn on screen vs lines in the slip — more means it wrapped"
@@ -3192,6 +4081,24 @@ test("the slip preview shows the slip, not a reflowed version of it", async ({ p
     folded.drawn,
     "the preview is laid out at all, rather than collapsed or hidden"
   ).toBeGreaterThanOrEqual(folded.real - 2);
+
+  // The count above cannot see a blank line the preview invents, because the
+  // newline that draws it is counted on both sides. So look at it directly:
+  // whatever follows the barcode must start on the line under it. A gap of a
+  // line is the blank the paper never prints.
+  const gap = await page.evaluate(() => {
+    const pre = document.querySelector<HTMLPreElement>(".overflow-x-auto pre")!;
+    const bar = pre.querySelector<HTMLElement>("[data-barcode]")!;
+    const range = document.createRange();
+    range.setStartAfter(bar);
+    range.setEnd(pre, pre.childNodes.length);
+    const first = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0)!;
+    return {
+      gap: first.top - bar.getBoundingClientRect().bottom,
+      lh: parseFloat(getComputedStyle(pre).lineHeight),
+    };
+  });
+  expect(gap.gap, "space between the barcode and the next line").toBeLessThan(gap.lh / 2);
 });
 
 test("a quote adds up: the line shows what came off it, and so does the total", async ({ page }) => {
@@ -3543,6 +4450,141 @@ test("a photographed product carries its picture onto the line", async ({ page }
   await expect(page.locator(".line-thumb")).toHaveAttribute("src", /^data:image/);
 });
 
+test("a document filed without being read can be read later, on the same document", async ({ page }) => {
+  // The Jasbro invoice: filed with its page and none of its lines, because
+  // the reading was skipped. It must not have to be scanned again.
+  be.suppliers.push({ id: "sup9", code: null, name: "Jasbro Plumbing", contact_name: null,
+    phone: "010 442 0625", email: "info@jasbro.co.za", address: null, vat_number: "4370229645",
+    notes: null } as (typeof be.suppliers)[number]);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
+  await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
+    .getByRole("button", { name: "Manage" }).click();
+  await page.getByRole("button", { name: "File by hand" }).click();
+  const filed = page.getByRole("dialog", { name: "New supplier document" });
+  await filed.getByLabel("Document kind").selectOption("invoice");
+  await filed.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "page1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await filed.getByRole("button", { name: "File 1 page" }).click();
+  await expect(page.getByText("Filed with 1 page.")).toBeVisible();
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "invoice", status: "stored" });
+
+  // Open it: a picture with no lines, and the way to read it.
+  await page.locator("tr.acc-row", { hasText: "Invoice" }).first().click();
+  const view = page.getByRole("dialog", { name: /Invoice/ });
+  await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+  await view.getByRole("button", { name: "Read this document" }).click();
+  await expect(page.getByText(/Read: 2 lines found/)).toBeVisible();
+
+  // The filed page went to the reader, and the reading landed on THIS
+  // document: number, date, total and lines, nothing filed twice.
+  expect(be.readPages).toBe(1);
+  expect(be.supplierDocs).toHaveLength(1);
+  // The reader called it a quote; the person filed it as an invoice, and the
+  // person's word stands — or the receive step would vanish with it.
+  expect(be.supplierDocs[0]).toMatchObject({ kind: "invoice", status: "read", doc_number: "27181", doc_date: "2026-08-13", total: 5300.35 });
+  expect(be.supplierLines.map((l) => l.description)).toEqual(["COMP ELBOW 15MM", "COMP SPARE RING 15MM"]);
+
+  // And now it reads like any scan: its lines, and the step that books them in.
+  await page.locator("tr.acc-row", { hasText: "27181" }).first().click();
+  const read = page.getByRole("dialog", { name: /27181/ });
+  await expect(read).toContainText("COMP ELBOW 15MM");
+  await expect(read.getByRole("button", { name: "Read this document" })).toHaveCount(0);
+  await expect(read.getByRole("button", { name: "Receive this delivery" })).toBeVisible();
+});
+
+test("called-off orders stay on the list crossed out, deletable when they never went out, and each order goes out as a document", async ({ page }) => {
+  be.suppliers.push({ id: "sup1", code: null, name: "Voltex", contact_name: null, phone: "051 000 0000",
+    email: "orders@voltex.co.za", address: "1 Depot Rd, Bloemfontein", vat_number: "4000000000",
+    notes: null } as (typeof be.suppliers)[number]);
+  const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
+  const at = "2026-09-10T08:00:00.000Z";
+  be.purchaseOrders.push(
+    { id: "po1", doc_number: "PO-000001", supplier_id: "sup1", status: "draft", expected_on: null, note: null, created_at: at, created_by_name: "Manager", sent_at: null },
+    { id: "po2", doc_number: "PO-000002", supplier_id: "sup1", status: "cancelled", expected_on: null, note: "raised by mistake", created_at: at, created_by_name: "Manager", sent_at: null },
+    { id: "po3", doc_number: "PO-000003", supplier_id: "sup1", status: "cancelled", expected_on: null, note: null, created_at: at, created_by_name: "Manager", sent_at: at },
+  );
+  be.poLines.push({ id: "pl1", po_id: "po1", product_id: cable.id, sku: cable.sku, name: cable.name, unit_code: cable.unit_code, qty: 6, unit_cost: 50, received_qty: 0 });
+  // Print goes to the browser's dialog, which a test cannot see; the call is
+  // what is checked.
+  await page.addInitScript(() => {
+    (window as unknown as { __printed: number }).__printed = 0;
+    window.print = () => { (window as unknown as { __printed: number }).__printed += 1; };
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+  await page.getByRole("button", { name: /^Orders$/ }).click();
+
+  // CALLED OFF STAYS ON THE LIST, crossed out. It used to hide behind a
+  // toggle, which read as deleted; an order that was raised and then not is
+  // part of the record, and the line through it says which it is.
+  const rows = page.locator("tr.acc-row");
+  const struck = (number: string) =>
+    rows.filter({ hasText: number }).locator("td").first()
+      .evaluate((el) => getComputedStyle(el).textDecorationLine);
+  await expect(rows.filter({ hasText: "PO-000001" })).toBeVisible();
+  await expect(rows.filter({ hasText: "PO-000002" })).toBeVisible();
+  await expect(rows.filter({ hasText: "PO-000003" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /called off/i })).toHaveCount(0);
+  expect(await struck("PO-000001")).toBe("none");
+  expect(await struck("PO-000002")).toBe("line-through");
+  expect(await struck("PO-000003")).toBe("line-through");
+  await expect(rows.filter({ hasText: "PO-000003" })).toContainText("Called off");
+  // Crossed out is not sendable: there is nothing to print for it.
+  await expect(rows.filter({ hasText: "PO-000003" }).getByRole("button", { name: /^Print/ })).toHaveCount(0);
+
+  // ONE THAT NEVER WENT OUT MAY GO. One that went to the supplier stays.
+  await rows.filter({ hasText: "PO-000003" }).click();
+  await expect(page.getByText(/PO-000003 · Voltex · Called off/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete this order" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await rows.filter({ hasText: "PO-000002" }).click();
+  await page.getByRole("button", { name: "Delete this order" }).click();
+  await page.getByRole("button", { name: "Delete it" }).click();
+  await expect.poll(() => be.purchaseOrders.map((o) => o.doc_number)).toEqual(["PO-000001", "PO-000003"]);
+  await expect(rows.filter({ hasText: "PO-000002" })).toHaveCount(0);
+  await expect(rows.filter({ hasText: "PO-000003" })).toBeVisible();
+
+  // EACH ORDER GOES OUT AS A DOCUMENT, from its own row: print it, save it
+  // as a PDF, or email it to the supplier — whose address is on file.
+  const row = rows.filter({ hasText: "PO-000001" });
+  await expect(row.getByRole("button", { name: "Print PO-000001" })).toBeVisible();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    row.getByRole("button", { name: "PDF PO-000001" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe("Purchase-Order-PO-000001.pdf");
+
+  const email = row.getByRole("link", { name: "Email PO-000001" });
+  const href = (await email.getAttribute("href")) ?? "";
+  expect(href).toMatch(/^mailto:orders%40voltex\.co\.za\?subject=Purchase%20Order%20PO-000001%20from%20Ladybrand%20Hardware/);
+  // The document is in the body: the supplier and the six rolls at R 50.
+  const body = decodeURIComponent(href.split("&body=")[1] ?? "");
+  expect(body).toContain("Purchase Order PO-000001");
+  expect(body).toContain("For: Voltex");
+  expect(body).toContain("6 roll × Twin & Earth 2.5mm 100m (CBL-25-100) — R 300.00");
+  expect(body).toContain("VAT R 45.00");
+  expect(body).toContain("Total R 345.00");
+  // Emailed is as good as sent: the draft is now with the supplier.
+  await Promise.all([page.waitForEvent("download"), email.click()]);
+  await expect.poll(() => be.purchaseOrders.find((o) => o.id === "po1")?.status).toBe("sent");
+  await expect(row).toContainText("With the supplier");
+
+  // Print opens the document and goes to the print dialog by itself.
+  await row.getByRole("button", { name: "Print PO-000001" }).click();
+  const doc = page.getByRole("dialog", { name: "Purchase Order PO-000001" });
+  await expect(doc).toBeVisible();
+  await expect(doc).toContainText("Order from");
+  await expect(doc).toContainText("Voltex");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: number }).__printed)).toBe(1);
+  await doc.getByRole("button", { name: "Close document" }).click();
+});
+
 test("the header calculator does a quick sum and leaves the sale alone", async ({ page }) => {
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
@@ -3562,8 +4604,48 @@ test("the header calculator does a quick sum and leaves the sale alone", async (
   // It floats: the sale underneath was never touched.
   await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
 
+  // And it floats over the cart, never over the money: the totals and the
+  // tender panel stay in full view while a sum is being tapped.
+  const calcBox = (await calc.boundingBox())!;
+  const totalsBox = (await page.locator(".totals").boundingBox())!;
+  const tenderBox = (await page.locator(".tender").boundingBox())!;
+  expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(totalsBox.x);
+  expect(calcBox.x + calcBox.width).toBeLessThanOrEqual(tenderBox.x);
+
+  // AND IT CAN BE MOVED: dragged by its title bar to wherever it is least in
+  // the way, and it stays there when it is opened again.
+  const grip = calc.getByTestId("calc-grip");
+  const gripBox = (await grip.boundingBox())!;
+  await page.mouse.move(gripBox.x + 40, gripBox.y + gripBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox.x + 40 + 120, gripBox.y + gripBox.height / 2 + 150, { steps: 6 });
+  await page.mouse.move(gripBox.x + 40 + 240, gripBox.y + gripBox.height / 2 + 300, { steps: 6 });
+  await page.mouse.up();
+  const moved = (await calc.boundingBox())!;
+  expect(Math.round(moved.x - calcBox.x)).toBe(240);
+  expect(Math.round(moved.y - calcBox.y)).toBe(300);
+  // The sum survived the move.
+  await expect(calc.getByTestId("calc-display")).toHaveText("36");
+
   await calc.getByRole("button", { name: "Close calculator" }).click();
   await expect(calc).toHaveCount(0);
+  await page.getByRole("button", { name: "Calculator" }).click();
+  // Polled: it scales in over a moment, and the box is read once it has.
+  await expect.poll(async () => {
+    const b = (await calc.boundingBox())!;
+    return [Math.round(b.x), Math.round(b.y)];
+  }).toEqual([Math.round(moved.x), Math.round(moved.y)]);
+
+  // It cannot be dragged off the screen: the title bar is always reachable.
+  const g2 = (await grip.boundingBox())!;
+  await page.mouse.move(g2.x + 40, g2.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(-500, -500, { steps: 4 });
+  await page.mouse.up();
+  const corner = (await calc.boundingBox())!;
+  expect(Math.round(corner.x)).toBe(0);
+  expect(Math.round(corner.y)).toBe(0);
+  await calc.getByRole("button", { name: "Close calculator" }).click();
 });
 
 test("Manage and the pop-ups wear the shop's colours, not a stranger's", async ({ page }) => {
@@ -5217,6 +6299,36 @@ test("the reports answer who sold it, what came back, and what the shelves are w
     .toContainText("No supplier paperwork in this range");
 });
 
+test("a supplier on the spend report opens its page", async ({ page }) => {
+  be.suppliers.push({
+    id: "sup1", name: "AKBRO STEEL AND HARDWARE CC", contact_name: null, phone: "051 447 0000",
+    email: null, address: null, vat_number: "4000000001", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "INV-1201",
+    doc_date: "2026-09-07", total: 7782.74, note: null, status: "received",
+    created_at: "2026-09-07T08:00:00Z",
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await page.getByRole("tab", { name: "Suppliers" }).click();
+  const region = page.getByRole("region", { name: "Suppliers" });
+  await expect(region).toContainText("7 782.74");
+
+  // The figure came from somewhere: the row is the supplier, and opens it.
+  await region.getByRole("button", { name: "Open AKBRO STEEL AND HARDWARE CC" }).click();
+  await expect(page.getByRole("heading", { name: "AKBRO STEEL AND HARDWARE CC" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "← Suppliers" })).toBeVisible();
+  await expect(page.locator("tr.acc-row", { hasText: "Invoice INV-1201" })).toBeVisible();
+
+  // Back to the list, and the list is the list: the supplier it was asked
+  // to open is not opened again.
+  await page.getByRole("button", { name: "← Suppliers" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "AKBRO STEEL" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AKBRO STEEL AND HARDWARE CC" })).toHaveCount(0);
+});
+
 test("a report tab a cashier cannot open is not there at all", async ({ page }) => {
   // Reports live behind view_reports, and every new one is gated with the
   // rest: the Manage door itself refuses, so the tabs are unreachable.
@@ -5262,6 +6374,56 @@ test("a delivery costs the shop, and a free one costs it just the same", async (
   await expect(del).toContainText("-R 60.00");
   // And it does not tell the shop to go and set a cost it has already set.
   await expect(del).not.toContainText("No cost is recorded against a delivery");
+});
+
+test("a buyer's name, number or address is put right at the counter, and nothing about money moves", async ({ page }) => {
+  be.customers.push(
+    { id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+      credit_limit: 0, balance: 0, available: 0 },
+    { id: "k2", code: "TRD-001", name: "Thabo Mokoena", phone: "082 555 0186", is_trade: true,
+      credit_limit: 25000, balance: 0, available: 25000 },
+  );
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  const picker = page.getByRole("dialog", { name: /Choose a customer/i });
+  await picker.locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+
+  // THE PENCIL. The cashier hears about the wrong digit standing in front
+  // of the person; they should not have to send it to the back office.
+  await page.getByRole("button", { name: /Zaib Ahmad/ }).click();
+  await picker.getByRole("button", { name: "Edit Zaib Ahmad" }).click();
+  const form = picker.getByRole("group", { name: "Edit Zaib Ahmad" });
+  await expect(form.getByLabel("Their name")).toHaveValue("Zaib Ahmad");
+  await expect(form.getByLabel("Their phone number")).toHaveValue("0673747474");
+  await expect(form).toContainText("Credit, trade pricing and the account itself are changed under Accounts");
+
+  // A number belongs to one buyer: another's is refused, by name.
+  await form.getByLabel("Their phone number").fill("0825550186");
+  await form.getByRole("button", { name: "Save changes" }).click();
+  await expect(picker).toContainText("That number is already on file for Thabo Mokoena");
+
+  await form.getByLabel("Their name").fill("Zaib Ahmed");
+  await form.getByLabel("Their phone number").fill("067 374 7475");
+  await form.getByLabel(/Delivery address/).fill("14 Mabille Rd, Maseru");
+  await form.getByRole("button", { name: "Save changes" }).click();
+
+  // Back on the list with the corrected row, and the record itself is right.
+  await expect(form).toHaveCount(0);
+  const row = picker.locator(".modal-row-pair", { hasText: "Zaib Ahmed" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("067 374 7475");
+  expect(be.customers[0]).toMatchObject({
+    name: "Zaib Ahmed", phone: "067 374 7475", address: "14 Mabille Rd, Maseru",
+    credit_limit: 0, is_trade: false, code: null,
+  });
+
+  // The sale follows: it was theirs, and the slip will carry the right name.
+  await picker.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: /Zaib Ahmed/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toHaveCount(0);
 });
 
 test("a buyer given by name is added right there, with the number that finds them again", async ({ page }) => {

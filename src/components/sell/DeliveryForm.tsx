@@ -29,17 +29,20 @@ export function today(): string {
 export default function DeliveryForm({
   initial,
   suggestedName,
+  suggestedAddress,
   onCancel,
   onConfirm,
 }: {
   initial?: DeliveryDetails | null;
   /** The customer already on the sale, if there is one. */
   suggestedName?: string | null;
+  /** Their address on file, offered rather than typed again; still editable. */
+  suggestedAddress?: string | null;
   onCancel: () => void;
   onConfirm: (d: DeliveryDetails) => void;
 }) {
   const [customerName, setName] = useState(initial?.customerName ?? suggestedName ?? "");
-  const [address, setAddress] = useState(initial?.address ?? "");
+  const [address, setAddress] = useState(initial?.address ?? suggestedAddress ?? "");
   const [deliverOn, setOn] = useState(initial?.deliverOn ?? today());
   const [deliverAt, setAt] = useState(initial?.deliverAt ?? "");
   const [charge, setCharge] = useState(initial ? String(initial.charge) : "");
@@ -138,7 +141,7 @@ export default function DeliveryForm({
         </p>
 
         <div className="modal-actions">
-          <button className="btn-line" onClick={onCancel}>
+          <button className="btn-cancel" onClick={onCancel}>
             Cancel
           </button>
           <button

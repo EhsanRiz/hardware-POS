@@ -1,4 +1,4 @@
-# InnovaEarth POS — the till app, served at app.innovaearth.com.
+# InnovaEarth POS — the till app, served at till.innovaearth.com.
 #
 # Its own Worker, separate from the landing page (landing/wrangler.toml) and
 # from the innovaearth.com site. A public marketing page and a till that shops
@@ -7,18 +7,22 @@
 #   npm run build
 #   npx wrangler deploy
 #
-# The route below attaches app.innovaearth.com on deploy — the zone is already
+# The routes below attach till.innovaearth.com on deploy — the zone is already
 # in this account, so wrangler creates the DNS record itself. No dashboard step.
 # The name the Worker is ACTUALLY deployed under. It read
 # "innovaearth-pos-app" for a while, which was a name nothing in the account
 # answered to — so `wrangler deploy` from here, exactly as this file's own
 # instructions say to run it, would have created a second, empty Worker and
-# tried to take app.innovaearth.com off the live till to give it to that.
+# tried to take the live till's domain off it to give it to that.
 name = "hardware-pos"
 main = "worker/index.ts"
 compatibility_date = "2024-09-23"
 account_id = "3ed4a36f8edbaa255c5d1bf30fd6169c"
 routes = [
+  { pattern = "till.innovaearth.com", custom_domain = true },
+  # The old address. Still served by this Worker so a till paired on it keeps
+  # working until it is re-paired; a person who types it is sent on to the
+  # new one by worker/index.ts. Keep it for a year, then drop it.
   { pattern = "app.innovaearth.com", custom_domain = true }
 ]
 
@@ -27,6 +31,14 @@ routes = [
 # a secret so a deploy needs no dashboard configuration to work.
 [vars]
 SUPABASE_URL = "https://krkatpesfwqnjitcxkco.supabase.co"
+# The public key, as public as the one every browser downloads. The Worker
+# uses it once a day to call the nightly digest (worker/index.ts, scheduled).
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtya2F0cGVzZndxbmppdGN4a2NvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNzYyMDUsImV4cCI6MjEwMTk1MjIwNX0.nqxh5DrmLCJjtz1JCZapD4IBFzGmtChBmvoomtoo1dQ"
+
+# The nightly line: 04:00 UTC is 06:00 in South Africa, before the first
+# shop opens. See worker/index.ts, scheduled().
+[triggers]
+crons = ["0 4 * * *"]
 
 [assets]
 directory = "./dist"

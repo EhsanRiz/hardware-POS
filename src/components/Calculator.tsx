@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // A pop-up calculator for the top bar — lets staff/admin work out tip amounts or
 // do quick sums without leaving the POS. Shows the running calculation, takes
 // keyboard input, and is closed with the ✕ in the top-right corner. It floats
 // (no full-screen backdrop) so the till stays visible behind it.
+//
+// It floats over the CART, top-left, and never over the money. It used to sit
+// top-right, which is exactly where the totals and the tender panel are: the
+// one thing a cashier must still see while tapping a sum is the total.
+//
+// And it can be moved: drag it by its title bar to wherever it is in the way
+// least. Where it was put is remembered until the page reloads, so it does
+// not spring back over the cart every time it is opened.
 type Op = "+" | "-" | "×" | "÷";
 
 function apply(a: number, b: number, op: Op): number {
@@ -25,8 +33,43 @@ function fmt(n: number): string {
   return String(Math.round(n * 1e10) / 1e10);
 }
 
+type Pos = { x: number; y: number };
+let lastPos: Pos | null = null;
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), Math.max(lo, hi));
+
 export default function Calculator({ onClose }: { onClose: () => void }) {
   const [display, setDisplay] = useState("0");
+  // Where it has been dragged to; null is its resting place over the cart.
+  const [pos, setPos] = useState<Pos | null>(lastPos);
+  const box = useRef<HTMLDivElement>(null);
+  // The grip: how far into the title bar the pointer went down, so the panel
+  // moves with the finger rather than jumping to it.
+  const grip = useRef<{ dx: number; dy: number } | null>(null);
+
+  const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    const r = box.current?.getBoundingClientRect();
+    if (!r) return;
+    grip.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = grip.current;
+    const r = box.current?.getBoundingClientRect();
+    if (!g || !r) return;
+    // Kept on the screen: the title bar can always be reached again.
+    const next = {
+      x: clamp(e.clientX - g.dx, 0, window.innerWidth - r.width),
+      y: clamp(e.clientY - g.dy, 0, window.innerHeight - 48),
+    };
+    lastPos = next;
+    setPos(next);
+  };
+  const endDrag = () => {
+    grip.current = null;
+  };
   const [acc, setAcc] = useState<number | null>(null);
   const [op, setOp] = useState<Op | null>(null);
   // The calculation so far, shown above the current entry (e.g. "12 + 3").
@@ -154,11 +197,23 @@ export default function Calculator({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed top-16 right-4 z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in"
+      ref={box}
+      className={`fixed z-[70] w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 animate-scale-in${
+        pos ? "" : " top-16 left-4"
+      }`}
+      style={pos ? { left: pos.x, top: pos.y } : undefined}
+      data-testid="calculator"
       role="dialog"
       aria-label="Calculator"
     >
-      <div className="flex items-center justify-between px-4 h-12 rounded-t-2xl bg-colophon">
+      <div
+        className="flex items-center justify-between px-4 h-12 rounded-t-2xl bg-colophon cursor-move select-none touch-none"
+        data-testid="calc-grip"
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
         <span className="font-semibold text-paper">Calculator</span>
         <button
           onClick={onClose}

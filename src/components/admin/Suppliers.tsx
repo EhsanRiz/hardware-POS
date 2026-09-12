@@ -3,6 +3,8 @@ import {
   DOCUMENT_KIND_LABEL,
   purchasingAddDocument,
   purchasingDocumentLines,
+  readFiledDocument,
+  readSupplierDocument,
   purchasingDeleteDocument,
   purchasingDocuments,
   purchasingSaveSupplier,
@@ -32,7 +34,16 @@ import ScanDocument from "./ScanDocument";
  * a search and not an afternoon. Reading the lines off the page comes next;
  * this screen is the filing.
  */
-export default function Suppliers({ pin }: { pin: string }) {
+export default function Suppliers({
+  pin,
+  openId = null,
+  onOpened,
+}: {
+  pin: string;
+  /** Land on this supplier's page rather than the list (a report row). */
+  openId?: string | null;
+  onOpened?: () => void;
+}) {
   const online = useOnline();
   const [suppliers, setSuppliers] = useState<Supplier[] | null>(null);
   const [selected, setSelected] = useState<Supplier | null>(null);
@@ -75,6 +86,15 @@ export default function Suppliers({ pin }: { pin: string }) {
   useEffect(() => {
     void loadSuppliers();
   }, [loadSuppliers]);
+
+  // Asked to open on one supplier: once the list is in, go straight to it.
+  useEffect(() => {
+    if (!openId || !suppliers) return;
+    const sup = suppliers.find((x) => x.id === openId);
+    if (sup) setSelected(sup);
+    onOpened?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, suppliers]);
 
   useEffect(() => {
     setDocs(null);
@@ -252,6 +272,11 @@ export default function Suppliers({ pin }: { pin: string }) {
               await Promise.all([loadDocs(), loadSuppliers()]);
             }}
             onReceive={(d) => { setViewing(null); setReceiving(d); }}
+            onRead={async (n) => {
+              setViewing(null);
+              setBanner(`Read: ${n} ${n === 1 ? "line" : "lines"} found. Open it to receive them.`);
+              await loadDocs();
+            }}
           />
         )}
       </div>
@@ -361,6 +386,11 @@ export default function Suppliers({ pin }: { pin: string }) {
             await loadSuppliers();
           }}
           onReceive={(d) => { setViewing(null); setReceiving(d); }}
+          onRead={async (n) => {
+            setViewing(null);
+            setBanner(`Read: ${n} ${n === 1 ? "line" : "lines"} found. Open it to receive them.`);
+            await loadDocs();
+          }}
         />
       )}
 
@@ -596,7 +626,7 @@ function SupplierForm({
         ))}
         {error && <p className="acc-note is-bad" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn-fill" disabled={busy || !f.name.trim()}>
@@ -810,7 +840,7 @@ function NewDocument({
         {progress && <p className="acc-note">{progress}</p>}
         {error && <p className="acc-note is-bad" role="alert">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button
@@ -833,6 +863,7 @@ function DocumentView({
   onClose,
   onDeleted,
   onReceive,
+  onRead,
 }: {
   pin: string;
   doc: SupplierDocument;
@@ -840,12 +871,48 @@ function DocumentView({
   onDeleted: () => Promise<void>;
   /** Book what is on this document onto the shelves. */
   onReceive?: (d: SupplierDocument) => void;
+  /** The filed pages have been read and their lines have landed (0082). */
+  onRead?: (lines: number) => Promise<void>;
 }) {
   const [pages, setPages] = useState<SupplierPage[] | null>(null);
   const [lines, setLines] = useState<DocumentLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [reading, setReading] = useState(false);
+
+  /**
+   * A document filed without being read — the reading failed, or it was
+   * filed by hand — is a picture until somebody asks for its lines. This
+   * fetches the filed pages, has them read as at scan time, and lands the
+   * reading on this same document.
+   */
+  async function readNow() {
+    if (!pages || pages.length === 0) return;
+    setReading(true);
+    setError(null);
+    try {
+      const sent: { mime: string; data: string }[] = [];
+      for (const p of pages) {
+        if (!p.url) continue;
+        const blob = await (await fetch(p.url)).blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result));
+          r.onerror = () => reject(r.error ?? new Error("read failed"));
+          r.readAsDataURL(blob);
+        });
+        sent.push({ mime: p.mime, data: dataUrl.replace(/^data:[^,]+,/, "") });
+      }
+      const out = await readSupplierDocument(pin, sent);
+      const n = await readFiledDocument(pin, doc.id, out);
+      await onRead?.(n);
+    } catch (e) {
+      setError(errorMessage(e, "The pages could not be read"));
+    } finally {
+      setReading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -980,6 +1047,17 @@ function DocumentView({
           )}
           {doc.status === "received" && (
             <span className="text-sm text-stone-500">Booked in.</span>
+          )}
+          {/* Filed but never read: a picture with no lines. Reading it here
+              is the same reading a scan gets, landing on this document. */}
+          {onRead && doc.status === "stored" && doc.lines === 0 && pages && pages.length > 0 && (
+            <button
+              className="py-2.5 px-4 rounded-xl bg-colophon text-paper disabled:opacity-40"
+              onClick={() => void readNow()}
+              disabled={busy || reading}
+            >
+              {reading ? "Reading…" : "Read this document"}
+            </button>
           )}
           {doc.status === "stored" && !confirm && (
             <button className="py-2.5 px-4 rounded-xl border border-red-200 text-red-700" onClick={() => setConfirm(true)} disabled={busy}>

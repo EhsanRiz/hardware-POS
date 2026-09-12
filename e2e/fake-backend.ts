@@ -121,6 +121,8 @@ export const USERS = {
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
 export const REGISTER_TOKEN = "test-register-token";
+/** A second till's token, already paired: set on the device, not typed. */
+export const SECOND_TILL_TOKEN = "test-register-token-2";
 
 // PRODUCTS is module state and the shelf screen edits prices on it; taken at
 // load, before any test has run, so installBackend can put them back.
@@ -239,6 +241,15 @@ export class Backend {
   skuSeq = 0;
   calls: string[] = [];
   customers: FakeCustomer[] = [];
+  /** How long the server takes to accept a park; a slow line, for the race it exposed. */
+  parkDelayMs = 0;
+  /** 0086: parked sales are the shop's, seen from every till. */
+  parkedSales: {
+    id: string; parked_at: string; register_name: string; parked_by_name: string;
+    customer_id: string | null; lines: { product_id: string; qty: number; discount?: number | null;
+      discount_percent?: number | null; discount_reason?: string | null }[];
+    discount: number; discount_reason: string | null; total: number;
+  }[] = [];
   accountPayments: RecordedAccountPayment[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string;
     note: string | null; unit_cost?: number | null }[] = [];
@@ -310,6 +321,8 @@ export class Backend {
     kind: "till" | "personal"; assigned_to: string | null;
   }[] = [
     { id: "reg1", token: REGISTER_TOKEN, name: "Front Counter", kind: "till", assigned_to: null },
+    // A second till in the same shop, for what is shared between tills.
+    { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null },
   ];
   /** Live enrolment codes, as device_enrolments holds them minus the hashing. */
   enrolments: {
@@ -468,6 +481,20 @@ export class Backend {
             items: { product_id: string; qty: number; unit_price: number }[] }[] = [];
   /** When set, every request fails as though the connection dropped. */
   offline = false;
+  /**
+   * TillAI. The real assistant runs on the server against Gemini; the fake
+   * answers with whatever a test set, and records what the till asked and
+   * with which token, which is the part the browser suite can hold to
+   * account: the question must carry this till's token and nothing more.
+   */
+  tillaiAsked: { register_token: unknown; question: unknown; history: unknown; pin: unknown }[] = [];
+  /** What the server's log would hold: every question answered, newest first (0077). */
+  tillaiLog: { id: string; asked_at: string; register_name: string; question: string; answer: string | null; tools: string[]; unlocked: boolean }[] = [];
+  /** What tills reported went wrong (0078), as the RPC received it. */
+  errorReports: Record<string, unknown>[] = [];
+  tillaiAnswer = "You have 40 bags of Cement 42.5N 50kg in bin A1, at R 115.00 each.";
+  tillaiLookedAt = ["products"];
+  tillaiFails = false;
   private seq = 0;
 
   reset() {
@@ -897,8 +924,9 @@ export function fakeSaleLines(be: Backend, saleId: string) {
   });
 }
 
-export async function installBackend(page: Page): Promise<Backend> {
-  const be = new Backend();
+export async function installBackend(page: Page, shared?: Backend): Promise<Backend> {
+  // A second page on the SAME backend is a second till in the same shop.
+  const be = shared ?? new Backend();
 
   // PRODUCTS is module state and the catalogue editor now writes to it, so a
   // cap set by one test would still be there for the next one in the same
@@ -1086,6 +1114,37 @@ export async function installBackend(page: Page): Promise<Backend> {
   // 0056: the reader. The model itself is not here — what a test can pin is
   // that the till sends the pages, shows the answer for checking, and files
   // exactly what was on that screen.
+  await page.route("**/functions/v1/tillai", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, unknown> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    be.tillaiAsked.push({ register_token: b.register_token, question: b.question, history: b.history, pin: b.pin });
+    // A till's token, or a phone's (pos_enrol_device): the server proves
+    // either the same way, by its hash against an active register.
+    const tok = String(b.register_token ?? "");
+    if (tok !== REGISTER_TOKEN && !tok.startsWith("personal-token-")) {
+      return respond(403, { ok: false, message: "Register not paired or revoked" });
+    }
+    if (!String(b.question ?? "").trim()) return respond(400, { ok: false, message: "Ask something first." });
+    if (be.tillaiFails) {
+      return respond(502, { ok: false, message: "TillAI could not answer just now. The till is fine; try again in a moment." });
+    }
+    be.tillaiLog.unshift({
+      id: `q${be.tillaiLog.length + 1}`,
+      asked_at: new Date().toISOString(),
+      register_name: "Front Counter",
+      question: String(b.question),
+      answer: be.tillaiAnswer,
+      tools: be.tillaiLookedAt,
+      unlocked: typeof b.pin === "string",
+    });
+    return respond(200, { ok: true, answer: be.tillaiAnswer, looked_at: be.tillaiLookedAt });
+  });
+
   await page.route("**/functions/v1/read-document", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
     let b: Record<string, unknown> = {};
@@ -1173,7 +1232,11 @@ export async function installBackend(page: Page): Promise<Backend> {
 
     switch (path) {
       case "rpc/pos_pair_register": {
-        if (body.p_phone !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
+        // As the server reads it (0081): as typed if it starts with +,
+        // otherwise as a South African number.
+        const typed = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
+        const e164 = typed.startsWith("+") ? typed : typed.startsWith("0") ? "+27" + typed.slice(1) : typed;
+        if (e164 !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
           return fail("Invalid phone or PIN");
         }
         return json([{ register_id: "reg1", token: REGISTER_TOKEN }]);
@@ -1236,6 +1299,65 @@ export async function installBackend(page: Page): Promise<Backend> {
         };
         be.customers.push(made);
         return json([made]);
+      }
+      case "rpc/pos_park_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (be.parkDelayMs) await new Promise((r) => setTimeout(r, be.parkDelayMs));
+        const who = Object.values(USERS).find((u) => u.row.id === body.p_cashier_id);
+        if (!who) return fail("Unknown cashier");
+        const lines = body.p_lines as { product_id: string; qty: number }[];
+        if (!Array.isArray(lines) || lines.length === 0) return fail("Nothing to park");
+        const id = String(body.p_id);
+        const cur = be.parkedSales.find((p) => p.id === id);
+        const row = {
+          id,
+          // The slot keeps its time.
+          parked_at: cur?.parked_at ?? (body.p_parked_at ? String(body.p_parked_at) : new Date().toISOString()),
+          register_name: reg!.name, parked_by_name: who.row.name,
+          customer_id: body.p_customer_id ? String(body.p_customer_id) : null,
+          lines, discount: Number(body.p_discount ?? 0),
+          discount_reason: body.p_discount_reason ? String(body.p_discount_reason) : null,
+          total: Number(body.p_total ?? 0),
+        };
+        if (cur) Object.assign(cur, row); else be.parkedSales.push(row);
+        be.parkedSales.sort((a, b) => a.parked_at.localeCompare(b.parked_at));
+        return json(row);
+      }
+      case "rpc/pos_parked_sales": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(be.parkedSales.map((p) => ({
+          ...p, customer_name: be.customers.find((c) => c.id === p.customer_id)?.name ?? null,
+        })));
+      }
+      case "rpc/pos_unpark_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const i = be.parkedSales.findIndex((p) => p.id === body.p_id);
+        if (i < 0) return fail("That parked sale is not there any more; another till may have taken it");
+        const [row] = be.parkedSales.splice(i, 1);
+        return json(row);
+      }
+      case "rpc/pos_delete_parked_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const i = be.parkedSales.findIndex((p) => p.id === body.p_id);
+        if (i < 0) return fail("That parked sale is not there any more");
+        be.parkedSales.splice(i, 1);
+        return json(null);
+      }
+      case "rpc/pos_customer_fix_details": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const row = be.customers.find((c) => c.id === body.p_customer_id);
+        if (!row) return fail("No such customer");
+        const name = String(body.p_name ?? "").trim();
+        if (!name) return fail("A name is needed");
+        const want = e164(String(body.p_phone ?? ""));
+        if (!want) return fail("That does not look like a phone number");
+        const other = be.customers.find((c) => c.id !== row.id && e164(c.phone) === want);
+        if (other) return fail(`That number is already on file for ${other.name}`);
+        // Only these three move; the money fields are the back office's.
+        row.name = name;
+        row.phone = String(body.p_phone ?? "").trim();
+        row.address = String(body.p_address ?? "").trim() || null;
+        return json([row]);
       }
       case "rpc/pos_customer_history": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -1652,6 +1774,35 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
         return json(poRow(be, row));
       }
+      case "rpc/pos_purchasing_read_filed_document": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
+        if (!d) return fail("Document not found");
+        if (d.status !== "stored" || be.supplierLines.some((l) => l.document_id === d.id)) {
+          return fail("That document has already been read");
+        }
+        // The person's kind stands; only "other" takes the reader's word.
+        const kinds = ["quote", "invoice", "delivery_note", "statement"];
+        if (d.kind === "other" && kinds.includes(String(body.p_kind))) d.kind = String(body.p_kind);
+        d.doc_number = String(body.p_doc_number ?? "").trim() || d.doc_number;
+        d.doc_date = (body.p_doc_date as string | null) ?? d.doc_date;
+        d.total = (body.p_total as number | null) ?? d.total;
+        d.status = "read";
+        let n = 0;
+        for (const l of (body.p_lines as Record<string, unknown>[]) ?? []) {
+          const desc = String(l.description ?? "").trim();
+          if (!desc) continue;
+          n += 1;
+          be.supplierLines.push({
+            document_id: d.id, line_no: n,
+            supplier_code: (l.supplier_code as string | null) ?? null, description: desc,
+            qty: (l.qty as number | null) ?? null, unit_price: (l.unit_price as number | null) ?? null,
+            line_total: (l.line_total as number | null) ?? null,
+          });
+        }
+        return json(n);
+      }
       case "rpc/pos_po_list": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
@@ -1721,6 +1872,20 @@ export async function installBackend(page: Page): Promise<Backend> {
           (l) => l.po_id === po.id && l.received_qty < l.qty).length;
         if (moved > 0) po.status = left === 0 ? "received" : "part";
         return json({ lines_received: moved, lines_outstanding: left });
+      }
+      case "rpc/pos_po_delete": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        const po = be.purchaseOrders.find((x) => x.id === body.p_po_id);
+        if (!po) return fail("Order not found");
+        if (po.status !== "cancelled") return fail("Only a called-off order can be deleted");
+        if (po.sent_at) return fail("That order went to the supplier; it stays on the record as called off");
+        if (be.poLines.some((l) => l.po_id === po.id && l.received_qty > 0)) {
+          return fail("Something was received against that order; it stays on the record");
+        }
+        be.poLines = be.poLines.filter((l) => l.po_id !== po.id);
+        be.purchaseOrders = be.purchaseOrders.filter((x) => x.id !== po.id);
+        return json(null);
       }
       case "rpc/pos_po_cancel": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -2919,17 +3084,17 @@ export async function installBackend(page: Page): Promise<Backend> {
         }
 
         if (path === "rpc/pos_purchases_by_supplier") {
-          const by: Record<string, { docs: number; received: number; total: number; quoted: number }> = {};
+          const by: Record<string, { name: string; docs: number; received: number; total: number; quoted: number }> = {};
           for (const d of be.supplierDocs) {
             const name = be.suppliers.find((x) => x.id === d.supplier_id)?.name ?? "—";
-            const g = (by[name] ??= { docs: 0, received: 0, total: 0, quoted: 0 });
+            const g = (by[d.supplier_id] ??= { name, docs: 0, received: 0, total: 0, quoted: 0 });
             g.docs++;
             if (d.status === "received") g.received++;
             if (d.kind === "quote") g.quoted = r2(g.quoted + (d.total ?? 0));
             else g.total = r2(g.total + (d.total ?? 0));
           }
-          return json(Object.entries(by).map(([supplier, g]) => ({
-            supplier, documents: g.docs, received: g.received,
+          return json(Object.entries(by).map(([supplier_id, g]) => ({
+            supplier_id, supplier: g.name, documents: g.docs, received: g.received,
             total: g.total, quoted: g.quoted, last_document: null,
           })).sort((a, b) => b.total - a.total));
         }
@@ -2956,6 +3121,19 @@ export async function installBackend(page: Page): Promise<Backend> {
         const last = be.closedSessions[0] as { float_kept?: number | null } | undefined;
         return json(last?.float_kept ?? null);
       }
+
+      case "rpc/pos_tillai_questions": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const u = Object.values(USERS).find((x) => x.pin === body.p_pin);
+        if (!u) return fail("Invalid PIN");
+        if (!u.row.permissions.includes("view_reports")) return fail("Not permitted: view_reports");
+        return json(be.tillaiLog.slice(0, Number(body.p_limit ?? 200)));
+      }
+
+      case "rpc/pos_report_error":
+        if (!tokenOk) return fail("Register not paired or revoked");
+        be.errorReports.push(body);
+        return json(null);
 
       case "rpc/pos_cash_sessions":
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -3435,6 +3613,26 @@ export async function installBackend(page: Page): Promise<Backend> {
 }
 
 /** Pair the till and sign in, which every till test needs first. */
+/**
+ * Sign in on the second till. It is already paired (the device holds the
+ * token), so this is the sign-in alone, on a page installed on the same
+ * backend as the first.
+ */
+export async function signInOnSecondTill(page: Page, pin = USERS.employee.pin) {
+  await page.addInitScript((tok: string) => {
+    localStorage.setItem("pos.device.registerToken", JSON.stringify(tok));
+    localStorage.setItem("pos.device.registerName", JSON.stringify("Yard till"));
+    localStorage.setItem("pos.device.registerId", JSON.stringify("reg2"));
+    localStorage.setItem("pos.device.kind", JSON.stringify("till"));
+  }, SECOND_TILL_TOKEN);
+  await page.goto("/");
+  const person = Object.values(USERS).find((u) => u.pin === pin)!;
+  await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
+  await page.waitForSelector('button:text-is("1")');
+  for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}
+
 export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.goto("/");
   // 0074 asks what the device is before it asks anything else: a till and

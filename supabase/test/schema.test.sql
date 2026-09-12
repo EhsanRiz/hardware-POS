@@ -4308,4 +4308,696 @@ begin
     'a counter hand cannot enrol devices');
 end $$;
 
+
+-- Two shops, one database ------------------------------------------------------
+--
+-- Several real shops share this server, and every one of them must see only
+-- its own rows. The rule that carries 0012 is that org_id is never accepted
+-- from the client: every RPC takes the till's register token and derives the
+-- shop from it. Nothing in this file had ever put a second shop beside the
+-- first and looked, so this section does. A second shop is created the way
+-- InnovaEarth creates one, its manager enrols and pairs a till, and then
+-- that till is pointed at everything the first shop has.
+
+-- Refused, or empty: for a lookup aimed across the fence either is right,
+-- and a row coming back is the only wrong answer.
+create or replace function assert_hidden(sql text, what text) returns void
+language plpgsql as $$
+declare v_n bigint;
+begin
+  begin
+    execute format('select count(*) from (%s) x', sql) into v_n;
+  exception when others then
+    return;
+  end;
+  if v_n > 0 then raise exception 'FAILED: % — % row(s) came back', what, v_n; end if;
+end $$;
+
+do $$
+declare
+  v_org_a uuid; v_org_b uuid; v_tok_a text; v_tok_b text;
+  v_mgr_a uuid; v_mgr_b uuid; v_emp_a uuid;
+  v_prod_a uuid; v_price numeric; v_sale_a public.sales;
+  v_n bigint; v_name text;
+begin
+  select org_id, manager_id, employee_id into v_org_a, v_mgr_a, v_emp_a from fixture;
+  select token into v_tok_a from till;
+
+  -- The second shop, as InnovaEarth makes one: created with its manager's
+  -- number, the manager proves the phone and chooses a PIN, and pairs a till.
+  v_org_b := public.innova_create_org('Other Shop', 'Other Manager', '+27820000099');
+  perform public.auth_set_pin('+27820000099', '246810');
+  select id into v_mgr_b from public.app_users where org_id = v_org_b;
+  select token into v_tok_b
+    from public.pos_pair_register('+27820000099', '246810', 'Other till');
+
+  -- Something worth stealing in the first shop: a product and a sale on it.
+  select id, price_retail into v_prod_a, v_price
+    from public.products where org_id = v_org_a and active and price_retail > 0 limit 1;
+  v_sale_a := public.pos_create_sale(
+    p_register_token => v_tok_a, p_cashier_id => v_emp_a,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_a, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price))
+  );
+
+  -- Each till sees its own shop's name, and nothing of the other's.
+  select shop_name into v_name from public.pos_org_settings(v_tok_b);
+  perform assert_eq(v_name, 'Other Shop', 'the second till belongs to the second shop');
+
+  -- The catalogue. The first shop has a full one; the second has nothing yet,
+  -- and must not be shown the first shop's.
+  select count(*) into v_n from public.pos_catalogue(v_tok_a);
+  perform assert(v_n > 0, 'the first shop has products to protect');
+  select count(*) into v_n from public.pos_catalogue(v_tok_b);
+  perform assert_eq(v_n, 0::bigint, 'the second shop sees none of the first shop''s products');
+  select count(*) into v_n from public.pos_search_products(v_tok_b, 'cement', 20);
+  perform assert_eq(v_n, 0::bigint, 'nor finds them by search');
+
+  -- Sales, by number and by id, and the recent list.
+  select count(*) into v_n from public.pos_recent_sales(v_tok_a, 20);
+  perform assert(v_n > 0, 'the first shop has sales to protect');
+  perform assert_hidden(format('select * from public.pos_recent_sales(%L, 20)', v_tok_b),
+    'the second shop''s recent sales are empty');
+  -- A scalar function answers "nothing" with one null, not with no rows.
+  perform assert(public.pos_sale_by_number(v_tok_b, v_sale_a.doc_number) is null,
+    'a sale number from the first shop opens nothing on the second');
+  perform assert(public.pos_sale_by_number(v_tok_a, v_sale_a.doc_number) is not null,
+    'while its own till opens it');
+  perform assert_hidden(
+    format('select * from public.pos_sale_items(%L, %L)', v_tok_b, v_sale_a.id),
+    'nor do its lines by id');
+
+  -- People. The first shop's staff are not on the second shop's roster, and
+  -- its manager cannot sign in on the second shop's till with a PIN that is
+  -- perfectly good at home.
+  select count(*) into v_n from public.pos_staff_for_login(v_tok_b);
+  perform assert_eq(v_n, 1::bigint, 'the second shop''s roster is its own manager alone');
+  perform assert_hidden(
+    format('select * from public.pos_login(%L, %L, %L)', v_tok_b, v_mgr_a, '1234'),
+    'the first shop''s manager is a stranger on the second shop''s till');
+  select count(*) into v_n from public.pos_admin_list_users(v_tok_b, '246810');
+  perform assert_eq(v_n, 1::bigint, 'and the staff list shows nobody from next door');
+
+  -- Customers: the first shop has some; the second sees none.
+  select count(*) into v_n from public.pos_list_customers(v_tok_b);
+  perform assert_eq(v_n, 0::bigint, 'the second shop sees none of the first shop''s customers');
+
+  -- Writing across the fence: a sale on the second till naming the first
+  -- shop's product. The id is real; it is simply not this shop's.
+  perform assert_refuses(
+    format($q$select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object('product_id', %L, 'qty', 1)),
+      p_payment_method => 'cash',
+      p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', %L)))$q$,
+      v_tok_b, v_mgr_b, v_prod_a, v_price),
+    'a till cannot sell another shop''s product');
+
+  -- And the token itself: a wrong token opens nothing, so a shop cannot be
+  -- read by anyone who does not hold one of its tills.
+  perform assert_hidden(
+    format('select * from public.pos_catalogue(%L)', 'not-a-token'),
+    'no token, no catalogue');
+end $$;
+
+-- The tables themselves, as the app's own key sees them. The anon key ships
+-- in every browser, so PostgREST must offer it nothing but the RPCs: a row
+-- read straight off a table would bypass every check above.
+do $$
+begin
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.products',    'anon cannot read products');
+  perform assert_hidden('select * from public.catalogue',   'nor the catalogue view over them');
+  perform assert_hidden('select * from public.sales',       'nor sales');
+  perform assert_hidden('select * from public.sale_items',  'nor sale lines');
+  perform assert_hidden('select * from public.customers',   'nor customers');
+  perform assert_hidden('select * from public.app_users',   'nor staff');
+  perform assert_hidden('select * from public.registers',   'nor tills');
+  perform assert_hidden('select * from public.organizations', 'nor the shops themselves');
+  perform assert_hidden('select * from public.quotes',      'nor quotes');
+  perform assert_hidden('select * from public.auth_otps',   'nor OTPs');
+  perform set_config('role', 'postgres', true);
+end $$;
+
+
+-- 0075: TillAI's log ----------------------------------------------------------
+--
+-- Written by the edge function with the service role; the counter behind the
+-- daily cap. Closed to the API: the anon key must not read a shop's questions,
+-- its own included.
+do $$
+declare v_org uuid; v_reg uuid; v_n bigint;
+begin
+  select org_id into v_org from fixture;
+  select id into v_reg from public.registers where org_id = v_org limit 1;
+  insert into public.tillai_questions (org_id, register_id, question, tools, answer, unlocked)
+  values (v_org, v_reg, 'how much cement do we have', array['products'], '40 bags', false);
+  select count(*) into v_n from public.tillai_questions
+   where org_id = v_org and asked_at > now() - interval '1 day';
+  perform assert_eq(v_n, 1::bigint, 'the log counts a shop''s questions for the day');
+
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.tillai_questions', 'anon cannot read TillAI''s log');
+  perform assert_refuses(
+    format('insert into public.tillai_questions (org_id, register_id, question) values (%L, %L, %L)', v_org, v_reg, 'x'),
+    'nor write to it');
+  perform set_config('role', 'postgres', true);
+end $$;
+
+-- 0077: TillAI's log in Manage --------------------------------------------------
+--
+-- Whoever may see reports may read what the shop asked TillAI; a counter
+-- hand may not; and the next shop's manager sees none of it.
+do $$
+declare v_tok text; v_rows jsonb; v_tok_b text; v_hand uuid; v_why text;
+begin
+  select token into v_tok from till;
+  v_rows := public.pos_tillai_questions(v_tok, '1234', 50);
+  perform assert_eq(jsonb_array_length(v_rows), 1, 'a manager reads the shop''s questions');
+  perform assert_eq(v_rows->0->>'question', 'how much cement do we have', 'with the question');
+  perform assert_eq(v_rows->0->>'answer', '40 bags', 'and the answer');
+  perform assert_eq((v_rows->0->>'unlocked')::boolean, false, 'and whether a PIN was given');
+  perform assert(v_rows->0->>'register_name' is not null, 'and which till asked');
+  -- A counter hand with a PIN of their own: refused for want of the right,
+  -- not for a wrong PIN — the reason is checked, so this cannot pass by
+  -- accident.
+  select id into v_hand from public.pos_admin_invite_user(
+    v_tok, '1234', 'Log Hand', '+27820000077', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('707070', gen_salt('bf')) where id = v_hand;
+  begin
+    perform public.pos_tillai_questions(v_tok, '707070', 50);
+    v_why := 'allowed';
+  exception when others then
+    v_why := sqlerrm;
+  end;
+  perform assert(v_why like 'Not permitted%', 'a counter hand may not read the log: ' || v_why);
+  perform assert_refuses(
+    format('select public.pos_tillai_questions(%L, %L, 50)', v_tok, '000000'),
+    'nor a wrong PIN');
+
+  -- The second shop (from "Two shops, one database") pairs another till and
+  -- looks: nothing of the first shop's questions.
+  select token into v_tok_b
+    from public.pos_pair_register('+27820000099', '246810', 'Another till');
+  perform assert_eq(jsonb_array_length(public.pos_tillai_questions(v_tok_b, '246810', 50)), 0,
+    'the second shop sees none of the first shop''s questions');
+end $$;
+
+
+-- 0078: what went wrong on a till ---------------------------------------------
+--
+-- Reported through the till's token, landing on its shop; sized and capped
+-- here because the client is the thing misbehaving; readable by nobody
+-- through the API.
+do $$
+declare v_tok text; v_org uuid; v_reg uuid; v_n bigint; v_kind text; v_len bigint; i int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id into v_reg from public.registers where org_id = v_org limit 1;
+
+  perform public.pos_report_error(v_tok, 'error', 'TypeError: x is not a function', 'at sell.tsx:1', '/', 'UA', '1.0');
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 1::bigint, 'a till''s report lands on its shop');
+
+  perform public.pos_report_error(v_tok, 'error', '   ');
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 1::bigint, 'an empty message is not a report');
+
+  perform public.pos_report_error(v_tok, null, repeat('x', 2000));
+  select length(message), kind into v_len, v_kind
+    from public.client_errors where org_id = v_org and message like 'xxxx%';
+  perform assert_eq(v_len, 500::bigint, 'a long message is cut');
+  perform assert_eq(v_kind, 'error', 'no kind is "error"');
+
+  for i in 1..70 loop
+    perform public.pos_report_error(v_tok, 'error', 'loop ' || i);
+  end loop;
+  select count(*) into v_n from public.client_errors where org_id = v_org;
+  perform assert_eq(v_n, 60::bigint, 'after sixty in an hour a till''s reports are dropped');
+
+  perform assert_refuses(
+    format('select public.pos_report_error(%L, %L, %L)', 'not-a-token', 'error', 'x'),
+    'a stranger''s token is refused');
+
+  perform set_config('role', 'anon', true);
+  perform assert_hidden('select * from public.client_errors', 'anon cannot read a shop''s errors');
+  perform assert_hidden('select * from public.ops_digests', 'nor the digest''s memory');
+  perform assert_refuses(
+    format('insert into public.client_errors (org_id, register_id, kind, message) values (%L, %L, %L, %L)',
+           v_org, v_reg, 'error', 'x'),
+    'nor write past the RPC');
+  perform set_config('role', 'postgres', true);
+end $$;
+
+-- 0079: an operator wipes a shop clean, or deletes it --------------------------
+--
+-- A third shop is made the way InnovaEarth makes one, used the way a tester
+-- uses one, and then reset: its books, devices and people go, its catalogue
+-- stays with no stock, its invoice numbers start again, its real manager is
+-- invited — and the first shop, beside it, notices nothing.
+do $$
+declare
+  v_org_c uuid; v_mgr_c uuid; v_tok_c text; v_prod_c uuid; v_sale public.sales;
+  v_org_a uuid; v_sales_a bigint; v_log_a bigint; v_n bigint; v_new uuid; v_seq int; v_status text; v_phone text;
+begin
+  select org_id into v_org_a from fixture;
+  select count(*) into v_sales_a from public.sales where org_id = v_org_a;
+  select count(*) into v_log_a from public.tillai_questions where org_id = v_org_a;
+  perform assert(v_log_a > 0, 'the first shop has a TillAI log to protect');
+
+  v_org_c := public.innova_create_org('Reset Shop', 'Old Manager', '+27820000088');
+  perform public.auth_set_pin('+27820000088', '112233');
+  select id into v_mgr_c from public.app_users where org_id = v_org_c;
+  select token into v_tok_c from public.pos_pair_register('+27820000088', '112233', 'Test till');
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org_c, 'RS-1', 'Reset Shop Cement', 'ea', 100, 60, 25, true, 'standard')
+  returning id into v_prod_c;
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok_c, p_cashier_id => v_mgr_c,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_c, 'qty', 2)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 200)));
+  insert into public.tillai_questions (org_id, register_id, question)
+  values (v_org_c, (select id from public.registers where org_id = v_org_c), 'test');
+  perform public.pos_report_error(v_tok_c, 'error', 'a test crash');
+  select max(next_number) into v_seq from public.doc_sequences where org_id = v_org_c;
+  perform assert(v_seq > 1, 'the test shop has used an invoice number');
+
+  -- The name must match: a pasted id alone wipes nothing.
+  perform assert_refuses(
+    format('select public.innova_reset_org(%L, %L, %L, %L)', v_org_c, 'Other Shop', 'Owner', '+27820000089'),
+    'a reset with the wrong name is refused');
+  select count(*) into v_n from public.sales where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'and touched nothing');
+
+  -- Neither function is anybody''s to call through the API.
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(
+    format('select public.innova_reset_org(%L, %L, %L, %L)', v_org_c, 'Reset Shop', 'Owner', '+27820000089'),
+    'anon cannot reset a shop');
+  perform assert_refuses(
+    format('select public.innova_delete_org(%L, %L)', v_org_c, 'Reset Shop'),
+    'nor delete one');
+  perform set_config('role', 'postgres', true);
+
+  v_new := public.innova_reset_org(v_org_c, 'reset shop', 'Real Owner', '+27820000089');
+
+  select count(*) into v_n from public.sales where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'the sales are gone');
+  select count(*) into v_n from public.sale_items si join public.sales s on s.id = si.sale_id where s.org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and their lines');
+  select count(*) into v_n from public.stock_movements where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and the stock movements');
+  select count(*) into v_n from public.registers where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'every device is unpaired');
+  select count(*) into v_n from public.tillai_questions where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'the TillAI log is gone');
+  select count(*) into v_n from public.client_errors where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and the error reports');
+  perform assert_refuses(format('select * from public.register_by_token(%L)', v_tok_c),
+    'the old till''s token opens nothing');
+
+  select count(*) into v_n from public.app_users where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'one person remains');
+  select status, phone_e164 into v_status, v_phone from public.app_users where id = v_new;
+  perform assert_eq(v_status, 'invited', 'the real manager, invited');
+  perform assert_eq(v_phone, '+27820000089', 'by their own number');
+  perform assert(not exists (select 1 from public.app_users where phone_e164 = '+27820000088'),
+    'the tester''s number is free again');
+
+  select count(*) into v_n from public.products where org_id = v_org_c;
+  perform assert_eq(v_n, 1::bigint, 'the catalogue is kept');
+  select stock_qty::bigint into v_n from public.products where id = v_prod_c;
+  perform assert_eq(v_n, 0::bigint, 'with no stock on hand');
+  select coalesce(max(next_number), 1) into v_seq from public.doc_sequences where org_id = v_org_c;
+  perform assert_eq(v_seq, 1, 'the invoice numbers start again');
+  perform assert(exists (select 1 from public.organizations where id = v_org_c), 'the shop itself stays');
+
+  select count(*) into v_n from public.sales where org_id = v_org_a;
+  perform assert_eq(v_n, v_sales_a, 'the first shop''s sales are untouched');
+  select count(*) into v_n from public.registers where org_id = v_org_a;
+  perform assert(v_n > 0, 'and its tills are still paired');
+  select count(*) into v_n from public.tillai_questions where org_id = v_org_a;
+  perform assert_eq(v_n, v_log_a, 'and its TillAI log is untouched');
+
+  -- And gone altogether.
+  perform public.innova_delete_org(v_org_c, 'Reset Shop');
+  perform assert(not exists (select 1 from public.organizations where id = v_org_c), 'the shop is deleted');
+  select count(*) into v_n from public.products where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'with its catalogue');
+  select count(*) into v_n from public.app_users where org_id = v_org_c;
+  perform assert_eq(v_n, 0::bigint, 'and its people');
+  select count(*) into v_n from public.sales where org_id = v_org_a;
+  perform assert_eq(v_n, v_sales_a, 'the first shop is still untouched');
+end $$;
+
+-- 0080: approving a request from the email ------------------------------------
+--
+-- A request carries a token; approving it with the token makes the shop
+-- and invites the manager by the number they gave, in E.164 by their
+-- country; a second approval makes nothing; a bad token, a number that
+-- cannot be read, a number already in use, are each refused with words.
+do $$
+declare v_tok text; v_r jsonb; v_org uuid; v_n bigint; v_tok2 text; v_tok3 text; v_tok4 text;
+begin
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Approved Shop', 'Naledi Mokoena', 'naledi@example.co.za', '082 555 1234', 'South Africa')
+  returning approve_token into v_tok;
+  perform assert(length(v_tok) = 48, 'a request is born with a token');
+
+  v_r := public.innova_approve_request('0000000000000000000000000000000000000000000000000000');
+  perform assert_eq((v_r->>'ok')::boolean, false, 'a token we never sent is refused');
+  perform assert_eq(v_r->>'reason', 'unknown', 'and says so');
+
+  v_r := public.innova_approve_request(v_tok);
+  perform assert_eq((v_r->>'ok')::boolean, true, 'the request is approved');
+  perform assert_eq((v_r->>'already')::boolean, false, 'for the first time');
+  perform assert_eq(v_r->>'manager_phone', '+27825551234', 'the number read as South African');
+  v_org := (v_r->>'org_id')::uuid;
+  perform assert_eq((select name from public.organizations where id = v_org), 'Approved Shop', 'the shop exists');
+  select count(*) into v_n from public.app_users where org_id = v_org and status = 'invited' and phone_e164 = '+27825551234' and role = 'admin';
+  perform assert_eq(v_n, 1::bigint, 'and its manager is invited by that number');
+  perform assert_eq((select status from public.pos_requests where approve_token = v_tok), 'approved', 'the request is marked approved');
+
+  v_r := public.innova_approve_request(v_tok);
+  perform assert_eq((v_r->>'already')::boolean, true, 'a second click makes nothing');
+  select count(*) into v_n from public.organizations where name = 'Approved Shop';
+  perform assert_eq(v_n, 1::bigint, 'still one shop');
+
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Unreadable Shop', 'Somebody', 'x@example.com', 'call me', 'Other')
+  returning approve_token into v_tok2;
+  v_r := public.innova_approve_request(v_tok2);
+  perform assert_eq(v_r->>'reason', 'phone', 'a number that cannot be read is refused, not guessed');
+  perform assert(not exists (select 1 from public.organizations where name = 'Unreadable Shop'), 'and no shop is made');
+
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Second Shop Same Number', 'Naledi Again', 'n2@example.com', '0825551234', 'South Africa')
+  returning approve_token into v_tok3;
+  v_r := public.innova_approve_request(v_tok3);
+  perform assert_eq(v_r->>'reason', 'phone_taken', 'a number already on a shop is refused');
+
+  -- The country decides the dial code: a Lesotho number is +266, not +27.
+  insert into public.pos_requests (org_name, contact_name, email, phone, country)
+  values ('Maseru Shop', 'Thabo Letsie', 'thabo@example.ls', '5812 3456', 'Lesotho')
+  returning approve_token into v_tok4;
+  v_r := public.innova_approve_request(v_tok4);
+  perform assert_eq(v_r->>'manager_phone', '+26658123456', 'a Lesotho number is read as Lesotho');
+
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(format('select public.innova_approve_request(%L)', v_tok3), 'anon cannot approve a request');
+  perform assert_hidden('select * from public.pos_requests', 'nor read the requests and their tokens');
+  perform set_config('role', 'postgres', true);
+end $$;
+
+-- 0081: pairing takes the number as people write it ---------------------------
+do $$
+declare v_tok text; v_n bigint;
+begin
+  select token into v_tok from public.pos_pair_register('082 000 0001', '1234', 'Typed local');
+  perform assert(v_tok is not null, 'a manager pairs with the number as they write it');
+  select token into v_tok from public.pos_pair_register('0820000001', '1234', 'Typed local, no spaces');
+  perform assert(v_tok is not null, 'with or without spaces');
+  select token into v_tok from public.pos_pair_register('+27 82 000 0001', '1234', 'Typed international');
+  perform assert(v_tok is not null, 'or with the country code and spaces');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000001', '9999', 'Wrong PIN'),
+    'the PIN still has to be right');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000009', '1234', 'Wrong number'),
+    'and the number still has to be somebody''s');
+  -- The tills paired above belong to the manager's shop, nobody else's.
+  select count(*) into v_n from public.registers r
+   where r.name like 'Typed %' and r.org_id = (select org_id from fixture);
+  perform assert_eq(v_n, 3::bigint, 'each till landed on the manager''s own shop');
+
+  -- A Lesotho number is eight digits with no leading zero, written 5812 3456.
+  -- The Maseru Shop's manager (approved in the 0080 section, +26658123456)
+  -- sets a PIN and pairs with the number as Basotho write it.
+  perform public.auth_set_pin('+26658123456', '585858');
+  select token into v_tok from public.pos_pair_register('5812 3456', '585858', 'Maseru till');
+  perform assert(v_tok is not null, 'a Lesotho manager pairs with the number as written');
+  select count(*) into v_n from public.registers r
+   where r.name = 'Maseru till'
+     and r.org_id = (select id from public.organizations where name = 'Maseru Shop');
+  perform assert_eq(v_n, 1::bigint, 'and the till lands on the Maseru shop');
+  perform assert_refuses(
+    format('select * from public.pos_pair_register(%L, %L, %L)', '5812 3456', '1234', 'Wrong PIN, Maseru'),
+    'with the right PIN only');
+end $$;
+
+-- 0082: reading a document that was filed without being read -----------------
+do $$
+declare v_tok text; v_sup uuid; v_doc uuid; v_n int; v_status text; v_num text; v_why text;
+begin
+  select token into v_tok from till;
+  select id into v_sup from public.suppliers where org_id = (select org_id from fixture) limit 1;
+  if v_sup is null then
+    insert into public.suppliers (org_id, name) values ((select org_id from fixture), 'Read Later Supplies')
+    returning id into v_sup;
+  end if;
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup, 'invoice');
+  select status into v_status from public.supplier_documents where id = v_doc;
+  perform assert_eq(v_status, 'stored', 'a document filed by hand is stored, not read');
+
+  -- The reader calls it a quote; the person filed it as an invoice, and
+  -- the person's word stands — or the receive step would vanish.
+  v_n := public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc,
+    'quote', 'INV-10022994', '2026-08-14', 4605.00, 690.75, 5295.75,
+    '[{"supplier_code":"PL 0065","description":"COMP ELBOW 15MM","qty":20,"unit_price":16.85,"line_total":337.00},
+      {"supplier_code":"PL 0107","description":"COMP SPARE RING 15MM","qty":100,"unit_price":1.10,"line_total":110.00},
+      {"description":"   "}]'::jsonb);
+  perform assert_eq(v_n, 2, 'the reading lands as lines, blank rows dropped');
+  select status, doc_number into v_status, v_num from public.supplier_documents where id = v_doc;
+  perform assert_eq(v_status, 'read', 'and the document is now read');
+  perform assert_eq(v_num, 'INV-10022994', 'with its number');
+  perform assert_eq((select kind from public.supplier_documents where id = v_doc), 'invoice',
+    'still an invoice, whatever the reader called it');
+  -- Filed as "other", the reading's kind is taken.
+  v_doc := public.pos_purchasing_add_document(v_tok, '1234', v_sup, 'other');
+  perform public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc, 'delivery_note', 'DN-1', null, null, null, null,
+    '[{"description":"SAND"}]'::jsonb);
+  perform assert_eq((select kind from public.supplier_documents where id = v_doc), 'delivery_note',
+    'a document filed as "other" takes the reading''s kind');
+  select id into v_doc from public.supplier_documents where doc_number = 'INV-10022994' and supplier_id = v_sup;
+  select count(*)::int into v_n from public.supplier_document_lines where document_id = v_doc;
+  perform assert_eq(v_n, 2, 'two lines on it');
+
+  begin
+    perform public.pos_purchasing_read_filed_document(v_tok, '1234', v_doc, 'invoice', null, null, null, null, null,
+      '[{"description":"AGAIN","qty":1}]'::jsonb);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%already been read%', 'a second reading is refused: ' || v_why);
+  select count(*)::int into v_n from public.supplier_document_lines where document_id = v_doc;
+  perform assert_eq(v_n, 2, 'and adds nothing');
+
+  perform assert_refuses(
+    format('select public.pos_purchasing_read_filed_document(%L, %L, %L, %L, null, null, null, null, null, %L::jsonb)',
+           v_tok, '1234', gen_random_uuid(), 'invoice', '[]'),
+    'a document that is not this shop''s is not found');
+  perform assert_refuses(
+    format('select public.pos_purchasing_read_filed_document(%L, %L, %L, %L, null, null, null, null, null, %L::jsonb)',
+           v_tok, '5678', v_doc, 'invoice', '[]'),
+    'and a counter hand may not read one');
+end $$;
+
+-- 0083: deleting an order that never went out ---------------------------------
+do $$
+declare v_tok text; v_sup uuid; v_prod uuid; v_po public.purchase_orders; v_sent public.purchase_orders; v_why text;
+begin
+  select token into v_tok from till;
+  select id into v_sup from public.suppliers where org_id = (select org_id from fixture) limit 1;
+  select id into v_prod from public.products where org_id = (select org_id from fixture) and active limit 1;
+
+  v_po := public.pos_po_create(v_tok, '1234', v_sup);
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, 'raised by mistake');
+  perform public.pos_po_delete(v_tok, '1234', v_po.id);
+  perform assert(not exists (select 1 from public.purchase_orders where id = v_po.id),
+    'a called-off draft that never went out can be deleted');
+
+  v_sent := public.pos_po_create(v_tok, '1234', v_sup);
+  perform public.pos_po_set_line(v_tok, '1234', v_sent.id, v_prod, 6, 50);
+  v_sent := public.pos_po_send(v_tok, '1234', v_sent.id);
+  perform public.pos_po_cancel(v_tok, '1234', v_sent.id, 'no longer needed');
+  begin
+    perform public.pos_po_delete(v_tok, '1234', v_sent.id);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%went to the supplier%', 'one that went to the supplier stays: ' || v_why);
+  perform assert(exists (select 1 from public.purchase_orders where id = v_sent.id and status = 'cancelled'),
+    'still on the record, called off');
+
+  v_po := public.pos_po_create(v_tok, '1234', v_sup);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', v_tok, '1234', v_po.id),
+    'a live draft cannot be deleted, only called off');
+  perform public.pos_po_cancel(v_tok, '1234', v_po.id, null);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', v_tok, '5678', v_po.id),
+    'and a counter hand may not delete one');
+  perform set_config('role', 'anon', true);
+  perform assert_refuses(format('select public.pos_po_delete(%L, %L, %L)', 'not-a-token', '1234', v_po.id),
+    'nor a stranger');
+  perform set_config('role', 'postgres', true);
+end $$;
+
+-- 0084: a supplier on the spend report opens its page ------------------------
+
+do $$
+declare v_tok text; v_r record; v_rows jsonb; v_row jsonb;
+begin
+  select token into v_tok from till;
+  -- Two invoices, one supplier, filed today.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Akbro Steel', '4000000084', null, null,
+    'invoice', 'INV-84-1', current_date, 1000.00, 150.00, 1150.00, null, '[]'::jsonb);
+  perform public.pos_purchasing_file_document(
+    v_tok, '1234', v_r.supplier_id, null, null, null, null,
+    'invoice', 'INV-84-2', current_date, 2000.00, 300.00, 2300.00, null, '[]'::jsonb);
+
+  v_rows := public.pos_purchases_by_supplier(v_tok, '1234', current_date, current_date + 1);
+  select e into v_row from jsonb_array_elements(v_rows) e where e->>'supplier' = 'Akbro Steel';
+  perform assert(v_row is not null, 'the supplier is on the report');
+  perform assert_eq(v_row->>'supplier_id', v_r.supplier_id::text,
+    'and the row carries the supplier''s id, so it can be opened');
+  perform assert_eq((v_row->>'documents')::int, 2, 'still one row per supplier');
+  perform assert_eq((v_row->>'total')::numeric, 3450.00::numeric, 'with both invoices on it');
+end $$;
+
+-- 0085: fix a buyer's details at the counter ---------------------------------
+
+do $$
+declare v_tok text; v_emp uuid; v_mgr uuid; v_org uuid; v_a record; v_b record; v_r record; v_why text;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id, employee_id into v_org, v_mgr, v_emp from fixture;
+
+  -- Two buyers recorded at the counter, one of them with a wrong digit.
+  select * into v_a from public.pos_quick_customer(v_tok, v_emp, '082 555 0185', 'Zaib Ahmed', null, null);
+  select * into v_b from public.pos_quick_customer(v_tok, v_emp, '082 555 0186', 'Thabo Mokoena', null, null);
+  -- The back office gives the first one an account, which the counter may not touch.
+  update public.customers set credit_limit = 5000, is_trade = true, code = 'TRD-085', vat_number = '4123456789'
+   where id = v_a.id;
+
+  -- THE CASHIER PUTS IT RIGHT: name, number, address.
+  select * into v_r from public.pos_customer_fix_details(
+    v_tok, v_emp, v_a.id, ' Zaib Ahmad ', '082 555 0187', '14 Mabille Rd, Maseru');
+  perform assert_eq(v_r.name, 'Zaib Ahmad', 'the spelling is fixed, trimmed');
+  perform assert_eq(v_r.phone, '082 555 0187', 'the number is fixed');
+  perform assert_eq(v_r.address, '14 Mabille Rd, Maseru', 'and the address is on file');
+  perform assert(exists (select 1 from public.customers c where c.id = v_a.id and c.phone_e164 = '+27825550187'),
+    'found again under the corrected number');
+  -- AND NOTHING ABOUT MONEY MOVED.
+  perform assert(exists (select 1 from public.customers c where c.id = v_a.id
+    and c.credit_limit = 5000 and c.is_trade and c.code = 'TRD-085' and c.vat_number = '4123456789'),
+    'credit, trade price, code and VAT number are exactly as the back office set them');
+  perform assert_eq(v_r.code, 'TRD-085', 'the row comes back whole');
+
+  -- A number belongs to one buyer. Taking another's is refused by name.
+  begin
+    perform public.pos_customer_fix_details(v_tok, v_emp, v_a.id, 'Zaib Ahmad', '0825550186', null);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%already on file for Thabo Mokoena%', 'another buyer''s number is refused: ' || v_why);
+  -- A blank name, or no number at all, is not a correction.
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, v_a.id, '  ', '0825550187'), 'a blank name is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, v_a.id, 'Zaib Ahmad', 'no number'), 'a non-number is refused');
+  -- A stranger's till and an unknown cashier are refused.
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    'not-a-token', v_emp, v_a.id, 'Zaib Ahmad', '0825550187'), 'a stranger''s till is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, gen_random_uuid(), v_a.id, 'Zaib Ahmad', '0825550187'), 'an unknown cashier is refused');
+  perform assert_refuses(format('select public.pos_customer_fix_details(%L, %L, %L, %L, %L, null)',
+    v_tok, v_emp, gen_random_uuid(), 'Zaib Ahmad', '0825550187'), 'a customer the shop does not have is refused');
+end $$;
+
+-- 0086: parked sales live on the server ----------------------------------------
+
+do $$
+declare v_tok text; v_tok2 text; v_emp uuid; v_mgr uuid; v_prod uuid; v_cust record;
+        v_id uuid; v_row public.parked_sales; v_n int; v_at timestamptz; v_why text;
+        v_tok_b text; v_org_b uuid;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id into v_prod from public.products where sku = 'CEM-425-50';
+  select * into v_cust from public.pos_quick_customer(v_tok, v_emp, '082 555 0186', 'Thabo Mokoena', null, null);
+  -- A second till in the same shop, paired the way tills are paired.
+  select token into v_tok2 from public.pos_pair_register('+27820000001', '1234', 'Yard till');
+
+  -- PARKED ON ONE TILL BY A CASHIER.
+  v_id := gen_random_uuid();
+  v_row := public.pos_park_sale(v_tok, v_emp, v_id,
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 3)),
+    v_cust.id, 0, null, 345.00);
+  perform assert_eq(v_row.register_name, 'Test till', 'the list says where it was parked');
+  perform assert(v_row.parked_by_name is not null and v_row.parked_by_name <> '', 'and by whom');
+  v_at := v_row.parked_at;
+
+  -- SEEN FROM THE OTHER TILL, with the customer's name for the list.
+  select count(*) into v_n from public.pos_parked_sales(v_tok2) where id = v_id;
+  perform assert_eq(v_n, 1, 'the other till sees it');
+  perform assert(exists (select 1 from public.pos_parked_sales(v_tok2) x where x.id = v_id
+    and x.customer_name = 'Thabo Mokoena' and x.total = 345.00), 'with whose it is and what it comes to');
+
+  -- PUT BACK IN ITS SLOT: same id, the time it was first parked, the new till on it.
+  -- The till sends a time too; the stored one wins, whatever was sent.
+  v_row := public.pos_park_sale(v_tok2, v_mgr, v_id,
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 4)),
+    v_cust.id, 0, null, 460.00, v_at - interval '1 hour');
+  perform assert_eq(v_row.parked_at, v_at, 'the slot keeps its time, whatever the till sends');
+  perform assert_eq(v_row.register_name, 'Yard till', 'and says which till has it now');
+  perform assert_eq((v_row.lines->0->>'qty')::numeric, 4::numeric, 'with what is in it now');
+  select count(*) into v_n from public.parked_sales where org_id = (select org_id from fixture);
+  perform assert_eq(v_n, 1, 'one slot, not two');
+
+  -- TAKEN ONTO A TILL, IT LEAVES THE LIST: two tills cannot both have it.
+  v_row := public.pos_unpark_sale(v_tok2, v_id);
+  perform assert_eq(v_row.id, v_id, 'the other till takes it');
+  select count(*) into v_n from public.pos_parked_sales(v_tok) where id = v_id;
+  perform assert_eq(v_n, 0, 'and the first till no longer sees it');
+  begin
+    perform public.pos_unpark_sale(v_tok, v_id);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%another till may have taken it%', 'taking it twice is refused, and says why: ' || v_why);
+
+  -- DELETED FOR THE CUSTOMER WHO NEVER CAME BACK.
+  v_row := public.pos_park_sale(v_tok, v_emp, gen_random_uuid(),
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)), null, 0, null, 115.00);
+  perform public.pos_delete_parked_sale(v_tok2, v_row.id);
+  select count(*) into v_n from public.pos_parked_sales(v_tok);
+  perform assert_eq(v_n, 0, 'gone from every till');
+
+  -- REFUSALS: nothing to park, a stranger's till, another shop's list.
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok, v_emp, gen_random_uuid(), '[]'), 'an empty basket cannot be parked');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    'not-a-token', v_emp, gen_random_uuid(), '[{"product_id":"x","qty":1}]'), 'a stranger''s till is refused');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok, gen_random_uuid(), gen_random_uuid(), '[{"product_id":"x","qty":1}]'), 'an unknown cashier is refused');
+  v_row := public.pos_park_sale(v_tok, v_emp, gen_random_uuid(),
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)), null, 0, null, 115.00);
+  v_org_b := public.innova_create_org('Parked Shop B', 'B Manager', '+27820000062');
+  perform public.auth_set_pin('+27820000062', '246810');
+  select token into v_tok_b from public.pos_pair_register('+27820000062', '246810', 'B till');
+  perform assert_hidden(format('select * from public.pos_parked_sales(%L)', v_tok_b),
+    'another shop sees none of it');
+  perform assert_refuses(format('select public.pos_unpark_sale(%L, %L)', v_tok_b, v_row.id),
+    'nor can it take one');
+  perform assert_refuses(format('select public.pos_delete_parked_sale(%L, %L)', v_tok_b, v_row.id),
+    'nor delete one');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok_b, v_emp, v_row.id, '[{"product_id":"x","qty":1}]'), 'nor overwrite one by its id');
+  perform public.pos_delete_parked_sale(v_tok, v_row.id);
+end $$;
+
 select 'all database tests passed' as result;

@@ -84,8 +84,10 @@ export function sheetMailto(sheet: Sheet, s: ShopSettings): string {
     `(${sheetFileName(sheet)}) has been saved to this device — ` +
     `attach it to this message to send the printed version.` +
     (s.email ? `\n\nReplies: ${s.email}` : "");
+  // To whom: a supplier's address on an order; a customer's is not kept on
+  // the sheet, so a sale's document opens with the address blank.
   return (
-    `mailto:?subject=${encodeURIComponent(sheetSubject(sheet, s))}` +
+    `mailto:${encodeURIComponent(sheet.customer.email ?? "")}?subject=${encodeURIComponent(sheetSubject(sheet, s))}` +
     `&body=${encodeURIComponent(body)}`
   );
 }

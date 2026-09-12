@@ -1,6 +1,10 @@
-import { useState } from "react";
+import { ENROL_URL, REQUEST_URL } from "../lib/config";
+import { useEffect, useState } from "react";
 import { enrolDevice, pairRegister } from "../lib/api";
 import { savePairing } from "../lib/device";
+import { useOnline } from "../lib/offline";
+import { todayLine } from "../lib/today";
+import LoginEngraving from "./LoginEngraving";
 import InnovaMark from "./InnovaMark";
 import { errorMessage } from "../lib/errors";
 
@@ -24,8 +28,32 @@ import { errorMessage } from "../lib/errors";
  * during an outage sync later without anyone's PIN. If the tablet is lost, the
  * token is revoked from Settings on another device; nobody's PIN has to change.
  */
+/* The two paths, drawn as the engraving draws things: single strokes. */
+function TillIcon() {
+  return (
+    <svg className="firstrun-path-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="6" y="9" width="36" height="24" rx="3" />
+      <line x1="6" y1="28" x2="42" y2="28" />
+      <path d="M 18 33 l -3 7 h 18 l -3 -7" />
+      <line x1="10" y1="40" x2="38" y2="40" />
+    </svg>
+  );
+}
+function PhoneIcon() {
+  return (
+    <svg className="firstrun-path-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="15" y="5" width="18" height="38" rx="4" />
+      <line x1="21" y1="9" x2="27" y2="9" />
+      <circle cx="24" cy="38" r="1.6" />
+    </svg>
+  );
+}
+
 export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   const [mode, setMode] = useState<"ask" | "till" | "phone">("ask");
+  const online = useOnline();
   const [code, setCode] = useState("");
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
@@ -64,13 +92,34 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
     }
   }
 
+  // The way back to "What is this device?" from either form. It is a quiet
+  // link in the card's top corner, not a second button under the gold one:
+  // a form with one action should look like it has one action, and the way
+  // out belongs where people look for it. Escape does the same.
+  const back = () => {
+    if (busy) return;
+    setMode("ask");
+    setError(null);
+  };
+  useEffect(() => {
+    if (mode === "ask") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, busy]);
+
   const shell = (children: React.ReactNode) => (
     <div className="min-h-screen flex items-center justify-center p-6"
       style={{ background: "var(--color-bg)" }}>
       <div
-        className="w-full max-w-sm rounded p-6 space-y-4"
+        className="pair-card w-full max-w-sm rounded p-6 space-y-4"
         style={{ background: "var(--color-neutral-100)", border: "1px solid var(--divider)", boxShadow: "var(--shadow-md)" }}
       >
+        <button type="button" className="pair-back" onClick={back} disabled={busy}>
+          <span aria-hidden="true">‹</span> Back
+        </button>
         <div className="flex flex-col items-center gap-2 mb-2">
           <InnovaMark size={44} />
           <span className="sell-wordmark">
@@ -83,20 +132,92 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
   );
 
   if (mode === "ask") {
-    return shell(
-      <>
-        <h1 className="text-xl font-semibold text-center">What is this device?</h1>
-        <p className="text-sm text-center" style={{ color: "var(--color-neutral-700)" }}>
-          A till takes money at the counter. A phone is your own, for the work
-          away from it.
-        </p>
-        <button className="btn-tender" onClick={() => setMode("till")}>
-          This is a till
-        </button>
-        <button className="btn-line w-full" onClick={() => setMode("phone")}>
-          This is my phone
-        </button>
-      </>
+    // The front door of InnovaPOS, on the same two panels as sign-in so a
+    // device that has just been paired does not seem to change product. One
+    // address serves every shop, and it is the pairing below, not the
+    // address, that decides which shop a device belongs to — so this is what
+    // anybody sees who is not paired yet: a manager with a new tablet, a
+    // colleague with their own phone, and a stranger who typed the address.
+    // Each of them needs somewhere to go.
+    return (
+      <div className="login firstrun">
+        <div className="login-scene">
+          <img className="login-photo" src="/door.jpg" alt="" decoding="async" />
+          <div className="login-head">
+            <div className="sell-lockup">
+              <InnovaMark size={30} onGreen />
+              <span className="sell-wordmark" style={{ color: "var(--color-bg)" }}>
+                Innova<span style={{ color: "var(--color-accent-400)" }}>POS</span>
+              </span>
+            </div>
+            <h1 className="firstrun-title">Most tills just wait. This one listens.</h1>
+            <ul className="firstrun-proof">
+              <li>Sells with the line down</li>
+              <li>SARS-compliant invoices</li>
+              <li>Scan, bill, take payment, print</li>
+            </ul>
+          </div>
+
+          <LoginEngraving />
+
+          <dl className="login-status">
+            <div>
+              <dt>Today</dt>
+              <dd>{todayLine()}</dd>
+            </div>
+            <div>
+              <dt>Line</dt>
+              <dd className={online ? "" : "is-offline"}>{online ? "Online" : "Offline"}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="login-body">
+          <h2 className="firstrun-ask">What is this device?</h2>
+          <p className="firstrun-hint">
+            This device is not set up for a shop yet. The shop is decided when
+            a manager pairs it, so there is nothing to type in the address.
+          </p>
+          <div className="firstrun-paths">
+            <button className="firstrun-path" onClick={() => setMode("till")}>
+              <TillIcon />
+              <span className="firstrun-path-text">
+                <span className="firstrun-path-name">This is a till</span>
+                <span className="firstrun-path-desc">
+                  Takes money at the counter. A manager pairs it once with
+                  their phone number and PIN.
+                </span>
+              </span>
+            </button>
+            <button className="firstrun-path" onClick={() => setMode("phone")}>
+              <PhoneIcon />
+              <span className="firstrun-path-text">
+                <span className="firstrun-path-name">This is my phone</span>
+                <span className="firstrun-path-desc">
+                  Your own, for the work away from the counter. Set up with a
+                  code from whoever manages staff.
+                </span>
+              </span>
+            </button>
+          </div>
+          <div className="firstrun-outs">
+            <p>
+              Invited to a shop but no PIN yet?{" "}
+              <a href={ENROL_URL} target="_blank" rel="noreferrer">Set your PIN</a>
+            </p>
+            <p>
+              Not on InnovaPOS yet?{" "}
+              <a href={REQUEST_URL} target="_blank" rel="noreferrer">Request it for your shop</a>
+            </p>
+          </div>
+          <footer className="login-foot">
+            <p>
+              InnovaPOS · a product of InnovaEarth
+              <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+            </p>
+          </footer>
+        </div>
+      </div>
     );
   }
 
@@ -136,28 +257,12 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         <button disabled={busy || code.trim().length < 8} className="btn-tender">
           {busy ? "Setting up…" : "Set up my phone"}
         </button>
-        <button type="button" className="btn-line w-full"
-          onClick={() => { setMode("ask"); setError(null); }}>
-          Back
-        </button>
       </form>
     );
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-6"
-      style={{ background: "var(--color-bg)" }}>
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded p-6 space-y-4"
-        style={{ background: "var(--color-neutral-100)", border: "1px solid var(--divider)", boxShadow: "var(--shadow-md)" }}
-      >
-        <div className="flex flex-col items-center gap-2 mb-2">
-          <InnovaMark size={44} />
-          <span className="sell-wordmark">
-            Innova<span>POS</span>
-          </span>
-        </div>
+  return shell(
+      <form onSubmit={submit} className="space-y-4">
         <div>
           <h1 className="text-xl font-semibold text-center">Set up this till</h1>
           <p className="text-sm text-center mt-1"
@@ -207,11 +312,6 @@ export default function PairRegister({ onPaired }: { onPaired: () => void }) {
         >
           {busy ? "Pairing…" : "Pair this till"}
         </button>
-        <button type="button" className="btn-line w-full"
-          onClick={() => { setMode("ask"); setError(null); }}>
-          Back
-        </button>
       </form>
-    </div>
   );
 }

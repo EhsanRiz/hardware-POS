@@ -26,8 +26,17 @@ function renderMarkup(text: string): ReactNode[] {
     buf = "";
   };
   let bar: string | null = null;
+  // A barcode is its own line of the slip, so the marker is followed by a
+  // newline. The bars render as a block, which already ends the line — left
+  // in, that newline drew an empty line box under the barcode: a blank line
+  // the paper never has. The preview must show what the printer prints.
+  let afterBar = false;
   for (const ch of text) {
     const code = ch.charCodeAt(0);
+    if (afterBar) {
+      afterBar = false;
+      if (ch === "\n") continue;
+    }
     if (bar !== null) {
       // Inside a barcode marker: collect the number, draw it at the close.
       if (code === 6) {
@@ -43,6 +52,7 @@ function renderMarkup(text: string): ReactNode[] {
           />
         );
         bar = null;
+        afterBar = true;
       } else {
         bar += ch;
       }

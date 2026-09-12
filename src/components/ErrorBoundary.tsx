@@ -1,4 +1,5 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import { reportError } from "../lib/errorReport";
 
 interface State {
   error: Error | null;
@@ -14,6 +15,14 @@ export default class ErrorBoundary extends Component<
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // The one crash the till shows a screen for is the one most worth
+    // hearing about. The component stack says which screen.
+    reportError("render", Object.assign(error, {
+      stack: `${error.stack ?? ""}\n--- component stack ---${info.componentStack ?? ""}`.slice(0, 4000),
+    }));
   }
 
   render() {
