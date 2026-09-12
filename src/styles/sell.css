@@ -2848,42 +2848,44 @@ tr.is-void td:last-child { text-decoration: none; }
      below instead, from padding and type that had it to give. */
 
   .sell-head { padding-top: 8px; padding-bottom: 8px; }
-  .totals { margin-top: 8px; padding: 10px 16px 10px; }
+  .totals { margin-top: 6px; padding: 8px 14px 8px; }
 
-  /* Five tenders in two rows have to fit beside a total, a button and a hint.
-     These come down together rather than one of them collapsing. */
-  .tender-btn { min-height: 58px; gap: 4px; }
+  /* Four tenders on one line, a total, an amount box, sixteen keys and the
+     commit button all have to fit the pay column. They come down together
+     rather than any one of them collapsing. */
   .tender-grid { gap: 8px; }
+  .tender-btn { min-height: 46px; gap: 4px; }
 
   /* The hint is advice; the keys are the only way to enter an amount on a
      touch-only counter. Advice goes first. */
   .tender-caption { display: none; }
 
-  /* And the keys themselves come down to fit rather than folding away behind a
-     toggle — a fold is two extra taps on every cash sale. 42px still clears
-     the 44px-ish target a finger needs once the 5px gaps are counted as part
-     of the reach, and this is a screen you press with a fingertip, not a
-     thumb held at arm's length. */
-  .keypad { gap: 4px; }
-  .keypad button { min-height: 38px; font-size: 16px; }
-  .tender-btn { min-height: 52px; }
+  /* The keys come down to fit rather than folding away behind a toggle — a
+     fold is two extra taps on every cash sale. */
+  .keypad { gap: 3px; }
+  .keypad button { min-height: 34px; font-size: 16px; }
 
   /* The total keeps its job — the figure a customer reads from a metre away —
-     but 46px with 26px of air above it is a poster on a screen this short.
-     36px is still the largest thing on the till by some way. */
-  .total-row { margin-top: 14px; }
-  .total-row .fig { font-size: 36px; }
-  .totals-row { margin-bottom: 7px; }
+     but 46px with 26px of air above it is a poster on a screen this short. */
+  .total-row { margin-top: 10px; }
+  .total-row .fig { font-size: 32px; }
+  .totals-row { margin-bottom: 5px; font-size: 13px; }
 
-
-  /* The scan box is the most-used control on the screen and was showing
-     "Scan barcc" — 89px of input. It takes the larger share of the row here;
-     the customer chip can lose the width. */
   /* The scan box takes everything the chip does not need. The chip was
      sharing the row a third each way, for one line of text; the box beside it
      is the most-used control on the till and was the one going short. */
   .scan-field { flex: 1 1 auto; }
   .customer-pick { flex: 0 0 auto; min-width: 0; max-width: 40%; }
+}
+
+/* Below ~710 the last few pixels come out of the TOTAL, not the keys. 34px
+   keys are already under the 44px a fingertip wants; taking them lower to win
+   a scrollbar would be trading the thing people press for the thing they
+   read, and the total is still the largest figure on the screen. */
+@media (max-height: 710px) {
+  .total-row { margin-top: 6px; }
+  .total-row .fig { font-size: 26px; }
+  .totals { padding-top: 6px; padding-bottom: 6px; }
 }
 
 /* Manage → TillAI: the shop's questions, newest first; a row opens to its
