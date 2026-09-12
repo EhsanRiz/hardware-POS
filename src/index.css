@@ -150,15 +150,21 @@ button {
    * 100vw is the page box, so the font is a fraction of the paper and 48
    * columns fit whatever the paper is.
    *
-   * The divisor is 36, not the 32 the arithmetic suggests. A monospace
-   * character is nearer 0.69em than the 0.6em usually quoted — measured at
-   * 6.875px on a 10px font — so 48 columns want ~33em, and /32 came out 10px
-   * wide on a 320px page. 36 leaves room for that and for the @page margin.
+   * The divisor is the measured one. A monospace character is nearer 0.69em
+   * than the 0.6em usually quoted — 6.875px on a 10px font — so 48 columns
+   * want 33.1em. 34 is that plus a hair, and with the page margin now zero
+   * there is nothing else eating the width.
+   *
+   * It cannot go further without clipping, and this is the whole tension of
+   * the slip: 48 columns across 80mm of paper IS small type, about 1.5mm a
+   * character. The only lever that makes the print meaningfully bigger is
+   * fewer columns — the receipt builder is width-parameterised for exactly
+   * that reason (RECEIPT_WIDTH / VITE_PRINT_WIDTH_SCALE).
    */
   #print-area pre {
     margin: 0;
     font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-    font-size: calc(100vw / 36);
+    font-size: calc(100vw / 34);
     line-height: 1.35;
     white-space: pre;
   }
@@ -174,8 +180,13 @@ button {
     max-width: 100%;
     height: auto;
   }
+  /* No page margin on a till slip.
+     A thermal printer already leaves its own unprintable edge, so 4mm a side
+     was 8mm of an 80mm roll — a tenth of the paper — given away twice over.
+     The font here is sized to the page width, so every millimetre surrendered
+     to a margin comes straight off the size of the print. */
   @page {
-    margin: 4mm;
+    margin: 0;
   }
 }
 
@@ -183,9 +194,9 @@ button {
 /* ---- A4 documents: a quotation and a tax invoice ------------------------ */
 /*
  * On screen these sit in a modal; on paper they are the only thing printed,
- * through the same #print-area rule the till-slip preview uses. The page
- * margin stays at 4mm for the thermal slip, so the A4 sheet carries its own
- * generous padding instead of fighting over @page.
+ * through the same #print-area rule the till-slip preview uses. @page is now
+ * zero, for the thermal roll's sake, so the A4 sheet carries the WHOLE of its
+ * own margin in padding rather than splitting it with the page box.
  */
 .doc-a4 {
   width: 210mm;
@@ -360,14 +371,16 @@ button {
     print-color-adjust: exact;
   }
   /* The sheet is the page: no shadow, no rounding, and it may break across
-     pages if a delivery ran long. It keeps its own margin, though — @page is
-     held at 4mm for the thermal slip, and dropping the padding as well put
-     the letterhead and the totals hard against the paper's edge. 12mm of
-     padding on top of that 4mm is the 16mm the screen shows. */
+     pages if a delivery ran long. Its margin is entirely its own now. @page
+     used to hold 4mm back for the thermal slip and this padding added the
+     rest; the roll has since taken that 4mm, so the padding grew by the same
+     amount. Shrink it and the letterhead and the totals sit hard against the
+     paper's edge — the printer will not necessarily even lay ink there. */
   /* One page tall, so the foot lands at the foot of the paper as it does on
-     screen — but a page, not a fixed 297mm: 297mm inside a 4mm page margin
-     spills 8mm onto a second, blank sheet. In print vh is the page box. */
-  .doc-a4 { width: auto; min-height: 100vh; padding: 10mm 12mm; }
+     screen — but a page, not a fixed 297mm, which would spill onto a second
+     blank sheet the moment @page took anything at all. In print vh is the
+     page box. */
+  .doc-a4 { width: auto; min-height: 100vh; padding: 14mm 16mm; }
   /* A line item should not be split down the middle by a page break. */
   .doc-lines tr { break-inside: avoid; }
   .doc-accept, .doc-totals, .doc-page-foot { break-inside: avoid; }

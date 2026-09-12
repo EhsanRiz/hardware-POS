@@ -5830,9 +5830,13 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
   // The mark itself, not just the words.
   await expect(doc.locator(".doc-colophon svg")).toHaveCount(1);
 
-  // And on paper it keeps a margin. @page is held at 4mm for the thermal
-  // slip, so the sheet carries its own; with the padding dropped to nothing
-  // the letterhead sat 4mm from the edge of the page.
+  // And on paper it keeps a margin — the WHOLE of it. @page used to hold 4mm
+  // back and this padding added the rest; the thermal roll has since taken
+  // that 4mm (a tenth of an 80mm slip is not a margin's to spend), so the
+  // sheet has to carry the lot or the letterhead ends up against the edge of
+  // the paper, where a printer may not lay ink at all. The floors below are
+  // just under 16mm and 14mm: they go red if the padding is put back to what
+  // it was when @page was still paying half.
   await page.emulateMedia({ media: "print" });
   // Addressed off the page, not through the dialog: print hides everything but
   // the sheet, and a hidden wrapper takes its role with it. The padding is on
@@ -5843,8 +5847,8 @@ test("the letterhead breaks into two lines and InnovaPOS signs the foot", async 
     left: parseFloat(getComputedStyle(el).paddingLeft),
     top: parseFloat(getComputedStyle(el).paddingTop),
   }));
-  expect(pad.left).toBeGreaterThan(20);
-  expect(pad.top).toBeGreaterThan(20);
+  expect(pad.left, "side margin on the printed sheet").toBeGreaterThan(55);
+  expect(pad.top, "head margin on the printed sheet").toBeGreaterThan(48);
   // The foot survives print too.
   await expect(sheet.locator(".doc-page-foot")).toBeVisible();
   await page.emulateMedia({ media: "screen" });
@@ -7642,11 +7646,27 @@ test("the printed slip fits the paper instead of losing its right-hand column", 
   // the rule has to survive.
   await page.setViewportSize({ width: 320, height: 600 });
   await page.emulateMedia({ media: "print" });
-  const over = await page.evaluate(() => {
+  const slip = await page.evaluate(() => {
     const pre = document.querySelector("#print-area pre") as HTMLElement;
-    return pre.scrollWidth - document.documentElement.clientWidth;
+    return {
+      over: pre.scrollWidth - document.documentElement.clientWidth,
+      size: parseFloat(getComputedStyle(pre).fontSize),
+      page: document.documentElement.clientWidth,
+    };
   });
-  expect(over, "printed slip past the page's right edge").toBeLessThanOrEqual(0);
+  expect(slip.over, "printed slip past the page's right edge").toBeLessThanOrEqual(0);
+
+  // The other half of the squeeze, and the reason this test is not satisfied
+  // by simply making the type tiny: the counter could not read the figures.
+  // 48 columns of monospace want 33.1em, so anything that fits at all divides
+  // the page by not much more than 34 — a floor here and the clipping check
+  // above leave the divisor almost no room to drift in either direction.
+  //
+  // Not guarded, and worth saying: @page { margin: 0 } is a further ~10% of
+  // the paper, and Playwright's print emulation has no page box for a margin
+  // to come off — restoring 12mm left this test green. That one was checked
+  // by reading the rule, not by a failing assertion.
+  expect(slip.size, "printed slip's type").toBeGreaterThanOrEqual(slip.page / 35);
   await page.emulateMedia({ media: "screen" });
 });
 
