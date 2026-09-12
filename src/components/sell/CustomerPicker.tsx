@@ -383,7 +383,7 @@ export default function CustomerPicker({
           </p>
         )}
 
-        <button className="btn-line" style={{ marginTop: 14 }} onClick={onClose}>
+        <button className="btn-cancel" style={{ marginTop: 14 }} onClick={onClose}>
           Cancel
         </button>
       </div>

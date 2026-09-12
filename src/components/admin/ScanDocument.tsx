@@ -278,7 +278,7 @@ export default function ScanDocument({
             </div>
             {error && <p className="acc-note is-bad" role="alert">{error}</p>}
             <div className="modal-actions">
-              <button type="button" className="btn-line" onClick={onClose}>Cancel</button>
+              <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
               <button
                 type="button" className="btn-line"
                 disabled={pages.length === 0}
@@ -470,7 +470,7 @@ export default function ScanDocument({
           <>
             {progress && <p className="acc-note">{progress}</p>}
             <div className="modal-actions">
-              <button type="button" className="btn-line" onClick={onClose} disabled={busy}>
+              <button type="button" className="btn-cancel" onClick={onClose} disabled={busy}>
                 Cancel
               </button>
               <button type="button" className="btn-line" onClick={() => setStage("capture")} disabled={busy}>

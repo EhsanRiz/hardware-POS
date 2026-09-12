@@ -111,7 +111,7 @@ export default function BarcodeScanner({
         <button
           type="button"
           onClick={onClose}
-          className="w-full h-12 rounded-xl bg-white text-stone-900 font-medium"
+          className="btn-cancel w-full"
         >
           Cancel
         </button>

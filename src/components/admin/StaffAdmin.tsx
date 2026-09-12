@@ -861,7 +861,7 @@ function StaffEditor({
               Set up their phone
             </button>
           )}
-          <button className="ml-auto px-4 py-2 text-stone-600" onClick={onClose}>
+          <button className="btn-cancel ml-auto" onClick={onClose}>
             Cancel
           </button>
           <button
