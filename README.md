@@ -283,6 +283,14 @@ row says when it was parked, whose it is, what is in it and what it comes
 to, and the one tapped is the one that comes back. A sale that is open
 cannot be overwritten by a resume; finish or park it first.
 
+Parked sales are the shop's, not the device's (`parked_sales`, 0086): parked
+on one till, seen on every till within a few seconds, picked up on any, by
+anyone signed in. Taking one off the list (`pos_unpark_sale`) removes it as
+it is taken, so two tills cannot both have it. Each row says which till and
+who parked it. With the line down a sale is parked on the device ("this
+till only") and handed to the shop's list when the line returns; a basket
+recovered after a refresh is handed over the same way.
+
 A parked sale stays parked until it is sold or deleted. A resumed sale keeps
 its slot: parking it again goes back in at its original time, a refresh with
 it open puts it back there too, and voiding it asks ("Put it back" or "Delete

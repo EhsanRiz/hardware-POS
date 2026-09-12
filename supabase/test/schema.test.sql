@@ -4918,4 +4918,86 @@ begin
     v_tok, v_emp, gen_random_uuid(), 'Zaib Ahmad', '0825550187'), 'a customer the shop does not have is refused');
 end $$;
 
+-- 0086: parked sales live on the server ----------------------------------------
+
+do $$
+declare v_tok text; v_tok2 text; v_emp uuid; v_mgr uuid; v_prod uuid; v_cust record;
+        v_id uuid; v_row public.parked_sales; v_n int; v_at timestamptz; v_why text;
+        v_tok_b text; v_org_b uuid;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id into v_prod from public.products where sku = 'CEM-425-50';
+  select * into v_cust from public.pos_quick_customer(v_tok, v_emp, '082 555 0186', 'Thabo Mokoena', null, null);
+  -- A second till in the same shop, paired the way tills are paired.
+  select token into v_tok2 from public.pos_pair_register('+27820000001', '1234', 'Yard till');
+
+  -- PARKED ON ONE TILL BY A CASHIER.
+  v_id := gen_random_uuid();
+  v_row := public.pos_park_sale(v_tok, v_emp, v_id,
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 3)),
+    v_cust.id, 0, null, 345.00);
+  perform assert_eq(v_row.register_name, 'Test till', 'the list says where it was parked');
+  perform assert(v_row.parked_by_name is not null and v_row.parked_by_name <> '', 'and by whom');
+  v_at := v_row.parked_at;
+
+  -- SEEN FROM THE OTHER TILL, with the customer's name for the list.
+  select count(*) into v_n from public.pos_parked_sales(v_tok2) where id = v_id;
+  perform assert_eq(v_n, 1, 'the other till sees it');
+  perform assert(exists (select 1 from public.pos_parked_sales(v_tok2) x where x.id = v_id
+    and x.customer_name = 'Thabo Mokoena' and x.total = 345.00), 'with whose it is and what it comes to');
+
+  -- PUT BACK IN ITS SLOT: same id, the time it was first parked, the new till on it.
+  -- The till sends a time too; the stored one wins, whatever was sent.
+  v_row := public.pos_park_sale(v_tok2, v_mgr, v_id,
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 4)),
+    v_cust.id, 0, null, 460.00, v_at - interval '1 hour');
+  perform assert_eq(v_row.parked_at, v_at, 'the slot keeps its time, whatever the till sends');
+  perform assert_eq(v_row.register_name, 'Yard till', 'and says which till has it now');
+  perform assert_eq((v_row.lines->0->>'qty')::numeric, 4::numeric, 'with what is in it now');
+  select count(*) into v_n from public.parked_sales where org_id = (select org_id from fixture);
+  perform assert_eq(v_n, 1, 'one slot, not two');
+
+  -- TAKEN ONTO A TILL, IT LEAVES THE LIST: two tills cannot both have it.
+  v_row := public.pos_unpark_sale(v_tok2, v_id);
+  perform assert_eq(v_row.id, v_id, 'the other till takes it');
+  select count(*) into v_n from public.pos_parked_sales(v_tok) where id = v_id;
+  perform assert_eq(v_n, 0, 'and the first till no longer sees it');
+  begin
+    perform public.pos_unpark_sale(v_tok, v_id);
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%another till may have taken it%', 'taking it twice is refused, and says why: ' || v_why);
+
+  -- DELETED FOR THE CUSTOMER WHO NEVER CAME BACK.
+  v_row := public.pos_park_sale(v_tok, v_emp, gen_random_uuid(),
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)), null, 0, null, 115.00);
+  perform public.pos_delete_parked_sale(v_tok2, v_row.id);
+  select count(*) into v_n from public.pos_parked_sales(v_tok);
+  perform assert_eq(v_n, 0, 'gone from every till');
+
+  -- REFUSALS: nothing to park, a stranger's till, another shop's list.
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok, v_emp, gen_random_uuid(), '[]'), 'an empty basket cannot be parked');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    'not-a-token', v_emp, gen_random_uuid(), '[{"product_id":"x","qty":1}]'), 'a stranger''s till is refused');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok, gen_random_uuid(), gen_random_uuid(), '[{"product_id":"x","qty":1}]'), 'an unknown cashier is refused');
+  v_row := public.pos_park_sale(v_tok, v_emp, gen_random_uuid(),
+    jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)), null, 0, null, 115.00);
+  v_org_b := public.innova_create_org('Parked Shop B', 'B Manager', '+27820000062');
+  perform public.auth_set_pin('+27820000062', '246810');
+  select token into v_tok_b from public.pos_pair_register('+27820000062', '246810', 'B till');
+  perform assert_hidden(format('select * from public.pos_parked_sales(%L)', v_tok_b),
+    'another shop sees none of it');
+  perform assert_refuses(format('select public.pos_unpark_sale(%L, %L)', v_tok_b, v_row.id),
+    'nor can it take one');
+  perform assert_refuses(format('select public.pos_delete_parked_sale(%L, %L)', v_tok_b, v_row.id),
+    'nor delete one');
+  perform assert_refuses(format('select public.pos_park_sale(%L, %L, %L, %L::jsonb, null, 0, null, 0)',
+    v_tok_b, v_emp, v_row.id, '[{"product_id":"x","qty":1}]'), 'nor overwrite one by its id');
+  perform public.pos_delete_parked_sale(v_tok, v_row.id);
+end $$;
+
 select 'all database tests passed' as result;

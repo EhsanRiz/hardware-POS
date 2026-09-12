@@ -121,6 +121,8 @@ export const USERS = {
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
 export const REGISTER_TOKEN = "test-register-token";
+/** A second till's token, already paired: set on the device, not typed. */
+export const SECOND_TILL_TOKEN = "test-register-token-2";
 
 // PRODUCTS is module state and the shelf screen edits prices on it; taken at
 // load, before any test has run, so installBackend can put them back.
@@ -239,6 +241,15 @@ export class Backend {
   skuSeq = 0;
   calls: string[] = [];
   customers: FakeCustomer[] = [];
+  /** How long the server takes to accept a park; a slow line, for the race it exposed. */
+  parkDelayMs = 0;
+  /** 0086: parked sales are the shop's, seen from every till. */
+  parkedSales: {
+    id: string; parked_at: string; register_name: string; parked_by_name: string;
+    customer_id: string | null; lines: { product_id: string; qty: number; discount?: number | null;
+      discount_percent?: number | null; discount_reason?: string | null }[];
+    discount: number; discount_reason: string | null; total: number;
+  }[] = [];
   accountPayments: RecordedAccountPayment[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string;
     note: string | null; unit_cost?: number | null }[] = [];
@@ -310,6 +321,8 @@ export class Backend {
     kind: "till" | "personal"; assigned_to: string | null;
   }[] = [
     { id: "reg1", token: REGISTER_TOKEN, name: "Front Counter", kind: "till", assigned_to: null },
+    // A second till in the same shop, for what is shared between tills.
+    { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null },
   ];
   /** Live enrolment codes, as device_enrolments holds them minus the hashing. */
   enrolments: {
@@ -911,8 +924,9 @@ export function fakeSaleLines(be: Backend, saleId: string) {
   });
 }
 
-export async function installBackend(page: Page): Promise<Backend> {
-  const be = new Backend();
+export async function installBackend(page: Page, shared?: Backend): Promise<Backend> {
+  // A second page on the SAME backend is a second till in the same shop.
+  const be = shared ?? new Backend();
 
   // PRODUCTS is module state and the catalogue editor now writes to it, so a
   // cap set by one test would still be there for the next one in the same
@@ -1285,6 +1299,49 @@ export async function installBackend(page: Page): Promise<Backend> {
         };
         be.customers.push(made);
         return json([made]);
+      }
+      case "rpc/pos_park_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (be.parkDelayMs) await new Promise((r) => setTimeout(r, be.parkDelayMs));
+        const who = Object.values(USERS).find((u) => u.row.id === body.p_cashier_id);
+        if (!who) return fail("Unknown cashier");
+        const lines = body.p_lines as { product_id: string; qty: number }[];
+        if (!Array.isArray(lines) || lines.length === 0) return fail("Nothing to park");
+        const id = String(body.p_id);
+        const cur = be.parkedSales.find((p) => p.id === id);
+        const row = {
+          id,
+          // The slot keeps its time.
+          parked_at: cur?.parked_at ?? (body.p_parked_at ? String(body.p_parked_at) : new Date().toISOString()),
+          register_name: reg!.name, parked_by_name: who.row.name,
+          customer_id: body.p_customer_id ? String(body.p_customer_id) : null,
+          lines, discount: Number(body.p_discount ?? 0),
+          discount_reason: body.p_discount_reason ? String(body.p_discount_reason) : null,
+          total: Number(body.p_total ?? 0),
+        };
+        if (cur) Object.assign(cur, row); else be.parkedSales.push(row);
+        be.parkedSales.sort((a, b) => a.parked_at.localeCompare(b.parked_at));
+        return json(row);
+      }
+      case "rpc/pos_parked_sales": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        return json(be.parkedSales.map((p) => ({
+          ...p, customer_name: be.customers.find((c) => c.id === p.customer_id)?.name ?? null,
+        })));
+      }
+      case "rpc/pos_unpark_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const i = be.parkedSales.findIndex((p) => p.id === body.p_id);
+        if (i < 0) return fail("That parked sale is not there any more; another till may have taken it");
+        const [row] = be.parkedSales.splice(i, 1);
+        return json(row);
+      }
+      case "rpc/pos_delete_parked_sale": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const i = be.parkedSales.findIndex((p) => p.id === body.p_id);
+        if (i < 0) return fail("That parked sale is not there any more");
+        be.parkedSales.splice(i, 1);
+        return json(null);
       }
       case "rpc/pos_customer_fix_details": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -3556,6 +3613,26 @@ export async function installBackend(page: Page): Promise<Backend> {
 }
 
 /** Pair the till and sign in, which every till test needs first. */
+/**
+ * Sign in on the second till. It is already paired (the device holds the
+ * token), so this is the sign-in alone, on a page installed on the same
+ * backend as the first.
+ */
+export async function signInOnSecondTill(page: Page, pin = USERS.employee.pin) {
+  await page.addInitScript((tok: string) => {
+    localStorage.setItem("pos.device.registerToken", JSON.stringify(tok));
+    localStorage.setItem("pos.device.registerName", JSON.stringify("Yard till"));
+    localStorage.setItem("pos.device.registerId", JSON.stringify("reg2"));
+    localStorage.setItem("pos.device.kind", JSON.stringify("till"));
+  }, SECOND_TILL_TOKEN);
+  await page.goto("/");
+  const person = Object.values(USERS).find((u) => u.pin === pin)!;
+  await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
+  await page.waitForSelector('button:text-is("1")');
+  for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+}
+
 export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.goto("/");
   // 0074 asks what the device is before it asks anything else: a till and

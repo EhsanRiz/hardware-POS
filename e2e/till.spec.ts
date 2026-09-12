@@ -1,7 +1,8 @@
 import { readFileSync } from "fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import {
-  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, REGISTER_TOKEN, USERS,
+  Backend, enrolPhoneAndSignIn, installBackend, pairAndSignIn, PRODUCTS, REGISTER_TOKEN,
+  signInOnSecondTill, USERS,
 } from "./fake-backend";
 
 /** The till's status line. Print previews repeat its text, so target it directly. */
@@ -2071,6 +2072,26 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
   await expect(page.locator(".line-row")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
 
+  // THE COUNTER CLEARS AT ONCE, before the server has answered: the next
+  // customer's first keystrokes must not land in a basket about to be wiped.
+  // A slow line is exactly when it happened (on the CI runner, first).
+  be.parkDelayMs = 1500;
+  await scanCement(); await park();
+  await page.getByPlaceholder(/Scan barcode/i).fill("twin");
+  await expect(page.locator(".result-row", { hasText: "Twin & Earth 2.5mm 100m" })).toBeVisible();
+  // Now the server answers — and the typing is still there.
+  await expect.poll(() => be.parkedSales.length, { timeout: 5000 }).toBe(1);
+  await page.waitForTimeout(600);
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveValue("twin");
+  await expect(page.locator(".result-row", { hasText: "Twin & Earth 2.5mm 100m" })).toBeVisible();
+  be.parkDelayMs = 0;
+  await page.getByPlaceholder(/Scan barcode/i).fill("");
+  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await page.getByRole("button", { name: "Void sale" }).click();
+  await ask.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.locator(".line-row")).toHaveCount(0);
+
   // SOLD IS GONE: a resumed sale that is tendered leaves nothing parked.
   await scanCement(); await park();
   await page.getByRole("button", { name: "Resume parked · 1" }).click();
@@ -2095,6 +2116,94 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
   await page.getByRole("button", { name: "Resume parked · 2" }).click();
   await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
   await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
+});
+
+test("a sale parked on one till is picked up on another, by anyone", async ({ page, browser }) => {
+  be.customers.push({
+    id: "k1", code: null, name: "Zaib Ahmad", phone: "0673747474", is_trade: false,
+    credit_limit: 0, balance: 0, available: 0,
+  });
+  // Two tills on one shop: the front counter and the yard. Its own browser
+  // context, because a till is its own device with its own storage.
+  const yardContext = await browser.newContext();
+  const yard = await yardContext.newPage();
+  await installBackend(yard, be);
+  await pairAndSignIn(page, USERS.employee.pin);
+  await signInOnSecondTill(yard, USERS.manager.pin);
+
+  // SAM PARKS ZAIB'S BASKET AT THE FRONT COUNTER.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "Zaib Ahmad" }).click();
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(banner(page)).toContainText(/Any till can pick it up/);
+  expect(be.parkedSales).toHaveLength(1);
+  expect(be.parkedSales[0]).toMatchObject({ register_name: "Front Counter", parked_by_name: "Sam", customer_id: "k1" });
+
+  // ZAIB WALKS OVER TO THE YARD, where the manager is on the till. The
+  // basket is there without anybody refreshing anything.
+  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
+  await yard.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(yard.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(yard.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+  // Taken off the list as it is taken: the front counter cannot also have it.
+  expect(be.parkedSales).toHaveLength(0);
+  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0, { timeout: 15000 });
+
+  // PARKED AGAIN IN THE YARD, it says so on the front counter's list, next
+  // to one parked there. And the yard's is picked up at the front.
+  await yard.getByRole("button", { name: "Park sale" }).click();
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  const rows = which.locator(".modal-row");
+  await expect(rows.nth(0)).toContainText("Zaib Ahmad");
+  await expect(rows.nth(0)).toContainText("Yard till · Manager");
+  await expect(rows.nth(1)).toContainText("Front Counter · Sam");
+  await rows.nth(0).click();
+  await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
+  await expect(page.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
+
+  // DELETED ON ONE TILL IS GONE ON THE OTHER.
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
+  await which.getByRole("button", { name: "Delete it" }).click();
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
+  expect(be.parkedSales).toHaveLength(1);
+  await yardContext.close();
+});
+
+test("parked with the line down, a sale stays on this till until the line returns", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await expect(page.getByText(/offline/i).first()).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await expect(banner(page)).toContainText(/on this till/);
+  expect(be.parkedSales).toHaveLength(0);
+  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+
+  // Kept on the device, said so, and still resumable with the line down.
+  await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
+  await page.getByRole("button", { name: "Park sale" }).click();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  const which = page.getByRole("dialog", { name: "Which parked sale?" });
+  await expect(which.locator(".modal-row").nth(0)).toContainText("this till only");
+  await which.getByRole("button", { name: "Cancel" }).click();
+
+  // THE LINE RETURNS: both go to the shop's list by themselves.
+  be.offline = false;
+  await expect.poll(() => be.parkedSales.length, { timeout: 20000 }).toBe(2);
+  expect(be.parkedSales.map((p) => p.register_name)).toEqual(["Front Counter", "Front Counter"]);
+  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(which.locator(".modal-row").nth(0)).toContainText("Front Counter · Sam");
 });
 
 test("Cancel is neither a row nor the action, anywhere", async ({ page }) => {
