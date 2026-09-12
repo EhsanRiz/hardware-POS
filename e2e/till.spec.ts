@@ -7545,7 +7545,7 @@ test.describe("a touchscreen that is not an Android tablet", () => {
   });
 });
 
-test("an item with several photographs gets a carousel, and one photograph does not", async ({ page }) => {
+test("an item with several photographs gets thumbnails, and one photograph does not", async ({ page }) => {
   // The closer look showed only the primary photograph, so the second and
   // third — the ones that show the fitting from the other side — were taken,
   // stored, and never seen at the counter.
@@ -7574,19 +7574,19 @@ test("an item with several photographs gets a carousel, and one photograph does 
   const shot = page.locator(".detail-photo img");
   // The cached photograph is up immediately; the rest arrive behind it.
   await expect(shot).toHaveAttribute("src", "/catalogue/cement-a.png");
-  await expect(page.locator(".detail-shot-dots button")).toHaveCount(3);
 
-  await page.getByRole("button", { name: "Next photograph" }).click();
-  await expect(shot).toHaveAttribute("src", "/catalogue/cement-b.png");
+  // A strip of what there is, rather than chevrons that hide it — the counter
+  // can see there are three and go straight to the one they want.
+  const thumbs = page.locator(".detail-shot");
+  await expect(thumbs).toHaveCount(3);
+  await expect(thumbs.nth(0)).toHaveClass(/is-on/);
 
-  // And it wraps, so a thumb going one way can always get back.
-  await page.getByRole("button", { name: "Previous photograph" }).click();
-  await expect(shot).toHaveAttribute("src", "/catalogue/cement-a.png");
-  await page.getByRole("button", { name: "Previous photograph" }).click();
+  await thumbs.nth(2).click();
   await expect(shot).toHaveAttribute("src", "/catalogue/cement-c.png");
+  await expect(thumbs.nth(2)).toHaveClass(/is-on/);
+  await expect(thumbs.nth(0)).not.toHaveClass(/is-on/);
 
-  // A dot goes straight there.
-  await page.locator(".detail-shot-dots button").nth(1).click();
+  await thumbs.nth(1).click();
   await expect(shot).toHaveAttribute("src", "/catalogue/cement-b.png");
 
   // One photograph gets no arrows and no dots: controls for a choice that
@@ -7596,6 +7596,70 @@ test("an item with several photographs gets a carousel, and one photograph does 
   await page.locator(".result-row", { hasText: "Padlock 50mm Brass" }).first().click();
   await expect(page.locator(".detail-name")).toHaveText("Padlock 50mm Brass");
   await expect(page.locator(".detail-photo img")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Next photograph" })).toHaveCount(0);
-  await expect(page.locator(".detail-shot-dots")).toHaveCount(0);
+  await expect(page.locator(".detail-shots")).toHaveCount(0);
+  await expect(page.locator(".detail-shot")).toHaveCount(0);
+});
+
+test("the slip on screen is big enough to read, and none of it is off the edge", async ({ page }) => {
+  // The counter could not read the figures on a 1024 screen at arm's length:
+  // the preview was 11px. And the amounts are the RIGHTMOST thing on every
+  // line, so the moment the text is wider than the card they are the part
+  // that goes. The two numbers move together.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const m = await page.evaluate(() => {
+    const pre = document.querySelector(".animate-scale-in pre") as HTMLElement;
+    const box = pre.parentElement!;
+    return {
+      px: parseFloat(getComputedStyle(pre).fontSize),
+      hidden: box.scrollWidth - box.clientWidth,
+      widest: (pre.textContent || "").split("\n").reduce((w, l) => Math.max(w, l.length), 0),
+    };
+  });
+  expect(m.widest, "the slip is a 48-column document").toBeGreaterThanOrEqual(40);
+  expect(m.px, "preview font size").toBeGreaterThanOrEqual(13);
+  expect(m.hidden, "slip hidden past the right edge").toBeLessThanOrEqual(1);
+});
+
+test("the printed slip fits the paper instead of losing its right-hand column", async ({ page }) => {
+  // `pre` does not wrap, so if 48 characters are wider than the page the rest
+  // is clipped — and the rightmost thing on every line is the amount. The
+  // print rules had no font-size at all: the slip inherited a browser default
+  // that fits an A4 and runs off an 80mm roll.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Measured against a NARROW page, because a wide one proves nothing: at a
+  // 1280px page almost any font size fits, and the slip that actually gets
+  // clipped is the one on an 80mm roll (~300px at 96dpi). This is the width
+  // the rule has to survive.
+  await page.setViewportSize({ width: 320, height: 600 });
+  await page.emulateMedia({ media: "print" });
+  const over = await page.evaluate(() => {
+    const pre = document.querySelector("#print-area pre") as HTMLElement;
+    return pre.scrollWidth - document.documentElement.clientWidth;
+  });
+  expect(over, "printed slip past the page's right edge").toBeLessThanOrEqual(0);
+  await page.emulateMedia({ media: "screen" });
+});
+
+test("the scan box gets the room, not the buyer chip", async ({ page }) => {
+  // The chip shared the row a third each way to hold one line of text, while
+  // the box beside it — the most-used control on the till — was showing
+  // "Scan barcc" in 89px.
+  await page.setViewportSize({ width: 1024, height: 590 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  const w = await page.evaluate(() => ({
+    input: document.querySelector(".scan-field input")!.getBoundingClientRect().width,
+    chip: document.querySelector(".customer-pick")!.getBoundingClientRect().width,
+  }));
+  expect(w.input, "scan input width").toBeGreaterThan(220);
+  expect(w.chip, "buyer chip width").toBeLessThan(w.input);
 });

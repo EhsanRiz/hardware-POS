@@ -139,6 +139,41 @@ button {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  /**
+   * The slip is a fixed 48-column document and `pre` does not wrap, so if 48
+   * characters are wider than the page the rest is simply CLIPPED — and the
+   * rightmost thing on every line is the amount. That is how a printed slip
+   * comes out with its figures cut off at the edge.
+   *
+   * This had no font-size at all and inherited the browser's default, which
+   * fits an A4 but not an 80mm roll. Sized off the page instead: in print
+   * 100vw is the page box, so the font is a fraction of the paper and 48
+   * columns fit whatever the paper is.
+   *
+   * The divisor is 36, not the 32 the arithmetic suggests. A monospace
+   * character is nearer 0.69em than the 0.6em usually quoted — measured at
+   * 6.875px on a 10px font — so 48 columns want ~33em, and /32 came out 10px
+   * wide on a 320px page. 36 leaves room for that and for the @page margin.
+   */
+  #print-area pre {
+    margin: 0;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: calc(100vw / 36);
+    line-height: 1.35;
+    white-space: pre;
+  }
+  /**
+   * The barcode, not the text, is the widest thing on the slip.
+   *
+   * The lines of the receipt come to 48 characters; the Code 128 SVG is drawn
+   * at its own intrinsic size and does not care about the page, so on a narrow
+   * roll it is the element that runs off the right edge and takes the layout
+   * with it. Capped to the paper and scaled by height.
+   */
+  #print-area pre [data-barcode] svg {
+    max-width: 100%;
+    height: auto;
+  }
   @page {
     margin: 4mm;
   }

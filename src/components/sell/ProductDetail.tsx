@@ -164,41 +164,28 @@ export default function ProductDetail({
           <div className="detail-photo">
             <img src={shots[shot]} alt={p.name} />
 
-            {/* Only when there is somewhere to go. One photograph gets no
-                arrows and no dots — controls for a choice that does not
-                exist are just furniture. */}
-            {shots.length > 1 && (
-              <>
-                <button
-                  type="button"
-                  className="detail-shot-nav is-prev"
-                  aria-label="Previous photograph"
-                  onClick={() => setShot((i) => (i - 1 + shots.length) % shots.length)}
-                >
-                  ‹
-                </button>
-                <button
-                  type="button"
-                  className="detail-shot-nav is-next"
-                  aria-label="Next photograph"
-                  onClick={() => setShot((i) => (i + 1) % shots.length)}
-                >
-                  ›
-                </button>
-                <div className="detail-shot-dots" aria-label={`Photograph ${shot + 1} of ${shots.length}`}>
-                  {shots.map((src, i) => (
-                    <button
-                      type="button"
-                      key={src}
-                      className={i === shot ? "is-on" : undefined}
-                      aria-label={`Photograph ${i + 1}`}
-                      aria-current={i === shot ? "true" : undefined}
-                      onClick={() => setShot(i)}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
+            {/* Thumbnails, not arrows. A strip of what there is beats a
+                pair of chevrons that hide it: the counter can see at a glance
+                that there are three pictures and go straight to the one they
+                want, rather than clicking through to find out. One
+                photograph gets no strip — there is nothing to choose. */}
+          </div>
+        )}
+
+        {shots.length > 1 && (
+          <div className="detail-shots" role="group" aria-label="Photographs">
+            {shots.map((src, i) => (
+              <button
+                type="button"
+                key={src}
+                className={`detail-shot${i === shot ? " is-on" : ""}`}
+                aria-label={`Photograph ${i + 1} of ${shots.length}`}
+                aria-current={i === shot ? "true" : undefined}
+                onClick={() => setShot(i)}
+              >
+                <img src={src} alt="" />
+              </button>
+            ))}
           </div>
         )}
 

@@ -2073,53 +2073,30 @@ tr.is-void td:last-child { text-decoration: none; }
 .detail-photo { position: relative; }
 .detail-photo img { max-width: 92%; max-height: 92%; object-fit: contain; }
 
-/* The carousel, for the items that have more than one photograph. Arrows sit
-   ON the picture rather than beside it: the card is 560px at most and a column
-   of chrome either side would take it out of the middle. */
-.detail-shot-nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  border: 1px solid var(--divider);
-  background: rgba(245, 242, 234, 0.92);
-  color: var(--color-text);
-  font-size: 24px;
-  line-height: 1;
+/* The photographs, for items that have more than one.
+   A big one and a strip of small ones underneath: what there IS, visible at a
+   glance, rather than a pair of chevrons that hide it. */
+.detail-shots {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  gap: 8px;
+  padding: 10px 22px 0;
+  overflow-x: auto;
+  flex: none;
 }
-.detail-shot-nav.is-prev { left: 8px; }
-.detail-shot-nav.is-next { right: 8px; }
-.detail-shot-nav:hover { border-color: var(--color-accent); }
-
-.detail-shot-dots {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 8px;
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-}
-.detail-shot-dots button {
-  width: 8px;
-  height: 8px;
+.detail-shot {
+  width: 56px;
+  height: 56px;
+  flex: none;
   padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--color-neutral-700);
-  background: transparent;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
   cursor: pointer;
 }
-.detail-shot-dots button.is-on {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-}
+.detail-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.detail-shot.is-on { border-color: var(--color-accent); border-width: 2px; }
+.detail-shot:hover { border-color: var(--color-accent); }
 .detail-nophoto { font-size: 13px; color: var(--color-neutral-700); }
 
 /* The part that gives: everything between the picture and the buttons
@@ -2902,8 +2879,11 @@ tr.is-void td:last-child { text-decoration: none; }
   /* The scan box is the most-used control on the screen and was showing
      "Scan barcc" — 89px of input. It takes the larger share of the row here;
      the customer chip can lose the width. */
-  .scan-field { flex: 2 1 0; }
-  .customer-pick { flex: 1 1 0; min-width: 0; }
+  /* The scan box takes everything the chip does not need. The chip was
+     sharing the row a third each way, for one line of text; the box beside it
+     is the most-used control on the till and was the one going short. */
+  .scan-field { flex: 1 1 auto; }
+  .customer-pick { flex: 0 0 auto; min-width: 0; max-width: 40%; }
 }
 
 /* Manage → TillAI: the shop's questions, newest first; a row opens to its

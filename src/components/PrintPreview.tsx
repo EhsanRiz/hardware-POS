@@ -117,10 +117,15 @@ export default function PrintPreview() {
         className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-[60] animate-fade-in"
         onClick={() => setSlip(null)}
       >
-        {/* Wide enough for the full 48 columns at this size, so a desk does not
-            have to scroll sideways to read a slip. A phone still scrolls. */}
+        {/* Wide enough for the full 48 columns AT THIS SIZE, so a desk does not
+            have to scroll sideways to read a slip. A phone still scrolls.
+            11px was small enough that the counter could not read the figures
+            on a 1024 screen at arm's length; 13.5px needs the extra 4rem of
+            card to keep all 48 columns inside it. The two numbers move
+            together — raise one without the other and the amounts, which are
+            the rightmost thing on every line, go off the edge. */}
         <div
-          className="bg-white rounded-2xl shadow-xl w-full max-w-[min(94vw,26rem)] max-h-[90vh] flex flex-col animate-scale-in"
+          className="bg-white rounded-2xl shadow-xl w-full max-w-[min(94vw,30rem)] max-h-[90vh] flex flex-col animate-scale-in"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-4 h-12 border-b border-stone-100 shrink-0">
@@ -144,7 +149,7 @@ export default function PrintPreview() {
               and the box rule around the total came apart in the middle. The
               paper was always right; only the preview lied. */}
           <div className="overflow-y-auto overflow-x-auto p-4 bg-stone-50">
-            <pre className="font-mono text-[11px] leading-relaxed whitespace-pre text-stone-900">
+            <pre className="font-mono text-[13.5px] leading-relaxed whitespace-pre text-stone-900">
               {renderMarkup(text)}
             </pre>
           </div>
