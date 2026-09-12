@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { trackVisualViewport } from "./lib/visualViewport";
 import { installErrorReporting } from "./lib/errorReport";
 import "./index.css";
+import { startUpdateWatch } from "./lib/appUpdate";
 
 /**
  * Boot.
@@ -42,3 +43,7 @@ async function boot() {
 }
 
 void boot();
+
+// Watch for a newer till, and say so rather than reloading underneath
+// whoever is serving a customer. See src/lib/appUpdate.ts.
+startUpdateWatch();

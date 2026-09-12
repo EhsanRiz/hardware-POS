@@ -15,13 +15,47 @@ const API_PROXY = {
 // link served from a Supabase Edge Function). The normal build keeps the PWA.
 const singleFile = process.env.SINGLEFILE === "1";
 
+/**
+ * `virtual:pwa-register`, for a build with no service worker.
+ *
+ * That module is supplied by vite-plugin-pwa, which the single-file build
+ * leaves out — so the moment anything imported it, the demo stopped building
+ * at all ("Rollup failed to resolve import"). A resolver is used rather than a
+ * resolve.alias because the id is virtual: alias never gets a look at it.
+ *
+ * enforce: "pre" is load-bearing. Without it this sits AFTER vite's own
+ * resolver in the chain, and vite has already failed the build by the time it
+ * is asked — the identical error, from a plugin that looks correct.
+ *
+ * The stand-in is a no-op, which is the truth: a page with no worker has no
+ * waiting version, so the update button correctly never appears on the trial
+ * link.
+ */
+function pwaRegisterStub() {
+  const id = "virtual:pwa-register";
+  return {
+    name: "pos-pwa-register-stub",
+    enforce: "pre" as const,
+    resolveId(source: string) {
+      return source === id ? "\0" + id : null;
+    },
+    load(resolved: string) {
+      if (resolved !== "\0" + id) return null;
+      return "export function registerSW() { return async () => {}; }";
+    },
+  };
+}
+
 export default defineConfig({
   plugins: singleFile
-    ? [react(), viteSingleFile()]
+    ? [react(), viteSingleFile(), pwaRegisterStub()]
     : [
         react(),
         VitePWA({
-      registerType: "autoUpdate",
+      // "prompt", not "autoUpdate": autoUpdate reloads the page by itself the
+      // moment a new version lands, and a till that reloads mid-sale loses the
+      // cart in front of a customer. src/lib/appUpdate.ts asks instead.
+      registerType: "prompt",
       workbox: {
         // Fonts are part of the app shell: a till that loses the line before
         // they are cached would fall back to a system serif.

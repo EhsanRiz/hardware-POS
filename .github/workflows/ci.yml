@@ -77,6 +77,14 @@ jobs:
       - name: Unit rules
         run: npm test
 
+      # The hosted trial link, which nothing else here builds — and a build
+      # nothing runs is a build that breaks quietly. This one did: the update
+      # watcher imports virtual:pwa-register, the single-file build leaves
+      # vite-plugin-pwa out, and the demo stopped compiling while every other
+      # suite stayed green. Five seconds to never find that out from a visitor.
+      - name: The trial link still builds
+        run: npm run build:demo
+
       # Keyed on the lockfile: the browser build Playwright wants is pinned by
       # the @playwright/test version in it, so a dependency bump misses the
       # cache and re-downloads, which is exactly the behaviour wanted.

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import InnovaMark from "./InnovaMark";
+import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
 import { can, canAny } from "../lib/permissions";
 import type { PermKey } from "../lib/permissions";
 import type { User } from "../lib/types";
@@ -114,6 +115,13 @@ export default function PhoneHome({
   const tiles = PHONE_TILES.filter(
     (t) => t.perms.length === 0 || canAny(user, t.perms)
   );
+  // A phone is installed to a home screen and then never navigated, exactly
+  // like the till — so it goes just as stale, and the same button fixes it.
+  // Nothing is ever in progress on this screen, but it is still offered
+  // rather than taken: a reload while somebody is walking the aisles reading
+  // a tile is a surprise, and surprises on a phone are how a person stops
+  // trusting it.
+  const updateReady = useUpdateReady();
 
   return (
     <div className="phone-home">
@@ -122,7 +130,18 @@ export default function PhoneHome({
           <InnovaMark size={22} />
           <span className="sell-wordmark">Innova<span>POS</span></span>
         </div>
-        <button className="btn-line quiet" onClick={onSignOut}>Sign out</button>
+        <div className="flex items-center gap-2">
+          {updateReady && (
+            <button
+              className="head-update"
+              onClick={applyUpdate}
+              title="A newer app is ready. Takes a few seconds."
+            >
+              ↻ Update
+            </button>
+          )}
+          <button className="btn-line quiet" onClick={onSignOut}>Sign out</button>
+        </div>
       </header>
 
       <div className="phone-home-who">

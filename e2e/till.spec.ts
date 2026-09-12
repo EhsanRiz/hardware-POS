@@ -7730,3 +7730,43 @@ test("set to print straight, the counter gets paper and no popup at all", async 
   expect(printed).toContain("Cement 42.5N 50kg");
   expect(printed).toMatch(/INV-\d+/);
 });
+
+test("a newer till announces itself instead of reloading under the cashier", async ({ page }) => {
+  // The app was registered with autoUpdate, which reloads the page ITSELF the
+  // moment a new version lands — losing the cart in front of a customer — and
+  // only looks for one on a navigation, which an installed till does not do.
+  // A window opened on Monday is the same window on Friday.
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // Nothing to take: nothing shown.
+  await expect(page.getByRole("button", { name: /Update/ })).toHaveCount(0);
+
+  // A sale in progress, so the cost of reloading is real.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  // The signal a waiting service worker raises. Fired directly because a
+  // genuine worker update cannot be staged inside a browser test.
+  await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
+
+  const update = page.getByRole("button", { name: /Update/ });
+  await expect(update).toBeVisible();
+
+  // And it waited: the sale is still on the screen, not reloaded away.
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("and the phone says it too, since it goes just as stale", async ({ page }) => {
+  // A phone is installed to a home screen and then opened from the home
+  // screen forever — the same never-navigates problem as the till, on a
+  // device that is not sitting where anyone can see it is out of date.
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await expect(page.locator(".phone-home-head")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Update/ })).toHaveCount(0);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
+  await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
+  // Still the phone's own screen, not a reload back to sign-in.
+  await expect(page.locator(".phone-tiles")).toBeVisible();
+});

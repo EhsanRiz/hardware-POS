@@ -2918,3 +2918,31 @@ tr.is-void td:last-child { text-decoration: none; }
 /* Buying → Orders: print, PDF and email in front of each order. */
 .po-send { display: inline-flex; gap: 4px; white-space: nowrap; }
 .po-send .btn-line.quiet { min-height: 34px; padding: 0 10px; font-size: 13px; }
+
+/* A newer till is waiting. Amber on the green bar — the one colour the brand
+   reserves for "look here" — and it breathes, because it has to be noticed
+   between two sales without interrupting either. */
+.head-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--color-accent-400);
+  background: var(--color-accent-400);
+  color: var(--color-colophon);
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.head-update:hover { background: var(--color-accent); border-color: var(--color-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .head-update { animation: update-breathe 2.4s ease-in-out infinite; }
+}
+@keyframes update-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 180, 92, 0.55); }
+  50% { box-shadow: 0 0 0 5px rgba(224, 180, 92, 0); }
+}
