@@ -24,6 +24,7 @@ import { money } from "../../lib/money";
 import { useOnline } from "../../lib/offline";
 import ReceiveDocument from "./ReceiveDocument";
 import ScanDocument from "./ScanDocument";
+import { useCamera } from "../../lib/useCamera";
 
 /**
  * Suppliers, and the paper they send.
@@ -58,6 +59,7 @@ export default function Suppliers({
   const [peek, setPeek] = useState<Supplier | null>(null);
   // The scanner: pages in, a checked reading out, filed in one step.
   const [scanning, setScanning] = useState(false);
+  const camera = useCamera();
   // The delivery being booked in off its own paperwork.
   const [receiving, setReceiving] = useState<SupplierDocument | null>(null);
 
@@ -165,7 +167,8 @@ export default function Suppliers({
             <button className="btn-line" onClick={() => setAdding(true)} disabled={!online}>
               File by hand
             </button>
-            <button className="btn-fill" onClick={() => setScanning(true)} disabled={!online}>
+            <button className="btn-fill" onClick={() => setScanning(true)} disabled={!online || !camera}
+              title={camera ? undefined : "This device has no camera — file it from a phone"}>
               Scan a document
             </button>
           </span>
@@ -298,10 +301,23 @@ export default function Suppliers({
           Add supplier
         </button>
         {/* The way in. Everything else on this screen exists for the paper
-            that arrives through here. */}
-        <button className="btn-fill" onClick={() => setScanning(true)} disabled={!online}>
+            that arrives through here — which is why it is DISABLED and explains
+            itself on a machine with no camera, rather than being hidden. The
+            supplier's invoice still has to be filed; the person needs telling
+            where, not left to wonder where the button went. */}
+        <button
+          className="btn-fill"
+          onClick={() => setScanning(true)}
+          disabled={!online || !camera}
+          title={camera ? undefined : "This device has no camera — file it from a phone"}
+        >
           Scan a document
         </button>
+        {!camera && (
+          <p className="acc-note">
+            Paperwork is photographed on a phone — this machine has no camera.
+          </p>
+        )}
       </div>
 
       {!online && <p className="acc-note">Supplier paperwork needs a connection.</p>}

@@ -23,6 +23,7 @@ import { primeLogo } from "../../lib/logoBytes";
 import { imageSrc } from "../../lib/images";
 import type { User } from "../../lib/types";
 import { fmtDate } from "../../lib/dates";
+import { documentFileName } from "../../lib/pdf";
 
 /**
  * Quotes — the sales that have not happened yet.
@@ -205,9 +206,14 @@ export default function Quotes({
       if (!url) return null;
       const res = await fetch(url);
       if (!res.ok) return null;
-      return new File([await res.blob()], `Quotation-${q.doc_number ?? q.id}.pdf`, {
-        type: "application/pdf",
-      });
+      // The same spelling a freshly built one gets — see documentFileName.
+      // This used to write its own, so a quote came down under one name the
+      // first time and a different one once it had been archived.
+      return new File(
+        [await res.blob()],
+        documentFileName("quote", q.doc_number ?? q.id, q.customer_name),
+        { type: "application/pdf" }
+      );
     } catch {
       // A signed URL that will not fetch is not worth failing a download over:
       // the caller rebuilds, which is the same figures on today's letterhead.

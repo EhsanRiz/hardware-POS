@@ -28,7 +28,7 @@
  * one the document sets the shop's name in type, which is a letterhead too.
  */
 import { money } from "./money";
-import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet } from "./sheet";
+import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet, type SheetKind } from "./sheet";
 import type { PdfImage } from "./logoBytes";
 import type { ShopSettings } from "./types";
 
@@ -680,5 +680,62 @@ export function sheetAsPdf(
 
 /** What the attachment is called when it lands in someone's downloads. */
 export function sheetFileName(sheet: Sheet): string {
-  return `${SHEET_TITLE[sheet.kind].replace(/\s+/g, "-")}-${sheet.number}.pdf`;
+  return documentFileName(sheet.kind, sheet.number, sheet.customer?.name);
+}
+
+/**
+ * The name a document is saved under, from the three facts that identify it.
+ *
+ * Taken apart from sheetFileName because the quote list re-serves a PDF it
+ * archived earlier and only has the SUMMARY of the quote in hand, not the
+ * sheet — so it had grown a second, hand-written `Quotation-${number}.pdf`.
+ * Two spellings of the same name meant a quote downloaded under one name the
+ * first time and another the second, depending only on whether it had been
+ * built before.
+ */
+export function documentFileName(
+  kind: SheetKind,
+  number: string,
+  who?: string | null
+): string {
+  return (
+    [SHEET_TITLE[kind].replace(/\s+/g, "-"), number, fileNamePart(who)]
+      .filter(Boolean)
+      .join("-") + ".pdf"
+  );
+}
+
+/**
+ * Somebody's name, made safe to be part of a filename.
+ *
+ * A folder of Quotation-QUO-000001.pdf, Quotation-QUO-000002.pdf tells you
+ * nothing without opening each one. The customer's name is what a person
+ * actually searches their downloads for — so it goes in the name, after the
+ * number, which stays first because that is what the document IS.
+ *
+ * What has to survive contact with a real name:
+ *
+ *   - Windows refuses < > : " / \ | ? * and control characters outright, and
+ *     silently drops a trailing dot or space. A customer called "Smit & Co."
+ *     must not produce a file the shop cannot save.
+ *   - Accents and non-Latin letters are kept. Both filesystems this runs on
+ *     take them, and stripping them turns a name into initials.
+ *   - Capped, because a filesystem stops at 255 bytes and a trading name can
+ *     run long. Cut on a word boundary where there is one.
+ *
+ * Empty for a walk-in, and the parts are joined with the empties dropped, so a
+ * sale to nobody in particular is still Quotation-QUO-000001.pdf.
+ */
+export function fileNamePart(name: string | null | undefined, max = 40): string {
+  const cleaned = (name ?? "")
+    .normalize("NFC")
+    // Anything that is not a letter, a number or a separator becomes a space,
+    // which then collapses — so "Smit & Co." is "Smit-Co" and not "Smit---Co".
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= max) return cleaned.replace(/\s+/g, "-");
+  const cut = cleaned.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return (space > max / 2 ? cut.slice(0, space) : cut).trim().replace(/\s+/g, "-");
 }

@@ -411,13 +411,53 @@ check("and none of it drawn off the bottom of the paper",
   `lowest at ${Math.min(...stYs)}`);
 
 console.log("--- pdf: the file it arrives as ---");
-check("the attachment is named for the document",
-  sheetFileName(quote) === "Quotation-QUO-000020.pdf", sheetFileName(quote));
+// What the document IS comes first and stays first: the kind, then the number.
+// The name goes on the end, because a folder of Quotation-QUO-000001.pdf,
+// Quotation-QUO-000002.pdf tells nobody anything without opening each one, and
+// the customer is what a person actually searches their downloads for.
+check("the attachment is named for the document and the customer",
+  sheetFileName(quote) === "Quotation-QUO-000020-Morija-Exp.pdf", sheetFileName(quote));
 check("and a tax invoice's name has no space in it",
-  sheetFileName({ ...quote, kind: "invoice", number: "INV-9" }) === "Tax-Invoice-INV-9.pdf");
+  sheetFileName({ ...quote, kind: "invoice", number: "INV-9" })
+    === "Tax-Invoice-INV-9-Morija-Exp.pdf");
 check("and a statement is named for the account it is for",
   sheetFileName({ ...quote, kind: "statement", number: "STM-20260905-A1B2C3" })
-    === "Statement-STM-20260905-A1B2C3.pdf");
+    === "Statement-STM-20260905-A1B2C3-Morija-Exp.pdf");
+
+// A walk-in is nobody in particular, and the file is still named.
+check("a sale to nobody keeps the document's own name",
+  sheetFileName({ ...quote, customer: null }) === "Quotation-QUO-000020.pdf",
+  sheetFileName({ ...quote, customer: null }));
+check("and so does one whose name is blank",
+  sheetFileName({ ...quote, customer: { name: "  " } }) === "Quotation-QUO-000020.pdf");
+
+// The characters Windows refuses outright — < > : " / \ | ? * — and the
+// trailing dot it silently drops. A shop that cannot save the file it just
+// made is worse off than one whose filename is plain.
+check("a name with punctuation in it is still a filename",
+  sheetFileName({ ...quote, customer: { name: 'Smit & Co. (Pty) Ltd' } })
+    === "Quotation-QUO-000020-Smit-Co-Pty-Ltd.pdf",
+  sheetFileName({ ...quote, customer: { name: 'Smit & Co. (Pty) Ltd' } }));
+check("a name that is a path is not a path",
+  sheetFileName({ ...quote, customer: { name: 'A/B\\C:D*E?F"G<H>I|J' } })
+    === "Quotation-QUO-000020-A-B-C-D-E-F-G-H-I-J.pdf",
+  sheetFileName({ ...quote, customer: { name: 'A/B\\C:D*E?F"G<H>I|J' } }));
+
+// Accents are kept: both filesystems this runs on take them, and stripping
+// them turns a Free State name into initials.
+check("an accented name keeps its accents",
+  sheetFileName({ ...quote, customer: { name: "Réne Böhm" } })
+    === "Quotation-QUO-000020-Réne-Böhm.pdf",
+  sheetFileName({ ...quote, customer: { name: "Réne Böhm" } }));
+
+// And a trading name that runs long is cut on a word, not mid-syllable.
+const longName = sheetFileName({
+  ...quote,
+  customer: { name: "Ladybrand Agricultural and General Hardware Suppliers Proprietary Limited" },
+});
+check("a long trading name is cut on a word boundary",
+  longName.length < 80 && !longName.includes("--") && /-[A-Za-z]+\.pdf$/.test(longName),
+  longName);
 
 const failed = results.filter((r) => !r).length;
 console.log(`\n${failed} failure(s)`);

@@ -8,6 +8,7 @@ import BarcodeScanner from "./BarcodeScanner";
 import ProductPhotos from "./ProductPhotos";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "../lib/types";
 import { fmtDate } from "../lib/dates";
+import { useCamera } from "../lib/useCamera";
 
 /**
  * Add or edit a line in the catalogue.
@@ -98,7 +99,11 @@ export default function ProductEditor({
   // A phone has a camera and no scanner gun; the tablet has the reverse, and
   // there a gun types straight into the field.
   const [scanning, setScanning] = useState(false);
-  const canScan = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+  // Whether a camera EXISTS, not whether the browser has the API for one.
+  // `!!navigator.mediaDevices?.getUserMedia` is true in Chrome on a desktop
+  // with nothing plugged in, which is how a "scan it" button came to sit on a
+  // counter machine that has no lens. See lib/device.ts.
+  const canScan = useCamera();
 
   async function save() {
     setBusy(true);

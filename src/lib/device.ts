@@ -86,3 +86,52 @@ export function clearPairing(): void {
   cacheSet(KIND_KEY, "till");
   listeners.forEach((l) => l());
 }
+
+/**
+ * Does this device have a camera at all?
+ *
+ * Four screens in this app can only be done by pointing a lens at something —
+ * photographing a shelf, filing a supplier's invoice, reading a barcode into
+ * the product editor, receiving stock by scanning it. Every one of them was
+ * offered on the shop's counter machine, which is a PinnPOS all-in-one with no
+ * camera in it, and every one of them is a dead end there.
+ *
+ * They were gated on `!!navigator.mediaDevices?.getUserMedia`, which is the
+ * wrong question: Chrome on a desktop with nothing plugged in answers yes. The
+ * right question is whether a camera EXISTS, and enumerateDevices answers it —
+ * before any permission is granted it still reports one entry per available
+ * device, with the labels blanked but the kind intact. No videoinput, no
+ * camera.
+ *
+ * Deliberately NOT "is this a till". A counter running on an iPad has a camera
+ * and should keep all four screens; the PinnPOS beside it should not. The
+ * device's kind is not the reason — the lens is.
+ */
+const CAMERA_KEY = "device.hasCamera";
+
+/** What was true last time we looked, so the first paint does not flicker. */
+export function cameraSeen(): boolean {
+  // Unknown means SHOW. A screen is never taken away on the strength of a
+  // question that has not been answered yet; the live check below corrects it
+  // within a frame or two, and from the second load on it is already right.
+  return cacheGet<boolean>(CAMERA_KEY, true);
+}
+
+export async function hasCamera(): Promise<boolean> {
+  const media = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+  if (!media?.enumerateDevices) {
+    cacheSet(CAMERA_KEY, false);
+    return false;
+  }
+  try {
+    const devices = await media.enumerateDevices();
+    const found = devices.some((d) => d.kind === "videoinput");
+    cacheSet(CAMERA_KEY, found);
+    return found;
+  } catch {
+    // A refused or broken query is not evidence of absence, and hiding the
+    // shelf camera because a browser threw would be worse than offering one
+    // that fails when it is opened.
+    return true;
+  }
+}

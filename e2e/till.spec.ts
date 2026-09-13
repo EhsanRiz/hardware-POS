@@ -4598,7 +4598,10 @@ test("called-off orders stay on the list crossed out, deletable when they never 
     page.waitForEvent("download"),
     row.getByRole("button", { name: "PDF PO-000001" }).click(),
   ]);
-  expect(download.suggestedFilename()).toBe("Purchase-Order-PO-000001.pdf");
+  // Named for the supplier as well as the number: a downloads folder full of
+  // Purchase-Order-PO-000001.pdf, -000002.pdf says nothing without opening
+  // each one, and who it went to is what a person searches for.
+  expect(download.suggestedFilename()).toBe("Purchase-Order-PO-000001-Voltex.pdf");
 
   const email = row.getByRole("link", { name: "Email PO-000001" });
   const href = (await email.getAttribute("href")) ?? "";
@@ -5946,7 +5949,9 @@ test("Email sends the A4 quotation as a PDF, not the till slip in the body", asy
   const download = page.waitForEvent("download");
   await popup.getByRole("link", { name: "Email" }).click();
   const file = await download;
-  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001.pdf");
+  // Named for the buyer as well as the number — the attachment lands in
+  // somebody's downloads and has to say who it is for without being opened.
+  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001-Morija-Exp.pdf");
   const path = await file.path();
   const bytes = readFileSync(path!);
   const pdf = bytes.toString("latin1");
@@ -5980,7 +5985,7 @@ test("a quotation downloads as a PDF straight from its line in the list", async 
   const download = page.waitForEvent("download");
   await row.getByRole("button", { name: "PDF" }).click();
   const file = await download;
-  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001.pdf");
+  expect(file.suggestedFilename()).toBe("Quotation-QUO-000001-Morija-Exp.pdf");
   const pdf = readFileSync((await file.path())!).toString("latin1");
   expect(pdf.startsWith("%PDF-")).toBe(true);
   expect(pdf).toContain("(Morija Exp) Tj");
@@ -7700,6 +7705,104 @@ test("the printed slip fits the paper instead of losing its right-hand column", 
   // by reading it, not by a failing assertion.
   expect(slip.size, "printed slip's type").toBeGreaterThanOrEqual(slip.page / 29);
   await page.emulateMedia({ media: "screen" });
+});
+
+/**
+ * Pretend this device does or does not have a camera.
+ *
+ * enumerateDevices is what the app asks (see lib/device.ts), and it is the
+ * honest thing to stub: Chrome in this harness reports no videoinput anyway,
+ * so a test that did nothing would be testing the camera-less case by accident
+ * and the camera case not at all.
+ */
+async function withCamera(page: import("@playwright/test").Page, present: boolean) {
+  await page.addInitScript((yes: boolean) => {
+    const media = navigator.mediaDevices ?? ({} as MediaDevices);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        ...media,
+        getUserMedia: () => Promise.reject(new Error("not in a test")),
+        enumerateDevices: () =>
+          Promise.resolve(
+            yes
+              ? [{ kind: "videoinput", deviceId: "cam", groupId: "g", label: "" }]
+              : [{ kind: "audioinput", deviceId: "mic", groupId: "g", label: "" }]
+          ),
+      },
+    });
+  }, present);
+}
+
+test("a saved quote comes down named for the customer it is for", async ({ page }) => {
+  // A downloads folder of Quotation-QUO-000001.pdf, Quotation-QUO-000002.pdf
+  // tells nobody anything without opening each one. Who it is for is what a
+  // person searches for weeks later, so it goes in the name.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Save as quote/ }).click();
+
+  const who = page.getByRole("dialog", { name: "Who is this quote for?" });
+  await who.getByLabel("Quote for").fill("Smit & Co. (Pty) Ltd");
+  await who.getByRole("button", { name: "Save quote" }).click();
+  await page.getByLabel("Close").click();
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("dialog", { name: "Quote QUO-000001" })
+    .getByRole("button", { name: "PDF" }).click();
+
+  // The number first, because that is what the document IS; the name after it.
+  // And the punctuation in a real trading name is gone: Windows refuses a
+  // filename carrying & ( ) or a trailing dot, so a shop that could not save
+  // the file it had just made would be worse off than one with a plain name.
+  expect((await download).suggestedFilename()).toBe(
+    "Quotation-QUO-000001-Smit-Co-Pty-Ltd.pdf"
+  );
+});
+
+test("a counter machine with no camera is not offered the camera's work", async ({ page }) => {
+  // The shop's till is a PinnPOS all-in-one with no lens in it, and it was
+  // being offered four screens that can only be done by pointing one at
+  // something: photographing a shelf, filing a supplier's invoice, reading a
+  // barcode into the product editor, and scanning stock in. Every one of them
+  // was a dead end there — and every one of them is a tap away on the phone,
+  // which is where that work actually happens.
+  await withCamera(page, false);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  // The Shelf tab is gone, and the sections that remain are still all there.
+  const nav = page.locator("header:has(h1:text-is('Manage')) nav");
+  await expect(nav.getByRole("button", { name: "Shelf", exact: true })).toHaveCount(0);
+  await expect(nav.getByRole("button", { name: "Catalogue", exact: true })).toBeVisible();
+
+  // Filing a supplier's paperwork says why it cannot, rather than vanishing:
+  // the invoice still has to be filed and the person needs telling where.
+  await nav.getByRole("button", { name: "Suppliers", exact: true }).click();
+  const file = page.getByRole("button", { name: /Scan a document/i });
+  await expect(file).toBeVisible();
+  await expect(file).toBeDisabled();
+  await expect(page.getByText(/no camera/i)).toBeVisible();
+});
+
+test("a till that does have a camera keeps all of it", async ({ page }) => {
+  // The gate is the LENS, not the kind of device. A counter running on an iPad
+  // has a camera and must keep every one of these screens — which is why this
+  // is not written as "hide it on a till".
+  await withCamera(page, true);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  const nav = page.locator("header:has(h1:text-is('Manage')) nav");
+  await expect(nav.getByRole("button", { name: "Shelf", exact: true })).toBeVisible();
+
+  await nav.getByRole("button", { name: "Suppliers", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Scan a document/i })).toBeEnabled();
 });
 
 test("Manage shows every section without a scrollbar across the top", async ({ page }) => {

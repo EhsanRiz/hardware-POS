@@ -11,6 +11,7 @@ import {
   type ProductInput,
 } from "../lib/adminApi";
 import { deviceKind } from "../lib/device";
+import { useCamera } from "../lib/useCamera";
 import { errorMessage } from "../lib/errors";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
@@ -84,6 +85,7 @@ export default function Admin({
   // Only the tabs this person is actually allowed to open. The RPCs behind each
   // re-check the permission anyway; this is so a counter supervisor is not
   // shown a Staff tab that will only refuse them.
+  const camera = useCamera();
   const tabs = useMemo(() => {
     const t: { key: TabKey; label: string }[] = [];
     // Catalogue and Bulk import were unconditional, which was harmless while
@@ -94,7 +96,12 @@ export default function Admin({
       t.push({ key: "catalogue", label: "Catalogue" });
       t.push({ key: "import", label: "Bulk import" });
     }
-    if (can(user, "shelf_capture") || can(user, "manage_catalogue")) {
+    // Photographing a shelf needs a lens. The shop's counter machine is a
+    // PinnPOS all-in-one with no camera in it, so this was a tab that could
+    // only ever say no — while the same screen sat one tap away on the phone,
+    // which is where the work actually happens. Gated on the CAMERA and not on
+    // the device's kind: a counter running on an iPad keeps it.
+    if (camera && (can(user, "shelf_capture") || can(user, "manage_catalogue"))) {
       t.push({ key: "shelf", label: "Shelf" });
     }
     if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
@@ -114,7 +121,7 @@ export default function Admin({
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
     if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
     return t;
-  }, [user]);
+  }, [user, camera]);
 
   // The first tab this person may actually open — a shelf-only user's Manage
   // is the camera, not a catalogue that would refuse to load.

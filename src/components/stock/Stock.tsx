@@ -13,6 +13,7 @@ import { fmtQty } from "../../lib/receipt";
 import type { Product } from "../../lib/types";
 import { fmtDayMonthTime } from "../../lib/dates";
 import BarcodeScanner from "../BarcodeScanner";
+import { useCamera } from "../../lib/useCamera";
 import StockTake from "./StockTake";
 
 const CATALOGUE_KEY = "catalogue.products";
@@ -51,6 +52,7 @@ export default function Stock({ pin }: { pin: string }) {
   const [busy, setBusy] = useState(false);
   // The phone's camera as a scanner, on the delivery tab.
   const [scanning, setScanning] = useState(false);
+  const camera = useCamera();
   // The row the last scan landed on, lit for a moment so the eye finds it.
   const [hit, setHit] = useState<string | null>(null);
 
@@ -288,7 +290,11 @@ export default function Stock({ pin }: { pin: string }) {
             style={{ marginBottom: 0, maxWidth: 420 }}
             aria-label={tab === "receive" ? "Scan or find an item" : "Find an item"}
           />
-          {tab === "receive" && (
+          {/* Only where there is a lens to scan with. On the counter machine
+              the box beside this takes a laser scanner's keystrokes, which is
+              how that till reads a barcode; a camera button there opens a
+              dialog that can only fail. */}
+          {tab === "receive" && camera && (
             <button
               type="button"
               className="btn-line"
