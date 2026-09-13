@@ -1333,9 +1333,18 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // otherwise as a South African number.
         const typed = String(body.p_phone ?? "").replace(/[\s()-]/g, "");
         const e164 = typed.startsWith("+") ? typed : typed.startsWith("0") ? "+27" + typed.slice(1) : typed;
-        if (e164 !== USERS.manager.phone || body.p_pin !== USERS.manager.pin) {
-          return fail("Invalid phone or PIN");
+        // 0088: an unknown number, a wrong PIN and a locked account all come
+        // back as no row — the app says one sentence for all three — and a
+        // wrong PIN counts against the person, in the same tally the sign-in
+        // uses, so five of them lock both.
+        if (e164 !== USERS.manager.phone) return json([]);
+        const tries = be.failedLogins[USERS.manager.row.id] ?? 0;
+        if (tries >= 5) return json([]);
+        if (body.p_pin !== USERS.manager.pin) {
+          be.failedLogins[USERS.manager.row.id] = tries + 1;
+          return json([]);
         }
+        delete be.failedLogins[USERS.manager.row.id];
         return json([{ register_id: "reg1", token: REGISTER_TOKEN }]);
       }
       case "rpc/pos_login": {

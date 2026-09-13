@@ -424,11 +424,11 @@ begin
   select * into v_row from public.pos_login(v_tok, v_twin, '1234');
   perform assert_eq(v_row.id, v_twin, 'and the twin signs in as the twin, on the same PIN');
 
-  -- The old PIN-only form now refuses rather than guessing. Returning either
-  -- one would be worse than returning none: a day's sales under a name that
-  -- did not ring them up is a lie nobody goes looking for.
-  select count(*) into v_n from public.pos_login(v_tok, '1234');
-  perform assert_eq(v_n, 0, 'a PIN shared by two people signs nobody in');
+  -- The old PIN-only form is gone (0088): it had neither the lockout nor
+  -- the phone rule, so it was the way around both.
+  perform assert_refuses(
+    format('select public.pos_login(%L, %L)', v_tok, '1234'),
+    'the two-argument login no longer exists');
 
   -- And every privileged RPC says so out loud rather than picking one.
   perform assert_refuses(
@@ -439,9 +439,67 @@ begin
   delete from public.login_attempts;
   delete from public.app_users where id = v_twin;
 
-  -- With the PIN unique again, the old form works exactly as before.
-  select count(*) into v_n from public.pos_login(v_tok, '1234');
+  -- With the PIN unique again, the manager signs in exactly as before.
+  select count(*) into v_n from public.pos_login(v_tok, v_mgr, '1234');
   perform assert_eq(v_n, 1, 'a unique PIN still signs its owner in');
+end $$;
+
+-- 0088: pairing cannot be guessed ------------------------------------------
+--
+-- The one entry point with no token, throttled like the sign-in, and silent
+-- about which of three things was wrong.
+do $$
+declare v_mgr uuid; v_emp uuid; v_n int; v_row record;
+begin
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  delete from public.login_attempts;
+
+  -- An unknown number and a wrong PIN look the same: no row, no error.
+  select count(*) into v_n from public.pos_pair_register('+27829999999', '1234', 'Probe');
+  perform assert_eq(v_n, 0, 'an unknown number pairs nothing');
+  select count(*) into v_n from public.pos_pair_register('+27820000001', '000000', 'Probe');
+  perform assert_eq(v_n, 0, 'a wrong PIN pairs nothing');
+  perform assert_eq(
+    (select count(*)::int from public.login_attempts where user_id = v_mgr), 1,
+    'and the wrong PIN is counted against the person');
+
+  -- Five wrong, and even the right PIN is refused, the same way.
+  for i in 1..4 loop
+    perform public.pos_pair_register('+27820000001', '000000', 'Probe');
+  end loop;
+  select count(*) into v_n from public.pos_pair_register('+27820000001', '1234', 'Probe');
+  perform assert_eq(v_n, 0, 'five wrong PINs lock pairing, right PIN included');
+  -- The same five lock the till sign-in too: it is the same PIN.
+  perform assert_refuses(
+    format('select public.pos_login(%L, %L, %L)', (select token from till), v_mgr, '1234'),
+    'and the till sign-in with it');
+
+  -- The window passes; the right PIN pairs and clears the slate.
+  delete from public.login_attempts;
+  select * into v_row from public.pos_pair_register('+27820000001', '1234', 'Paired after');
+  perform assert(v_row.token is not null, 'the right PIN pairs once the window has passed');
+  perform assert_eq(
+    (select count(*)::int from public.login_attempts where user_id = v_mgr), 0,
+    'and pairing clears the failures behind it');
+  delete from public.registers where id = v_row.register_id;
+
+  -- A correct PIN without the right to pair is told so: that caller is staff.
+  -- (A fresh cashier: the fixture's has been signed out by an earlier test.)
+  select id into v_emp from public.pos_admin_invite_user(
+    (select token from till), '1234', 'Counter only', '+27820000088', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('8888', gen_salt('bf')) where id = v_emp;
+  perform assert_refuses(
+    format('select public.pos_pair_register(%L, %L, %L)', '+27820000088', '8888', 'Counter'),
+    'a cashier pairing a till');
+  delete from public.app_users where id = v_emp;
+
+  -- Signed out means signed out, here as everywhere else.
+  update public.app_users set active = false where id = v_mgr;
+  select count(*) into v_n from public.pos_pair_register('+27820000001', '1234', 'Gone');
+  perform assert_eq(v_n, 0, 'a signed-out manager cannot pair');
+  update public.app_users set active = true where id = v_mgr;
+  delete from public.login_attempts;
 end $$;
 
 -- Naming people means an attacker can choose a target, so guessing is capped.
@@ -4723,12 +4781,13 @@ begin
   perform assert(v_tok is not null, 'with or without spaces');
   select token into v_tok from public.pos_pair_register('+27 82 000 0001', '1234', 'Typed international');
   perform assert(v_tok is not null, 'or with the country code and spaces');
-  perform assert_refuses(
-    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000001', '9999', 'Wrong PIN'),
-    'the PIN still has to be right');
-  perform assert_refuses(
-    format('select * from public.pos_pair_register(%L, %L, %L)', '0820000009', '1234', 'Wrong number'),
-    'and the number still has to be somebody''s');
+  -- Refused as no row rather than an error since 0088, so that a wrong PIN
+  -- can be counted and a probe learns nothing from the reply.
+  select count(*) into v_n from public.pos_pair_register('0820000001', '9999', 'Wrong PIN');
+  perform assert_eq(v_n, 0::bigint, 'the PIN still has to be right');
+  select count(*) into v_n from public.pos_pair_register('0820000009', '1234', 'Wrong number');
+  perform assert_eq(v_n, 0::bigint, 'and the number still has to be somebody''s');
+  delete from public.login_attempts;
   -- The tills paired above belong to the manager's shop, nobody else's.
   select count(*) into v_n from public.registers r
    where r.name like 'Typed %' and r.org_id = (select org_id from fixture);
@@ -4744,9 +4803,9 @@ begin
    where r.name = 'Maseru till'
      and r.org_id = (select id from public.organizations where name = 'Maseru Shop');
   perform assert_eq(v_n, 1::bigint, 'and the till lands on the Maseru shop');
-  perform assert_refuses(
-    format('select * from public.pos_pair_register(%L, %L, %L)', '5812 3456', '1234', 'Wrong PIN, Maseru'),
-    'with the right PIN only');
+  select count(*) into v_n from public.pos_pair_register('5812 3456', '1234', 'Wrong PIN, Maseru');
+  perform assert_eq(v_n, 0::bigint, 'with the right PIN only');
+  delete from public.login_attempts;
 end $$;
 
 -- 0082: reading a document that was filed without being read -----------------

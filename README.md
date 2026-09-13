@@ -420,9 +420,17 @@ parameterised by `VITE_RECEIPT_WIDTH` (32 for 58mm paper, 48 for 80mm).
 Inherited from the cafe build, and **more serious here** — a hardware shop has
 a bigger float, higher-value stock and customers on credit:
 
-- The anon key ships in the PWA and can call `pos_login`, so **PINs are
-  brute-forceable over the public API**. There is no rate limiting or lockout.
-  Add this before go-live — it is the one inherited weakness still open.
+- The anon key ships in the PWA, so the two entry points that take a PIN are
+  reachable by anybody. Both are throttled now: `pos_login` since `0033`,
+  and `pos_pair_register` — the one that needs no token, because it mints
+  one — since `0088`. Five wrong PINs in fifteen minutes lock the person,
+  and pairing answers an unknown number, a wrong PIN and a locked account
+  with the same silence. The two-argument login that skipped the lockout is
+  gone.
+- **The offline PIN cache on a device can be brute-forced** by whoever lifts
+  the device: PBKDF2 over a six-digit space is minutes on a GPU, and there is
+  no attempt counter offline. Unpairing wipes it; a lost device should be
+  unpaired from Manage → Shop the day it goes.
 - Fixed in `0006`: internal helpers (notably `user_by_pin`, which returns
   `pin_hash`) were reachable over PostgREST with just the anon key. Only the
   `pos_*` entry points are callable from the device now, and `products.cost` is

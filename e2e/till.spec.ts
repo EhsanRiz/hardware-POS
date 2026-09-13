@@ -271,8 +271,39 @@ test("pairing is refused with the wrong PIN", async ({ page }) => {
   await page.locator("input[type=tel]").fill(USERS.manager.phone);
   await page.locator("input[type=password]").fill("999999");
   await page.getByRole("button", { name: /Pair this till/i }).click();
-  await expect(page.getByText(/Invalid phone or PIN|Pairing failed/i)).toBeVisible();
+  await expect(page.getByText(/Invalid phone or PIN/i)).toBeVisible();
   await expect(page.getByText("Set up this till")).toBeVisible();
+});
+
+test("five wrong PINs lock pairing, and the screen says the same thing either way", async ({ page }) => {
+  // 0088. Pairing takes no token, so it is the one door a stranger with the
+  // app can knock on. A wrong PIN, an unknown number and a locked account
+  // are one sentence, so the knocking learns nothing; and the sentence
+  // carries the fifteen minutes, so the owner who mistyped does not keep
+  // trying the same digits.
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  const pin = page.locator("input[type=password]");
+  const pair = page.getByRole("button", { name: /Pair this till/i });
+
+  await page.locator("input[type=tel]").fill("082 999 9999");
+  await pin.fill(USERS.manager.pin);
+  await pair.click();
+  const refused = page.getByText("Invalid phone or PIN. After five wrong tries, wait 15 minutes.");
+  await expect(refused).toBeVisible();
+
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  for (let i = 0; i < 5; i++) {
+    await pin.fill("000000");
+    await pair.click();
+    await expect(refused).toBeVisible();
+  }
+  // Sixth: the right PIN, refused in the same words.
+  await pin.fill(USERS.manager.pin);
+  await pair.click();
+  await expect(refused).toBeVisible();
+  await expect(page.getByText("Set up this till")).toBeVisible();
+  expect(be.failedLogins[USERS.manager.row.id]).toBe(5);
 });
 
 test("a PIN signs you in as yourself, not as whoever owns it", async ({ page }) => {
