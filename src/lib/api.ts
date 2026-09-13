@@ -139,7 +139,13 @@ export async function pairRegister(
   });
   if (error) throw error;
   const rows = data as { register_id: string; token: string }[];
-  if (!rows?.[0]) throw new Error("Pairing failed");
+  // No row is the server's one answer for an unknown number, a wrong PIN and
+  // a locked account (0088), so this is the one sentence for all three — it
+  // has to carry the lockout, or the owner tries the same digits for a
+  // quarter of an hour.
+  if (!rows?.[0]) {
+    throw new Error("Invalid phone or PIN. After five wrong tries, wait 15 minutes.");
+  }
   return rows[0];
 }
 
