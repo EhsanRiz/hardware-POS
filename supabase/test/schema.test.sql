@@ -5543,4 +5543,31 @@ begin
     'marked off twice');
 end $$;
 
+-- 0095: a slip from an offline sale comes back by its till reference --------
+
+do $$
+declare v_tok text; v_emp uuid; v_prod uuid; v_price numeric; v_sale public.sales;
+        v_ref uuid := gen_random_uuid(); v_tr text;
+begin
+  select token into v_tok from till;
+  select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  -- Replayed from the queue, as an offline sale is: it carries its client_ref.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)),
+    p_client_ref => v_ref);
+  v_tr := 'TR-' || upper(left(replace(v_ref::text, '-', ''), 8));
+  perform assert_eq((public.pos_sale_by_number(v_tok, lower(v_tr) || ' ')->>'id')::uuid, v_sale.id,
+    'the invoice is found by the till reference on the offline slip, case and spaces aside');
+  perform assert_eq(public.pos_sale_by_number(v_tok, v_tr)->>'doc_number', v_sale.doc_number,
+    'and comes with the number the server issued');
+  perform assert(public.pos_sale_by_number(v_tok, 'TR-00000000') is null,
+    'an unknown reference finds nothing');
+  perform assert_eq((public.pos_sale_by_number(v_tok, v_sale.doc_number)->>'id')::uuid, v_sale.id,
+    'and the invoice number still finds it');
+end $$;
+
 select 'all database tests passed' as result;

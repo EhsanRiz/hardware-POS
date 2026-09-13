@@ -35,6 +35,7 @@ import {
 } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
+import { listQueue } from "../lib/queue";
 import { useAwayLock } from "../lib/awayLock";
 import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
@@ -49,7 +50,7 @@ import { cashSessionStatus, STALE_SESSION_HOURS, type CashSessionStatus } from "
 import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
-import { buildQuoteText, buildReceiptText, cartQuoteLines } from "../lib/receipt";
+import { buildQuoteText, buildReceiptText, cartQuoteLines, tillRef } from "../lib/receipt";
 import { refreshSettings, shopSettings, vatRate } from "../lib/settings";
 import { fmtDate } from "../lib/dates";
 import ParkedPicker, { localEntry, parkedTotal, type ParkedEntry, type ParkedSale } from "../components/sell/ParkedPicker";
@@ -573,6 +574,20 @@ export default function POS() {
         const sale = await saleByNumber(docNumber);
         if (!sale) {
           setBanner(`No sale ${docNumber} is on record.`);
+          return;
+        }
+        setDocSale(sale);
+      } else if (docNumber.startsWith("TR-")) {
+        // An offline slip's reference. If the sale is still on this till,
+        // say so: there is no invoice to open yet, and the line is why.
+        const queued = listQueue().find((q) => tillRef(q.clientUuid) === docNumber);
+        if (queued) {
+          setBanner(`That sale is still on this till, waiting for the line. Its invoice number follows when it syncs.`);
+          return;
+        }
+        const sale = await saleByNumber(docNumber);
+        if (!sale) {
+          setBanner(`No sale with till reference ${docNumber} is on record.`);
           return;
         }
         setDocSale(sale);

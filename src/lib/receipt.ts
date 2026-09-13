@@ -125,6 +125,21 @@ function underline(s: string): string {
 function barcode(docNumber: string): string {
   return BAR_ON + docNumber + BAR_OFF;
 }
+
+/**
+ * The reference an offline slip carries instead of an invoice number.
+ *
+ * The number is issued by the server, so two tills never issue the same
+ * one; a sale taken with the line down has none until it syncs. The slip
+ * used to say "pending sync" and carry no barcode, so a customer back at
+ * the counter with it had nothing to scan and nothing to quote. This is the
+ * first eight hex digits of the sale's own client reference — the key the
+ * server files it under — as TR- and a barcode, and pos_sale_by_number
+ * (0095) finds the invoice by it once the sale is in.
+ */
+export function tillRef(saleId: string): string {
+  return "TR-" + saleId.replace(/-/g, "").slice(0, 8).toUpperCase();
+}
 const MARKUP_RE = new RegExp(
   "[" + BOLD_ON + BOLD_OFF + UL_ON + UL_OFF + BAR_ON + BAR_OFF + "]",
   "g"
@@ -296,7 +311,11 @@ export function buildReceiptText(
   } else if (sale.status === "pending_approval") {
     out.push(center("NOT AN INVOICE — awaiting approval"));
   } else {
-    out.push(center("Invoice No: pending sync"));
+    // Waiting for the line: the invoice number follows when the sale is
+    // in, and the paper carries something to bring back meanwhile.
+    out.push(center("Invoice No: issued when the line returns"));
+    out.push(center(`Till ref: ${tillRef(sale.id)}`));
+    out.push(barcode(tillRef(sale.id)));
   }
   out.push(fmtDateTime(new Date(sale.created_at)));
   out.push(`Served by: ${sale.cashier_name}`);

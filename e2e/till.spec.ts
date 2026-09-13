@@ -8773,3 +8773,63 @@ test("the phone offers to install itself, even though the browser made the offer
   expect(manifest.orientation).toBe("any");
   expect(manifest.display).toBe("standalone");
 });
+
+test("a sale taken offline prints a till reference the counter can scan, and it opens the invoice once the line is back", async ({ page }) => {
+  // The number is issued by the server, so an offline slip has none — and it
+  // said "pending sync" and carried no barcode. A customer back at the
+  // counter with it had nothing to scan and nothing to quote. Now the slip
+  // carries a till reference, as text and as bars; scanned while the sale is
+  // still on this till it says so, and once the sale is in it opens the
+  // invoice the server numbered.
+  await pairAndSignIn(page);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Invoice No: issued when the line returns");
+  await expect(slip).toContainText(/Till ref: TR-[0-9A-F]{8}/);
+  await expect(slip).not.toContainText("pending sync");
+  const ref = (await slip.locator("[data-barcode]").getAttribute("data-barcode"))!;
+  expect(ref).toMatch(/^TR-[0-9A-F]{8}$/);
+  await expect(slip).toContainText(`Till ref: ${ref}`);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // Scanned back while the line is still down: the sale is here, not there.
+  await page.getByPlaceholder(/Scan barcode/i).fill(ref);
+  await page.keyboard.press("Enter");
+  await expect(banner(page)).toContainText(/still on this till, waiting for the line/i);
+
+  // The line returns and the sale goes in with its reference; the same scan
+  // now opens the invoice the server numbered.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 45_000 }).toBe(1);
+  expect(be.storedSales[0].client_ref?.replace(/-/g, "").slice(0, 8).toUpperCase()).toBe(ref.slice(3));
+  await page.getByPlaceholder(/Scan barcode/i).fill(ref.toLowerCase());
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: "Sale INV-000001" })).toBeVisible();
+});
+
+test("Manage with the line down says so in words, before and after the PIN", async ({ page }) => {
+  // It said "TypeError: Failed to fetch" — a sentence about the browser, to
+  // a manager who wanted to know whether to try again. The gate says why it
+  // is shut before the PIN is typed, and a try lands as plain words.
+  await pairAndSignIn(page, USERS.manager.pin);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  await expect(gate).toContainText(/A PIN is checked on the server, so this needs a connection/);
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  const alert = gate.getByRole("alert");
+  await expect(alert).toContainText("No connection to the server. Try again when the line is back.");
+  await expect(alert).not.toContainText(/TypeError|Failed to fetch/);
+});

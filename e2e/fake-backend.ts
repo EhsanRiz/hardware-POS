@@ -1552,13 +1552,19 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_sale_by_number": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const want = String(body.p_doc_number ?? "").trim().toUpperCase();
-        const idx = be.sales.findIndex((_, i) => "INV-" + String(i + 1).padStart(6, "0") === want);
+        // 0095: an offline slip's till reference is the first eight hex
+        // digits of the sale's client_ref, and finds the invoice by them.
+        const tr = want.match(/^TR-?([0-9A-F]{8})$/);
+        const idx = tr
+          ? be.sales.findIndex((x) =>
+              (x.client_ref ?? "").replace(/-/g, "").slice(0, 8).toUpperCase() === tr[1])
+          : be.sales.findIndex((_, i) => "INV-" + String(i + 1).padStart(6, "0") === want);
         if (idx < 0) return json(null);
         const x = be.sales[idx];
         const r2 = (n: number) => Math.round(n * 100) / 100;
         // The same row the Sales screen lists, so a reprint has every figure.
         return json({
-          id: "s" + idx, doc_number: want,
+          id: "s" + idx, doc_number: "INV-" + String(idx + 1).padStart(6, "0"),
           created_at: x.created_at ?? new Date().toISOString(),
           cashier_name: Object.values(USERS).find((u) => u.row.id === x.cashier_id)?.row.name ?? "",
           customer_name: be.customers.find((c) => c.id === x.customer_id)?.name ?? null,

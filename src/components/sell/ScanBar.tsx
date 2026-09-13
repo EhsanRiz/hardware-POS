@@ -110,6 +110,14 @@ export default function ScanBar({
       inputRef.current?.focus();
       return;
     }
+    // The reference an offline slip carries instead (receipt.ts, tillRef).
+    const ref = q.match(/^TR-?([0-9A-F]{8})$/i);
+    if (ref) {
+      onDocument(`TR-${ref[1].toUpperCase()}`);
+      onTermChange("");
+      inputRef.current?.focus();
+      return;
+    }
     // An exact barcode or SKU is unambiguous — treat it as a scan, whatever
     // else the fuzzy search turned up. The gun types a code and presses Enter;
     // putting a dialog in front of that would halve the speed of the counter.

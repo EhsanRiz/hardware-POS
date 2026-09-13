@@ -35,9 +35,11 @@ check('zero -> minimum',      clampQty(0, false),    1);
 check('negative -> minimum',  clampQty(-5, true),    0.5);
 check('sub-gram precision',   clampQty(0.7554, true), 0.755);
 
-// The receipt must never invent an invoice number for an unsynced sale.
-const hasPendingBranch = src.includes('Invoice No: pending sync');
-console.log(`${hasPendingBranch ? 'PASS' : 'FAIL'}  offline slip says "pending sync" not a fake number`);
+// The receipt must never invent an invoice number for an unsynced sale: it
+// says the number follows, and carries a till reference (TR-) instead.
+const hasPendingBranch =
+  src.includes('Invoice No: issued when the line returns') && src.includes('Till ref: ${tillRef(sale.id)}');
+console.log(`${hasPendingBranch ? 'PASS' : 'FAIL'}  offline slip says the number follows, and prints a till reference, not a fake number`);
 results.push(hasPendingBranch);
 
 // VAT must come from the stored figure, never recomputed at print time.

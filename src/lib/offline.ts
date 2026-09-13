@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { errorMessage, errorName } from "./errors";
+import { errorName, rawErrorMessage } from "./errors";
 import { API_BASE } from "./supabase";
 
 // Network status. navigator.onLine is a coarse and often UNRELIABLE signal on
@@ -147,7 +147,7 @@ export function isNetworkError(err: unknown): boolean {
   if (!isOnline()) return true;
   const name = errorName(err);
   if (name === "AbortError" || name === "TypeError") return true;
-  const m = errorMessage(err, "").toLowerCase();
+  const m = rawErrorMessage(err, "").toLowerCase();
   if (!m) return false;
   return (
     m.includes("failed to fetch") ||

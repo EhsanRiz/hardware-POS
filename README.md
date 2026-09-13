@@ -319,7 +319,12 @@ What still works with no line, from what the device kept:
 - **Signing in**, against the PIN hashes cached at the last online sign-in.
 - **Selling**: the catalogue and the customer list are cached; a sale is
   queued (`src/lib/queue.ts`) and replayed exactly once by `src/lib/sync.ts`
-  under its `client_ref`, with the time it was taken; the slip prints.
+  under its `client_ref`, with the time it was taken; the slip prints. The
+  invoice number is issued by the server at sync, so two tills never issue
+  the same one; until then the slip says so and carries a **till reference**
+  (`TR-` and eight hex digits of the `client_ref`) as text and as a barcode.
+  Scanned back while the sale is still on the till, the box says so; once
+  the sale is in, the scan opens the numbered invoice (0095).
 - **Parking a sale**, on this till, until the line returns.
 - **Marking a delivery off on a phone** (0094): the list it last saw stands,
   the tap queues, the row says "will sync", and the server keeps the time the
@@ -328,7 +333,10 @@ What still works with no line, from what the device kept:
 
 What refuses, and says so: returns, voids, account payments, cash-up, Manage,
 TillAI, and receiving stock on a phone — each needs a PIN proved on the
-server, and the device never stores one it could replay.
+server, and the device never stores one it could replay. A PIN gate says
+this before the PIN is typed, and a request that dies on the line reads
+"No connection to the server" rather than the browser's own TypeError
+(`errorMessage` in `src/lib/errors.ts`).
 
 ## Fixing a buyer at the counter
 
