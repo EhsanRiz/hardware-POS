@@ -270,7 +270,7 @@ export default function Admin({
     // viewport, so the bottom of the last card sat underneath it with no way to
     // scroll clear. The dynamic unit tracks the chrome as it comes and goes.
     <div className="fixed inset-0 h-[100dvh] bg-paper z-40 flex flex-col">
-      <header className="flex items-center gap-2 px-4 py-3 bg-colophon">
+      <header className="flex items-start sm:items-center gap-2 px-4 py-3 bg-colophon flex-wrap">
         {/* On a phone the tabs collapse behind this burger. A strip of seven
             scrolled sideways there, and the far tabs — Staff and Shop, the
             ones a manager pulls a phone out FOR — were three screen-widths
@@ -300,13 +300,19 @@ export default function Admin({
             {tabs.find((t) => t.key === tab)?.label}
           </span>
         </span>
-        {/* Built for a tablet, then opened on a manager's phone — where seven
-            tabs do not fit, "Bulk import" wrapped onto two lines, and Staff and
-            Shop were off the right-hand edge with nothing to say so. The row
-            scrolls now: min-w-0 lets it shrink below its content so the
-            overflow actually engages, and nothing inside it wraps. Under sm it
-            yields to the burger above instead. */}
-        <nav className="hidden sm:flex gap-1 ml-1 min-w-0 overflow-x-auto">
+        {/* Twelve sections, and they WRAP rather than scroll.
+            This was an overflow-x strip, which on Windows draws a permanent
+            grey scrollbar with a pair of arrows across the top of the shop's
+            own admin screen — and a horizontal scrollbar is the ugliest
+            control on any desktop. It also hid the far tabs behind a gesture
+            nobody makes with a mouse.
+
+            Wrapping costs a second row of header at the widths where twelve
+            tabs do not fit on one, and buys every section visible at a glance
+            and one tap away. Under sm they yield to the burger above instead,
+            where a phone is better served by a list than by two rows of
+            twelve. */}
+        <nav className="hidden sm:flex flex-wrap gap-x-1 gap-y-1 ml-1 min-w-0">
           {tabs.map((t) => (
             <button
               key={t.key}

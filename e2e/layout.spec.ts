@@ -454,6 +454,49 @@ test.describe("the shop's own till", () => {
       expect(hidden, "payment panel content hidden below the fold").toBeLessThanOrEqual(1);
     });
 
+    test("a basket reads as a list, not as a page of posters", async ({ page }) => {
+      await signedIn(page);
+      // Nine items is an ordinary Saturday morning, and at the counter the job
+      // of a row is to be read DOWN at a glance — not studied one at a time.
+      // Each line was 84px of 15px type over a 42px photograph with three
+      // wrapped lines of metadata under it, so four items filled the screen.
+      const m = await page.evaluate(() => {
+        const row = document.querySelector(".line-row") as HTMLElement;
+        const meta = row.querySelector(".line-meta") as HTMLElement;
+        const scroll = document.querySelector(".lines-scroll") as HTMLElement;
+        const h = row.getBoundingClientRect().height;
+        return {
+          row: h,
+          meta: meta.getBoundingClientRect().height,
+          fits: Math.floor(scroll.clientHeight / h),
+        };
+      });
+      expect(m.row, "height of one line of the sale").toBeLessThanOrEqual(72);
+      // The metadata is ONE line. A SKU, a bin and a running stock count wrapped
+      // to three, which made the small print taller than the name above it.
+      expect(m.meta, "height of the metadata under a line").toBeLessThanOrEqual(20);
+      // And the point of all of it: more of the basket on the screen at once.
+      expect(m.fits, "lines visible without scrolling").toBeGreaterThanOrEqual(4);
+    });
+
+    test("the second rule of the total stays off the figure", async ({ page }) => {
+      await signedIn(page);
+      // The accountant's double rule draws its second hairline 11px BELOW
+      // itself, and used to reserve no room for it — 11 of the 26px gap under
+      // it were silently the rule's own. Nothing showed that until the till was
+      // fitted to a short screen and the gap came down: then the line was drawn
+      // straight through the total. Measured against where the second hairline
+      // actually lands, not against the element's own 1px box.
+      const gap = await page.evaluate(() => {
+        const rule = document.querySelector(".double-rule") as HTMLElement;
+        const fig = document.querySelector(".total-row .fig") as HTMLElement;
+        const style = getComputedStyle(rule, "::after");
+        const second = rule.getBoundingClientRect().top + parseFloat(style.top || "0");
+        return fig.getBoundingClientRect().top - (second + 1);
+      });
+      expect(gap, "clearance between the second rule and the total").toBeGreaterThan(0);
+    });
+
     test("and the keys are still worth pressing", async ({ page }) => {
       await signedIn(page);
       // The pixels came from somewhere, and this says where they may not come

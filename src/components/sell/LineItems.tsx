@@ -111,8 +111,16 @@ export default function LineItems({
                   <span className="line-rate">
                     @ {money(priceOf(l), { currency: false })}/{p.unit_code} ·{" "}
                   </span>
-                  {fresh ? "just scanned · " : `${p.sku} · `}
-                  {p.bin ? `bin ${p.bin} · ` : ""}
+                  {/* The identifying half, and the half that gives way. A
+                      SKU and a bin are how you find the thing on a shelf; the
+                      stock count beside them is how you find out you cannot
+                      sell it. When the row is too narrow for both, the count
+                      is the one that must survive, so it truncates and the
+                      count does not. */}
+                  <span className="line-meta-id">
+                    {fresh ? "just scanned · " : `${p.sku} · `}
+                    {p.bin ? `bin ${p.bin} · ` : ""}
+                  </span>
                   {stockAfter != null ? (
                     // The stock this line CONSUMES, shown as it happens. The
                     // handoff is explicit that stock is a consequence, never a
@@ -125,7 +133,7 @@ export default function LineItems({
                       {quantity(stockAfter, "")}
                     </span>
                   ) : (
-                    "not stock-tracked"
+                    "not tracked"
                   )}
                 </span>
                 </span>

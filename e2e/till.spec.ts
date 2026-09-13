@@ -7702,6 +7702,53 @@ test("the printed slip fits the paper instead of losing its right-hand column", 
   await page.emulateMedia({ media: "screen" });
 });
 
+test("Manage shows every section without a scrollbar across the top", async ({ page }) => {
+  // Twelve sections in a strip that scrolled sideways. On Windows that draws a
+  // permanent grey scrollbar with a pair of arrows across the top of the
+  // shop's own admin screen — the ugliest control on any desktop — and it hid
+  // the far tabs behind a gesture nobody makes with a mouse. They wrap now.
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  // Scoped to Manage's own header: the till's section bar is still in the
+  // document behind this overlay and answers to the same selector.
+  const nav = page.locator("header:has(h1:text-is('Manage')) nav");
+  await expect(nav).toBeVisible();
+
+  const measure = () =>
+    nav.evaluate((n) => {
+      const w = document.documentElement.clientWidth;
+      const buttons = [...n.querySelectorAll<HTMLElement>("button")];
+      return {
+        overflow: n.scrollWidth - n.clientWidth,
+        count: buttons.length,
+        offRight: buttons.filter((b) => b.getBoundingClientRect().right > w + 1).length,
+        rows: new Set(buttons.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      };
+    });
+
+  const wide = await measure();
+  // Enough sections that this is a real test of the arrangement.
+  expect(wide.count, "sections on the Manage bar").toBeGreaterThanOrEqual(10);
+  expect(wide.overflow, "sideways overflow at 1024").toBeLessThanOrEqual(0);
+  expect(wide.offRight, "sections off the right-hand edge at 1024").toBe(0);
+
+  // AND at a width where a single row cannot hold them, which is the case the
+  // arrangement actually has to answer. At 1024 the header's own wrap hands the
+  // strip a full row of its own and twelve tabs very nearly fit it — so 1024
+  // alone passes whether these wrap or scroll, and did. Here they must wrap.
+  await page.setViewportSize({ width: 820, height: 768 });
+  const narrow = await measure();
+  expect(narrow.rows, "rows the sections occupy at 820").toBeGreaterThanOrEqual(2);
+  expect(narrow.overflow, "sideways overflow at 820").toBeLessThanOrEqual(0);
+  expect(narrow.offRight, "sections off the right-hand edge at 820").toBe(0);
+
+  // And the far ones are reachable, which is what the scroll strip cost.
+  await page.getByRole("button", { name: "Shop", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Printing/i })).toBeVisible();
+});
+
 test("asking for the invoice details brings them to the cashier", async ({ page }) => {
   // They sit under the keypad, at the bottom of the column that scrolls. On a
   // counter screen unfolding them put them below the fold: the cashier tapped
