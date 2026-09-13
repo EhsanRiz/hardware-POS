@@ -5151,4 +5151,92 @@ begin
   delete from public.app_users where id = v_new;
 end $$;
 
+-- 0089: a sale is posted by a cashier ---------------------------------------
+--
+-- Three checks pos_create_sale had in 0019 and lost in 0039: the cashier
+-- must be enrolled and allowed to take payments, the client_ref lookup is
+-- the shop's own, and the sale's date is within reason.
+
+do $$
+declare
+  v_tok text; v_tok_b text; v_org_b uuid; v_mgr_b uuid; v_invited uuid; v_emp uuid;
+  v_prod uuid; v_prod_b uuid; v_price numeric; v_sale public.sales; v_sale2 public.sales;
+  v_ref uuid := gen_random_uuid(); v_del public.deliveries; v_items jsonb; v_pay jsonb;
+begin
+  select token into v_tok from till;
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
+  v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
+
+  -- A cashier who can sign in, and one who is on the list but never enrolled.
+  select id into v_emp from public.pos_admin_invite_user(
+    v_tok, '1234', 'Cashier 89', '+27820000089', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('8989', gen_salt('bf')) where id = v_emp;
+  select id into v_invited from public.pos_admin_invite_user(
+    v_tok, '1234', 'Never enrolled', '+27820000090', 'employee'::user_role, array[]::text[]);
+
+  -- The enrolled cashier posts; the same call under the invitee's id is refused.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay, p_client_ref => v_ref);
+  perform assert_eq(v_sale.cashier_id, v_emp, 'an enrolled cashier posts a sale');
+  perform assert_refuses(
+    format('select public.pos_create_sale(p_register_token => %L, p_cashier_id => %L, p_items => %L::jsonb, p_payment_method => %L, p_payments => %L::jsonb)',
+           v_tok, v_invited, v_items::text, 'cash', v_pay::text),
+    'a sale under the name of somebody who never enrolled');
+
+  -- The date is the till's own, within reason: an offline sale keeps its
+  -- time, a sale dated into last quarter or next week is filed today.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay,
+    p_created_at => now() - interval '2 hours');
+  perform assert(v_sale.created_at between now() - interval '3 hours' and now() - interval '1 hour',
+    'an offline sale replayed later keeps its own time');
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay,
+    p_created_at => now() - interval '60 days');
+  perform assert(v_sale.created_at > now() - interval '1 minute',
+    'a sale dated two months back is filed today');
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay,
+    p_created_at => now() + interval '2 days');
+  perform assert(v_sale.created_at < now() + interval '1 minute',
+    'a sale dated next week is filed today');
+
+  -- The same client_ref in another shop is that shop's own sale, never the
+  -- first shop's row handed back.
+  v_org_b := public.innova_create_org('Ref Shop B', 'B Manager', '+27820000091');
+  perform public.auth_set_pin('+27820000091', '919191');
+  select id into v_mgr_b from public.app_users where org_id = v_org_b;
+  select token into v_tok_b from public.pos_pair_register('+27820000091', '919191', 'B till');
+  insert into public.products (org_id, sku, name, unit_code, price_retail, tax_code, active)
+    select v_org_b, 'B-REF', 'B item', p.unit_code, 10, p.tax_code, true
+      from public.products p where p.id = v_prod
+    returning id into v_prod_b;
+  v_sale2 := public.pos_create_sale(p_register_token => v_tok_b, p_cashier_id => v_mgr_b,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_b, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10)),
+    p_client_ref => v_ref);
+  perform assert_eq(v_sale2.org_id, v_org_b, 'a matching client_ref in another shop is that shop''s sale');
+  perform assert(v_sale2.client_ref = v_ref, 'with the ref it asked for');
+
+  -- Deliveries: created by somebody who may take payments, marked off by
+  -- anybody who can sign in — and "can sign in" means enrolled.
+  perform assert_refuses(
+    format('select public.pos_create_delivery(%L, %L, %L, %L, %L, %L::date)',
+           v_tok, v_invited, v_sale.id, 'T. Mokoena', '14 Mabille Rd', current_date),
+    'a delivery created under the name of somebody who never enrolled');
+  v_del := public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'T. Mokoena', '14 Mabille Rd', current_date);
+  perform assert(v_del.id is not null, 'and by an enrolled cashier');
+  perform assert_refuses(
+    format('select public.pos_mark_delivered(%L, %L, %L)', v_tok, v_invited, v_del.id),
+    'marked delivered by somebody who never enrolled');
+  v_del := public.pos_mark_delivered(v_tok, v_emp, v_del.id);
+  perform assert(v_del.delivered_at is not null, 'and marked off by an enrolled cashier');
+
+  delete from public.app_users where id = v_invited;
+end $$;
+
 select 'all database tests passed' as result;
