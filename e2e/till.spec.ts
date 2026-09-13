@@ -3228,6 +3228,37 @@ test("an old slip reprints from the sales list", async ({ page }) => {
   await expect(slip).toContainText(/tax invoice/i);
 });
 
+test("a buyer's name with printer bytes and markup in it prints as their name", async ({ page }) => {
+  // The slip is one string, and the preview reads control characters in it
+  // as its own markup: byte 5 opens a barcode region, and whatever followed
+  // it was handed to innerHTML inside an attribute. A name pasted with that
+  // byte in it — from a CSV, from a clipboard — became script on the till's
+  // own origin, and the same bytes, straight to the printer, are the drawer
+  // kick and the cut. So every string a slip is built from loses its
+  // control characters first, and the rest of the name prints as text.
+  be.customers.push({
+    id: "k7", code: null,
+    name: "Danger Mokoena\x05\">\u200b<img src=x onerror=\"document.title='pwned'\">\x06 & Sons\x1bp\x00",
+    phone: "0835550177", is_trade: false, credit_limit: 0, balance: 0, available: 0,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "Danger Mokoena" }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText(/INV-\d+/);
+  // The markup is on the paper as letters, the invoice's barcode is the only
+  // barcode, and nothing ran.
+  await expect(slip).toContainText('Customer: Danger Mokoena"><img src=x onerror="document.title=\'pwned\'"> & Sonsp');
+  await expect(slip.locator("img")).toHaveCount(0);
+  await expect(slip.locator("[data-barcode]")).toHaveCount(1);
+  expect(await page.evaluate(() => document.title)).not.toBe("pwned");
+});
+
 test("a buyer's address is kept, and the slip carries their name next time", async ({ page }) => {
   await pairAndSignIn(page);
 

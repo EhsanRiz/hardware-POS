@@ -45,6 +45,25 @@ for (let i = 0; i + 5 < bytes.length; i++) {
 }
 check("the Code 128 bars are still emitted", hasBars);
 
+
+console.log("--- print: control bytes in a name ---");
+// A product named with ESC p (drawer kick), GS V (cut) and a bell must print
+// as its letters and nothing else: no byte below a space but the newline.
+const evil = buildEscPos("Cement\x1bp\x00\x07 bag\x1dV\x00\nNext");
+// Legitimate ESC/POS the builder itself emits (init, size, alignment) sits at
+// the start and around the barcode; a name's bytes are between the letters.
+const textStart = evil.indexOf("C".charCodeAt(0));
+const textEnd = evil.lastIndexOf("t".charCodeAt(0));
+const inText = evil.slice(textStart, textEnd + 1).filter((b) => b < 0x20 && b !== 0x0a);
+check("no control byte from a name reaches the printer", inText.length === 0, `saw ${inText.map((b) => b.toString(16)).join(" ")}`);
+check("the letters around them still print", String.fromCharCode(...evil.slice(textStart, textStart + 6)) === "Cement");
+
+const withBar = buildEscPos("\x05INV\x01-1\x06");
+const k = withBar.indexOf(0x6b); // GS k 73 n, then "{B" + data
+const n = withBar[k + 2];
+const payload = withBar.slice(k + 3, k + 3 + n);
+check("a barcode region keeps only printable ASCII", payload.every((b) => b >= 0x20 && b <= 0x7e), payload.join(","));
+
 const failed = results.filter((r) => !r).length;
 if (failed) {
   console.error(`\n${failed} check(s) failed`);

@@ -98,7 +98,9 @@ function textToBytes(s: string): number[] {
       // number on its own line above, and it appeared twice. Character size
       // is reset around it so the enlarged font does not stretch the bars.
       const end = norm.indexOf("\x06", i + 1);
-      const data = norm.slice(i + 1, end < 0 ? norm.length : end);
+      // Code 128 B is printable ASCII; anything else in the region is not a
+      // document number and must not reach the printer as a command.
+      const data = norm.slice(i + 1, end < 0 ? norm.length : end).replace(/[^\x20-\x7e]/g, "");
       out.push(GS, 0x21, 0x00); // size normal
       out.push(ESC, 0x61, 0x01); // centre
       out.push(GS, 0x48, 0x00); // no HRI
@@ -119,6 +121,12 @@ function textToBytes(s: string): number[] {
       out.push(ESC, 0x2d, 0x01); // underline marker -> underline on
     } else if (c === 0x04) {
       out.push(ESC, 0x2d, 0x00); // underline marker -> underline off
+    } else if (c < 0x20 && c !== 0x0a) {
+      // ESC, GS and the rest are the printer's own commands. The builders
+      // strip them from every string they are handed; this is the last
+      // door, so a byte that got this far still does not open the drawer or
+      // cut the slip. Newlines are the one control character a slip needs.
+      continue;
     } else {
       out.push(c < 256 ? c : 63); // '?' for anything unexpected
     }

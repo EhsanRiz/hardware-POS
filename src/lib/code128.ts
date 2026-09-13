@@ -23,6 +23,17 @@ const PATTERNS = [
 const START_B = 104;
 const STOP = 106;
 
+/**
+ * A string as an HTML attribute value. This markup is handed to innerHTML,
+ * so the text — a document number, but in principle whatever sat between
+ * the barcode markers — must not be able to close the quote.
+ */
+function attr(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
+  );
+}
+
 /** The symbol values for a string, check digit included. */
 export function code128Values(text: string): number[] {
   const values = [START_B];
@@ -56,7 +67,7 @@ export function code128Svg(text: string, mod = 2, height = 48): string {
   });
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${total * mod}" height="${height}" ` +
-    `viewBox="0 0 ${total * mod} ${height}" shape-rendering="crispEdges" role="img" aria-label="Barcode ${text}">` +
+    `viewBox="0 0 ${total * mod} ${height}" shape-rendering="crispEdges" role="img" aria-label="Barcode ${attr(text)}">` +
     `<rect width="100%" height="100%" fill="#fff"/><g fill="#000">${rects.join("")}</g></svg>`
   );
 }

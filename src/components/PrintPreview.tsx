@@ -41,15 +41,31 @@ function renderMarkup(text: string): ReactNode[] {
       // Inside a barcode marker: collect the number, draw it at the close.
       if (code === 6) {
         flush();
+        // Code 128 B cannot encode anything outside printable ASCII, and
+        // throwing here would take the whole till to the error screen at
+        // the moment of tendering. The builders keep such text out of the
+        // markers; if it gets here anyway, it prints as text, not as a crash.
+        let svg: string | null = null;
+        try {
+          svg = code128Svg(bar);
+        } catch {
+          svg = null;
+        }
         nodes.push(
-          <span
-            key={key++}
-            className="block text-center py-1"
-            data-barcode={bar}
-            // Bars only. The number is already on the line above the barcode,
-            // and printing it again beneath read as the invoice number twice.
-            dangerouslySetInnerHTML={{ __html: code128Svg(bar) }}
-          />
+          svg ? (
+            <span
+              key={key++}
+              className="block text-center py-1"
+              data-barcode={bar}
+              // Bars only. The number is already on the line above the barcode,
+              // and printing it again beneath read as the invoice number twice.
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          ) : (
+            <span key={key++} className="block text-center py-1">
+              {bar}
+            </span>
+          )
         );
         bar = null;
         afterBar = true;

@@ -129,6 +129,39 @@ const MARKUP_RE = new RegExp(
   "[" + BOLD_ON + BOLD_OFF + UL_ON + UL_OFF + BAR_ON + BAR_OFF + "]",
   "g"
 );
+
+/**
+ * Text as somebody typed it, with the control characters taken out.
+ *
+ * The markers above are control characters, and so are the printer's own
+ * commands (ESC, GS). A product name, a buyer's name or a discount reason
+ * that carried one — pasted into a CSV import, typed at the counter — was
+ * concatenated into the slip as it stood, where the preview read it as a
+ * barcode region and put whatever followed into an HTML attribute, and
+ * the printer read it as a drawer-kick or a cut. Nothing a person can want
+ * on a slip needs a byte below a space, so every string a builder is
+ * handed goes through here before it is laid out. Newlines survive: an
+ * address is several lines, and the builders split on them.
+ */
+const CONTROL_RE = /[\x00-\x09\x0b-\x1f\x7f]/g;
+export function plain(s: string): string {
+  return s.replace(CONTROL_RE, "");
+}
+/** `plain` applied through arrays and plain objects, leaving anything else. */
+export function scrub<T>(v: T): T {
+  if (typeof v === "string") return plain(v) as unknown as T;
+  if (Array.isArray(v)) return v.map(scrub) as unknown as T;
+  if (v && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = scrub(x);
+    return out as T;
+  }
+  return v;
+}
+/** The shop's own settings, held to the same rule: they are typed in Manage. */
+function settings() {
+  return scrub(shopSettings());
+}
 /**
  * A paragraph of small print, folded to the paper.
  *
@@ -217,7 +250,7 @@ function unitRate(unitPrice: number, unitCode: string): string {
 // and VAT registration number on the face of the document. So the name is
 // printed, in bold, as the first thing on the slip.
 function shopHeader(out: string[], title: string): void {
-  const s = shopSettings();
+  const s = settings();
   if (s.shop_name) out.push(bold(center(s.shop_name)));
   for (const line of [s.address_line1, s.address_line2].filter(Boolean)) {
     out.push(center(line));
@@ -242,6 +275,10 @@ export function buildReceiptText(
   customer?: { name: string; balance: number } | null,
   payments?: Payment[] | null
 ): string {
+  sale = scrub(sale);
+  items = scrub(items);
+  customer = scrub(customer);
+  payments = scrub(payments);
   const out: string[] = [];
   shopHeader(out, "TAX INVOICE");
   out.push("");
@@ -372,7 +409,7 @@ export function buildReceiptText(
 
   // The returns policy, on the paper the customer brings back. The sign
   // behind the counter is not in their kitchen drawer; the slip is.
-  termsBlock(out, shopSettings().receipt_terms);
+  termsBlock(out, settings().receipt_terms);
 
   out.push("");
   out.push(center("Thank you"));
@@ -384,7 +421,7 @@ export function buildReceiptText(
 
 /** The shop's account, for somebody who still has to pay it. */
 function bankingBlock(out: string[]): void {
-  const s = shopSettings();
+  const s = settings();
   const rows: [string, string][] = [
     ["Bank", s.bank_name ?? ""],
     ["Account name", s.bank_account_name ?? ""],
@@ -425,6 +462,8 @@ export interface QuoteTextLine {
 
 /** The till's cart as quote lines, priced the way the customer is priced. */
 export function cartQuoteLines(lines: CartLine[], trade: boolean): QuoteTextLine[] {
+  lines = scrub(lines);
+  trade = scrub(trade);
   return lines.map((l) => ({
     name: l.product.name,
     unit_code: l.product.unit_code,
@@ -470,9 +509,11 @@ export function buildQuoteText(
     showLinePrices?: boolean;
   }
 ): string {
+  lines = scrub(lines);
+  opts = scrub(opts);
   const out: string[] = [];
   const priced =
-    opts.showLinePrices ?? shopSettings().quote_show_line_prices !== false;
+    opts.showLinePrices ?? settings().quote_show_line_prices !== false;
   shopHeader(out, "QUOTE");
   out.push("");
   if (opts.docNumber) {
@@ -545,7 +586,7 @@ export function buildQuoteText(
   }
   // Its own small print, not the invoice's: nothing has been sold yet, so a
   // returns policy is beside the point and "subject to stock" is the point.
-  termsBlock(out, shopSettings().quote_terms);
+  termsBlock(out, settings().quote_terms);
   out.push("");
   out.push("");
   return out.join("\n");
@@ -565,6 +606,10 @@ export function buildStatementText(
   balance: number,
   aging: { current: number; days30: number; days60: number; days90: number }
 ): string {
+  who = scrub(who);
+  entries = scrub(entries);
+  balance = scrub(balance);
+  aging = scrub(aging);
   const out: string[] = [];
   shopHeader(out, "ACCOUNT STATEMENT");
   out.push("");
@@ -621,6 +666,7 @@ export function buildStatementText(
  * end of a long day.
  */
 export function buildCashUpText(s: CashSession): string {
+  s = scrub(s);
   const out: string[] = [];
   const f = s.figures;
   shopHeader(out, "CASH-UP");
@@ -735,6 +781,9 @@ export function buildCashUpText(s: CashSession): string {
  * what the owner pins to the banking bag.
  */
 export function buildDayCloseText(d: DayClose, from: Date, to: Date): string {
+  d = scrub(d);
+  from = scrub(from);
+  to = scrub(to);
   const out: string[] = [];
   const t = d.totals;
   shopHeader(out, "DAY CLOSE");
@@ -858,6 +907,7 @@ export function buildCreditNoteText(cn: {
   by_name: string;
   items: { name: string; unit_code: string; qty: number; line_total: number; restock: boolean }[];
 }): string {
+  cn = scrub(cn);
   const out: string[] = [];
   shopHeader(out, "CREDIT NOTE");
   out.push("");
