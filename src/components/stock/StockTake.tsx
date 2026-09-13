@@ -209,7 +209,7 @@ export default function StockTake({
           </button>
           <input
             ref={finder}
-            className="acc-search"
+            className="modal-input acc-search"
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={(e) => {
@@ -272,9 +272,9 @@ export default function StockTake({
                     <span className="acc-name">{l.name}</span>
                     <span className="acc-sub">{l.sku ?? "—"}</span>
                   </td>
-                  <td className="quiet">{l.bin ?? "—"}</td>
-                  <td className="num quiet">{fmtQty(l.expected_qty)} {l.unit_code}</td>
-                  <td className="num">
+                  <td className="quiet" data-label="Bin">{l.bin ?? "—"}</td>
+                  <td className="num quiet" data-label="Expected">{fmtQty(l.expected_qty)} {l.unit_code}</td>
+                  <td className="num" data-label="Counted">
                     <input
                       className="modal-input"
                       style={{ maxWidth: 96, textAlign: "right" }}
@@ -297,7 +297,7 @@ export default function StockTake({
                       }}
                     />
                   </td>
-                  <td className={`num${v ? " is-bad" : ""}`}>
+                  <td className={`num${v ? " is-bad" : ""}`} data-label="Difference">
                     {v == null ? "—" : v === 0 ? "agrees" : `${v > 0 ? "+" : ""}${fmtQty(v)}`}
                     {v != null && v !== 0 && l.variance_value != null && (
                       <span className="acc-sub">
@@ -355,7 +355,7 @@ export default function StockTake({
 
       <div className="stock-receive-bar">
         <select
-          className="acc-search"
+          className="modal-input acc-search"
           value={newDept}
           onChange={(e) => setNewDept(e.target.value)}
           aria-label="Department"

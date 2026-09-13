@@ -50,8 +50,8 @@ export default function ManagerPinModal({
         )}
         {!online && (
           <p className="text-amber-700 text-center text-sm mb-3 pin-needs-line" role="status">
-            The line is down. A PIN is checked on the server, so this needs a
-            connection — selling and printing carry on without one.
+            The line is down. Your PIN is checked against what this device
+            already knows, and a screen that needs the server will say so.
           </p>
         )}
         <PinPad onSubmit={handle} busy={busy} />

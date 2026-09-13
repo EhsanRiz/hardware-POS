@@ -342,12 +342,23 @@ What still works with no line, from what the device kept:
   page was signed rather than the moment the phone found signal.
 - Error reports queue too.
 
-What refuses, and says so: returns, voids, account payments, cash-up, Manage,
-TillAI, and receiving stock on a phone — each needs a PIN proved on the
-server, and the device never stores one it could replay. A PIN gate says
-this before the PIN is typed, and a request that dies on the line reads
-"No connection to the server" rather than the browser's own TypeError
-(`errorMessage` in `src/lib/errors.ts`).
+- **The Deliveries list**, kept from sign-in and whenever the line returns
+  (`refreshDeliveriesCache`), so the morning's loads are there whether or
+  not the tab was opened before the line dropped.
+- **The Manage door**: the PIN is checked against the device's own
+  credential cache (the same one sign-in uses), so the back office opens;
+  one line at the top says the line is down, and a section that needs the
+  server says so in its own words.
+
+What refuses, and says so: returns, voids, account payments, cash-up, every
+back-office change, TillAI, and receiving stock on a phone — each needs the
+server, which checks the PIN itself on every call. A request that dies on
+the line reads "No connection to the server" rather than the browser's own
+TypeError (`errorMessage` in `src/lib/errors.ts`).
+
+On a phone, the back-office lists (Deliveries, the stock room) are cards
+rather than tables: `data-label` on a cell is the heading it stands under,
+and the rule in `sell.css` under `.phone-body` does the rest.
 
 ## Fixing a buyer at the counter
 

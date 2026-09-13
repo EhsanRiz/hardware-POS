@@ -362,14 +362,14 @@ export default function Stock({ pin }: { pin: string }) {
                           .join(" · ")}
                       </span>
                     </td>
-                    <td className={`num ${isLow ? "is-bad" : ""}`}>
+                    <td className={`num ${isLow ? "is-bad" : ""}`} data-label="On hand">
                       {fmtQty(p.stock_qty!)} {p.unit_code}
                     </td>
-                    <td className="num quiet">
+                    <td className="num quiet" data-label="Reorder at">
                       {p.reorder_level != null ? fmtQty(p.reorder_level) : "—"}
                     </td>
                     {tab === "receive" ? (
-                      <td className="num">
+                      <td className="num" data-label="Received">
                         <input
                           inputMode="decimal"
                           value={delivery.get(p.id) ?? ""}
@@ -480,14 +480,14 @@ function MovementsTable({ moves }: { moves: StockMovementRow[] | null }) {
         )}
         {moves?.map((m, i) => (
           <tr key={i}>
-            <td className="quiet">{when(m.at)}</td>
+            <td className="quiet" data-label="When">{when(m.at)}</td>
             <td><span className="acc-name">{m.product_name}</span></td>
-            <td className={`num ${m.qty_delta < 0 ? "" : "is-late"}`}>
+            <td className={`num ${m.qty_delta < 0 ? "" : "is-late"}`} data-label="Change">
               {m.qty_delta > 0 ? "+" : ""}
               {fmtQty(m.qty_delta)}
             </td>
-            <td className="num quiet">{fmtQty(m.qty_after)}</td>
-            <td>
+            <td className="num quiet" data-label="After">{fmtQty(m.qty_after)}</td>
+            <td data-label="Why">
               <span className="acc-name">{REASON[m.reason] ?? m.reason}</span>
               <span className="acc-sub">
                 {[m.by_name, m.note].filter(Boolean).join(" · ")}

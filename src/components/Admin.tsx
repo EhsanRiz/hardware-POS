@@ -13,6 +13,7 @@ import {
 import { deviceKind } from "../lib/device";
 import { useCamera } from "../lib/useCamera";
 import { errorMessage } from "../lib/errors";
+import { useOnline } from "../lib/offline";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
 import { can } from "../lib/permissions";
@@ -135,6 +136,10 @@ export default function Admin({
   );
   // On a phone the tabs live behind a burger (see the header); this is it.
   const [menuOpen, setMenuOpen] = useState(false);
+  // The line is down: said once, here, rather than as a fetch error on
+  // every section. The door opened against the device's own credential
+  // cache (POS.tsx); what each section can show without the server, it does.
+  const online = useOnline();
   // A supplier another tab asked to see: Reports hands one over and the
   // Suppliers tab opens on its page rather than on the list.
   const [supplierToOpen, setSupplierToOpen] = useState<string | null>(null);
@@ -360,6 +365,12 @@ export default function Admin({
           {deviceKind() === "personal" ? "Back" : "Back to till"}
         </button>
       </header>
+      {!online && (
+        <p className="admin-offline" role="status">
+          The line is down. Changes need a connection, and a section that
+          asks the server will say so — selling and printing carry on at the till.
+        </p>
+      )}
 
       {/* The burger's menu: a compact card under the button, not a screen of
           its own. The page stays visible behind a light scrim — a menu that

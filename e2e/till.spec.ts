@@ -7434,6 +7434,15 @@ test("from the phone, a delivery is marked off and the page never scrolls sidewa
   const box = await page.locator(".phone-screen").boundingBox();
   expect(box!.x + box!.width, "the screen's right edge").toBeLessThanOrEqual(390);
 
+  // A phone reads the list as cards: the table's heading row is gone, each
+  // row stands on its own, and a cell says which column it was.
+  const row = page.locator("tr.acc-row").first();
+  expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("block");
+  expect(await page.locator(".acc-table thead").evaluate((el) => getComputedStyle(el).display)).toBe("none");
+  expect(await row.locator("td[data-label='To']").evaluate(
+    (el) => getComputedStyle(el, "::before").content)).toContain("To");
+  await expect(row).toContainText("14 Mabille Rd, Maseru");
+
   // Marked off through the phone's own token, by the phone's owner.
   await page.getByRole("button", { name: "Delivered" }).first().click();
   await expect.poll(() => be.deliveries[0].status).toBe("delivered");
@@ -7458,6 +7467,12 @@ test("from the phone, the stock room asks the PIN once and then opens", async ({
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
   const width = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(width, "the page's scroll width").toBeLessThanOrEqual(390);
+  // The stock list as cards too, its figures labelled.
+  await page.getByRole("button", { name: "Everything" }).click();
+  const stockRow = page.locator(".acc-table tbody tr").first();
+  expect(await stockRow.evaluate((el) => getComputedStyle(el).display)).toBe("block");
+  expect(await stockRow.locator("td[data-label='On hand']").evaluate(
+    (el) => getComputedStyle(el, "::before").content)).toContain("On hand");
 
   // Back, and in again without the PIN: it is held for the session.
   await page.getByRole("button", { name: "Back" }).click();
@@ -8823,22 +8838,23 @@ test("a sale taken offline prints a till reference the counter can scan, and it 
   await expect(page.getByRole("dialog", { name: "Sale INV-000001" })).toBeVisible();
 });
 
-test("Manage with the line down says so in words, before and after the PIN", async ({ page }) => {
+test("Manage with the line down says so in words, and a wrong PIN is refused in words", async ({ page }) => {
   // It said "TypeError: Failed to fetch" — a sentence about the browser, to
-  // a manager who wanted to know whether to try again. The gate says why it
-  // is shut before the PIN is typed, and a try lands as plain words.
+  // a manager who wanted to know whether to try again. The gate says what
+  // the line being down means before the PIN is typed, and a wrong PIN is
+  // refused against the device's own credential cache, in plain words.
   await pairAndSignIn(page, USERS.manager.pin);
   be.offline = true;
   await page.context().setOffline(true);
   await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /^Manage$/ }).click();
   const gate = page.getByRole("dialog", { name: "Manage" });
-  await expect(gate).toContainText(/A PIN is checked on the server, so this needs a connection/);
-  for (const d of USERS.manager.pin.split("")) {
+  await expect(gate).toContainText(/The line is down/);
+  for (const d of "999999".split("")) {
     await gate.locator(`button:text-is("${d}")`).first().click();
   }
   const alert = gate.getByRole("alert");
-  await expect(alert).toContainText("No connection to the server. Try again when the line is back.");
+  await expect(alert).toContainText(/not known on this device/);
   await expect(alert).not.toContainText(/TypeError|Failed to fetch/);
 });
 
@@ -9034,4 +9050,46 @@ test("on a wide screen the action row sits low, beside the TillAI bubble, and ta
   await page.mouse.up();
   await expect.poll(async () => (await pad()).left).toBeLessThan(60);
   expect(await overlaps()).toBe(false);
+});
+
+
+test("the deliveries a till saw are still there with the line down, even if the tab was never opened", async ({ page }) => {
+  // The tab wrote its own cache, so a till that lost the line before anybody
+  // opened Deliveries showed only what had been arranged offline — the
+  // morning's loads were gone. The list is kept from sign-in now.
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s1", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd, Maseru", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page);
+  await expect.poll(() => be.calls.filter((c) => c.includes("pos_list_deliveries")).length).toBeGreaterThan(0);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Deliveries" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "DEL-000001" })).toContainText("T. Mokoena");
+  // And the find box is a real box: its whole placeholder shows, the count beside it.
+  const box = page.getByPlaceholder(/Find a delivery/);
+  expect((await box.boundingBox())!.width).toBeGreaterThan(240);
+});
+
+test("Manage opens with the line down, against the PIN this device already knows", async ({ page }) => {
+  // The gate said the back office needs a connection and refused every PIN.
+  // The PIN is the same one the device checks for signing in offline, so
+  // the door opens against that; inside, one line says the line is down.
+  await pairAndSignIn(page, USERS.manager.pin);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) await gate.locator(`button:text-is("${d}")`).first().click();
+  // The gate itself has a "Manage" title and a "line is down" status line, so
+  // the proof is the gate GONE and the back office's own notice showing.
+  await expect(gate).toHaveCount(0);
+  await expect(page.locator(".admin-offline")).toContainText(/The line is down/);
+  await expect(page.getByRole("button", { name: "Catalogue" })).toBeVisible();
 });

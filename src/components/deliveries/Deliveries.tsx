@@ -5,6 +5,7 @@ import {
   markDelivered,
   type DeliveryLine,
   type DeliveryRow,
+  DELIVERIES_CACHE_KEY,
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { fmtDate, fmtDateTime } from "../../lib/dates";
@@ -28,7 +29,7 @@ import type { User } from "../../lib/types";
  * Outstanding first, oldest promise at the top: that is the order a driver
  * loads in, and it is the order the server returns.
  */
-const LIST_KEY = "deliveries.list";
+const LIST_KEY = DELIVERIES_CACHE_KEY;
 
 export default function Deliveries({ user }: { user: User }) {
   const online = useOnline();
@@ -193,7 +194,7 @@ export default function Deliveries({ user }: { user: User }) {
     <div className="acc">
       <div className="acc-bar">
         <input
-          className="acc-search"
+          className="modal-input acc-search"
           value={term}
           onChange={(e) => setTerm(e.target.value)}
           placeholder="Find a delivery by number, name, address or invoice"
@@ -244,15 +245,15 @@ export default function Deliveries({ user }: { user: User }) {
                   {d.cashier_name ? ` · by ${d.cashier_name}` : ""}
                 </span>
               </td>
-              <td>
+              <td data-label="To">
                 <span className="acc-name">{d.customer_name}</span>
                 <span className="acc-sub">{d.address}</span>
               </td>
-              <td>
+              <td data-label="When">
                 {fmtDate(d.deliver_on)}
                 {d.deliver_at ? <span className="acc-sub">{d.deliver_at}</span> : null}
               </td>
-              <td>{d.sale_number ?? ""}</td>
+              <td data-label="Invoice">{d.sale_number ?? ""}</td>
               <td className="num">
                 {d.status === "delivered" ? (
                   <span className="acc-sub">

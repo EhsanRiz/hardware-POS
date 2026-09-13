@@ -1030,6 +1030,23 @@ export async function createDelivery(args: {
   return data as DeliveryRow;
 }
 
+/** Where the Deliveries screen keeps the last list the line gave. */
+export const DELIVERIES_CACHE_KEY = "deliveries.list";
+
+/**
+ * Fetch the list and keep it, quietly. Called at sign-in and when the line
+ * returns, so a till that loses the line before anybody opened Deliveries
+ * still has this morning's loads — the tab was showing only what had been
+ * arranged offline, because the cache was written only by the tab itself.
+ */
+export async function refreshDeliveriesCache(): Promise<void> {
+  try {
+    cacheSet(DELIVERIES_CACHE_KEY, await listDeliveries());
+  } catch {
+    // The line, or a token the server no longer honours: the tab says so itself.
+  }
+}
+
 export async function listDeliveries(limit = 100): Promise<DeliveryRow[]> {
   const { data, error } = await supabase.rpc("pos_list_deliveries", {
     p_register_token: requireToken(),

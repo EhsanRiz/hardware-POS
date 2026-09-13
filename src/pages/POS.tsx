@@ -23,6 +23,7 @@ import {
   saveQuote,
   type QuoteLine,
   type QuoteSummary,
+  refreshDeliveriesCache,
 } from "../lib/api";
 import SaleDetail from "../components/SaleDetail";
 import CancelSale, { type CancellableSale } from "../components/CancelSale";
@@ -37,7 +38,7 @@ import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { enqueueAction, listQueue } from "../lib/queue";
 import { commitDocNumber, peekDocNumber, topUpAllDocNumbers, topUpDocNumbers } from "../lib/docNumbers";
-import { isNetworkError, onNetworkChange, useOnline } from "../lib/offline";
+import { isNetworkError, isOnline, onNetworkChange, useOnline } from "../lib/offline";
 import { useAwayLock } from "../lib/awayLock";
 import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
@@ -383,10 +384,15 @@ export default function POS() {
   useEffect(() => {
     if (kind === "personal") return;
     topUpAllDocNumbers();
-    // And the delivery line's product, so Deliver works with the line down.
+    // And the delivery line's product, so Deliver works with the line down;
+    // and the deliveries list, so the tab shows the morning's loads without it.
     void deliveryProduct().catch(() => undefined);
+    void refreshDeliveriesCache();
     return onNetworkChange((on) => {
-      if (on) topUpAllDocNumbers();
+      if (on) {
+        topUpAllDocNumbers();
+        void refreshDeliveriesCache();
+      }
     });
   }, [kind]);
   // The one screen a locked phone will still show, and only when the PIN
@@ -1223,7 +1229,18 @@ export default function POS() {
             // The phone widens who reaches this modal: a buyer with no
             // catalogue or shelf right taps Buying and must still be able to
             // prove a PIN. Each branch is a call that signer is entitled to.
-            if (can(user, "manage_catalogue")) await adminListProducts(entered);
+            // With the line down, against the credentials this device keeps
+            // for signing in (the same hashes, the same check): the door
+            // opens, and each screen inside says what it cannot show. The
+            // server still checks the PIN on every call once the line is back.
+            if (!isOnline()) {
+              const who = await findByPinOffline(entered);
+              if (!who || !canAny(who, ["manage_catalogue", "manage_inventory", "shelf_capture",
+                "manage_purchasing", "approve_discount", "view_reports", "manage_staff",
+                "manage_settings", "cash_management"])) {
+                throw new Error("That PIN is not known on this device, or opens nothing in the back office.");
+              }
+            } else if (can(user, "manage_catalogue")) await adminListProducts(entered);
             else if (can(user, "shelf_capture")) await shelfLookup(entered, "0");
             else if (can(user, "manage_purchasing")) await purchasingSuppliers(entered);
             else await approvalCodes(entered);
