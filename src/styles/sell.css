@@ -2857,6 +2857,17 @@ tr.is-void td:last-child { text-decoration: none; }
 /* 16px minimum, or iOS zooms the page on focus and the layout jumps. */
 .phone-find .scan-field { flex: 1; min-width: 0; font-size: 16px; }
 .phone-pad { padding: 4px 16px 16px; }
+/* The back-office screens a phone opens whole (Deliveries, Stock). They were
+   laid out for a tablet; on a phone the wide table scrolls sideways inside
+   its own box, and the page itself never does. */
+.phone-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: auto;
+}
 
 .phone-hits { list-style: none; margin: 0; padding: 0 0 20px; }
 .phone-hit {

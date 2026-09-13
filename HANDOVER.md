@@ -63,7 +63,11 @@ margin change leaves every test green. Check a real slip.
    From address** — that is a spoofing vector against your own domain.
 2. **Bigger receipt print**, if 40 columns is still not enough: the dial is
    Manage → Shop → Printing (48/40/32). 32 is about a third bigger than 48.
-3. **Phone stage 2** — the destination screens made phone-shaped. Never started.
+3. **Phone stage 2** — the destination screens made phone-shaped. Deliveries
+   and Stock are the first two, opened whole from tiles on the phone's home
+   (the shop asked for them so a manager or owner can work them remotely);
+   they fit 390 wide as they are, so nothing was reshaped. The rest not
+   started.
 4. **`Cancel this sale`** sits one tap from `Close` in the slip popup, which
    appears after every sale. A manager PIN and a typed reason mean a mis-tap
    cannot void anything, but the placement is worth revisiting.
@@ -73,6 +77,11 @@ margin change leaves every test green. Check a real slip.
 **A break that does not compile proves nothing.** CLAUDE.md says it; I still did
 it twice (an unused variable, a type narrowed to `never`). The suite then fails
 to build and you learn nothing. Break it so it compiles and does the wrong thing.
+
+**A guard can pass with the fix removed.** Five times that session, and
+once more since: a "the page never scrolls sideways" assertion held with the
+phone body's scroller removed, because the tables fit anyway — so it proves
+the page, not the rule. Said so in the commit rather than counted as coverage.
 
 **A guard can pass with the fix removed.** Five times this session. Each time the
 test was measuring the wrong thing or the wrong size:
@@ -90,8 +99,11 @@ immediately after a click — the print preview before the sale returned, the
 Manage header before the PIN returned, a print counter before anything printed.
 All passed alone and failed under the full suite. They were racing from birth.
 
-**`git checkout -- <file>` discards uncommitted work.** It bit four times. Commit
-before a break sweep, or restore from a copy.
+**`git checkout -- <file>` discards uncommitted work.** It bit four times, and
+twice more in the security sweep: once an UNTRACKED migration could not be
+restored at all, so the breaks stacked; once three edited files went back to
+HEAD and the fix had to be re-applied. `git add` everything before a break
+sweep — checkout then restores to the index, which is the fix.
 
 **`vite.config.js` is a stale build artifact** beside `vite.config.ts`, and Vite
 prefers the `.js`. `npx vite build` alone uses the stale one; `npm run build`

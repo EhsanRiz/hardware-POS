@@ -337,7 +337,7 @@ export default function POS() {
   // Where a personal device is standing. The tiles are doorways into the
   // back office, so "home" is where it returns whenever one closes; only
   // Look it up is a screen of its own.
-  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup">("home");
+  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup" | "deliveries" | "stock">("home");
   // Read once. It cannot change without the app reloading, and the till
   // re-renders on every keystroke in the scan box — no reason to parse it
   // out of local storage each time.
@@ -1118,7 +1118,10 @@ export default function POS() {
             await stockMovements(entered, 1);
             setStockPin(entered);
             setAskStockPin(false);
-            setSection("stock");
+            // On a phone the stock room is a screen of its own, not a
+            // section of the till.
+            if (kind === "personal") setPhoneScreen("stock");
+            else setSection("stock");
           }}
           onCancel={() => setAskStockPin(false)}
         />
@@ -1216,6 +1219,28 @@ export default function POS() {
         </>
       );
     }
+    // Deliveries and the stock room, whole, on the phone: the first two of
+    // the till's own screens a manager or owner can work from away from the
+    // counter. Both already ran on a personal token — every RPC behind them
+    // takes the register token and, for stock, the PIN — so nothing on the
+    // server changed; what was missing was a way in. Stock keeps the same
+    // PIN gate the till has, held in memory for the session.
+    if (phoneScreen === "deliveries" || (phoneScreen === "stock" && stockPin)) {
+      return (
+        <>
+          <div className="phone-screen">
+            <header className="phone-screen-head">
+              <button className="btn-line quiet" onClick={() => setPhoneScreen("home")}>Back</button>
+              <h1>{phoneScreen === "stock" ? "Stock" : "Deliveries"}</h1>
+            </header>
+            <div className="phone-body sell">
+              {phoneScreen === "stock" ? <Stock pin={stockPin!} /> : <Deliveries user={user} />}
+            </div>
+          </div>
+          {overlays}
+        </>
+      );
+    }
     return (
       <>
         <PhoneHome
@@ -1226,6 +1251,15 @@ export default function POS() {
           onPick={(key) => {
             if (key === "lookup") {
               setPhoneScreen("lookup");
+              return;
+            }
+            if (key === "deliveries") {
+              setPhoneScreen("deliveries");
+              return;
+            }
+            if (key === "stock") {
+              if (stockPin) setPhoneScreen("stock");
+              else setAskStockPin(true);
               return;
             }
 

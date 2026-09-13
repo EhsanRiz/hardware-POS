@@ -70,6 +70,22 @@ export const PHONE_TILES: Tile[] = [
     icon: <Icon d="M3 4h2l2.7 11.4a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L21 8H6M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" />,
   },
   {
+    key: "deliveries",
+    label: "Deliveries",
+    hint: "What is still to go out, and marking it off",
+    perms: [],
+    online: true,
+    icon: <Icon d="M3 7h11v9H3zM14 10h4l3 3v3h-7zM7.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z" />,
+  },
+  {
+    key: "stock",
+    label: "Stock",
+    hint: "Receive a delivery, count a shelf, see what moved",
+    perms: ["manage_inventory"],
+    online: true,
+    icon: <Icon d="M4 8l8-4 8 4v9l-8 4-8-4zM4 8l8 4 8-4M12 12v9" />,
+  },
+  {
     key: "lookup",
     label: "Look it up",
     hint: "Price, what's on the shelf, and where",

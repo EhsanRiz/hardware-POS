@@ -7331,6 +7331,80 @@ test("what walked out of the door without being sold is a number the owner can s
   await expect(glance).toContainText(/the real loss is higher than it says/);
 });
 
+test("a manager's phone has Deliveries and Stock, and a counter hand's has Deliveries only", async ({ page }) => {
+  // The first two of the till's own screens worked from away from the
+  // counter. Deliveries is open to everybody who can sign in, as it is on
+  // the till; the stock room needs manage_inventory, which a counter hand
+  // does not have — so their phone does not offer it, and offering it would
+  // only be a locked door.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  await expect(page.getByRole("button", { name: /^Deliveries/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Stock/ })).toBeVisible();
+});
+
+test("a counter hand's phone offers Deliveries but not the stock room", async ({ page }) => {
+  // A fresh page: signing out leaves a phone paired to its owner, so the
+  // second person needs their own device, as they would in the shop.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+  await expect(page.getByRole("button", { name: /^Deliveries/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Stock/ })).toHaveCount(0);
+});
+
+test("from the phone, a delivery is marked off and the page never scrolls sideways", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s1", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd, Maseru", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
+  });
+  await enrolPhoneAndSignIn(page, be);
+  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await expect(page.getByRole("heading", { name: "Deliveries" })).toBeVisible();
+  await expect(page.getByText("T. Mokoena")).toBeVisible();
+
+  // Measured on the document, and on the screen's own box: Manage's panel
+  // trick (a wide element inside its own scroller) does not apply here, but
+  // the phone body is its own scroller too, so both are checked.
+  const width = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(width, "the page's scroll width").toBeLessThanOrEqual(390);
+  const box = await page.locator(".phone-screen").boundingBox();
+  expect(box!.x + box!.width, "the screen's right edge").toBeLessThanOrEqual(390);
+
+  // Marked off through the phone's own token, by the phone's owner.
+  await page.getByRole("button", { name: "Delivered" }).first().click();
+  await expect.poll(() => be.deliveries[0].status).toBe("delivered");
+  expect(be.deliveries[0].delivered_by_name).toBe("Manager");
+
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator(".phone-home")).toBeVisible();
+});
+
+test("from the phone, the stock room asks the PIN once and then opens", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  await page.getByRole("button", { name: /^Stock/ }).click();
+  // The same gate the till has, proved against the server by the cheapest
+  // inventory call; a counter hand's PIN is refused there, not hidden here.
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  await expect(gate).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.getByRole("heading", { name: "Stock" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+  const width = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(width, "the page's scroll width").toBeLessThanOrEqual(390);
+
+  // Back, and in again without the PIN: it is held for the session.
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: /^Stock/ }).click();
+  await expect(gate).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+});
+
 test("the department drives the list, and two sheets cannot be open over the same shelves", async ({ page }) => {
   const cement = PRODUCTS.find((p) => p.sku === "CEM-425-50")!;
   const before = cement.stock_qty!;
