@@ -557,6 +557,87 @@ test.describe("the shop's own till", () => {
       expect(gap, "clearance between the second rule and the total").toBeGreaterThan(0);
     });
 
+    test("a named delivery wraps the actions tidily, clear of the TillAI bubble", async ({ page }) => {
+      await signedIn(page);
+      // With a sale parked, which is the state the counter was in: "Resume
+      // parked" is a sixth button, and six plus a named destination is what
+      // the row can no longer hold.
+      await page.getByRole("button", { name: /Park sale/i }).click();
+      await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("button", { name: /Resume parked/i })).toBeVisible();
+
+      await page.getByRole("button", { name: /^Deliver$/ }).click();
+      await page.getByLabel("Deliver to").fill("Christ Church");
+      await page.getByLabel("Address").fill("12 Church St, Ladybrand");
+      await page.getByRole("button", { name: "Add to the sale" }).click();
+      await expect(
+        page.getByRole("button", { name: /Deliver · Christ Church/ })
+      ).toBeVisible();
+
+      const m = await page.evaluate(() => {
+        // A custom property, resolved by the engine rather than read raw.
+        const probe = (name: string) => {
+          const el = document.createElement("span");
+          el.style.color = `var(${name})`;
+          document.body.appendChild(el);
+          const c = getComputedStyle(el).color;
+          el.remove();
+          return c;
+        };
+        const acts = document.querySelector(".sell-actions") as HTMLElement;
+        const bubble = document.querySelector(".tillai-bubble") as HTMLElement;
+        const b = bubble.getBoundingClientRect();
+        const btns = [...acts.querySelectorAll<HTMLElement>("button")];
+        const rects = btns.map((x) => x.getBoundingClientRect());
+        const rows = [...new Set(rects.map((r) => Math.round(r.top)))].sort((a, z) => a - z);
+        const last = rows[rows.length - 1];
+        const onLast = rects.filter((r) => Math.round(r.top) === last);
+        return {
+          // A button under the bubble is a button that cannot be pressed.
+          covered: btns
+            .filter((_, i) => {
+              const q = rects[i];
+              return q.left < b.right && q.right > b.left && q.top < b.bottom && q.bottom > b.top;
+            })
+            .map((x) => (x.textContent || "").trim()),
+          rows: rows.length,
+          // Where the wrapped line starts, against where the first line starts.
+          lastLeft: Math.round(Math.min(...onLast.map((r) => r.left))),
+          firstLeft: Math.round(Math.min(...rects.map((r) => r.left))),
+          border: getComputedStyle(btns[0]).borderTopColor,
+          // The accent and the divider, both RESOLVED — a computed border reads
+          // "rgb(200, 145, 47)" and the custom property reads "#c8912f", two
+          // notations of one colour that are never equal, so comparing them
+          // would pass with the border put back to grey.
+          //
+          // Not compared against the SYNCED chip's literal value: the chip is
+          // on the green bar and wears the lighter gold that needs, and these
+          // are on white, where it would wash out. Same stroke in the brand's
+          // terms, resolved for the ground it sits on.
+          accent: probe("--color-accent"),
+          divider: probe("--divider"),
+        };
+      });
+
+      // It wrapped — that is the arrangement, not the bug.
+      expect(m.rows, "rows the actions occupy with a named delivery")
+        .toBeGreaterThanOrEqual(2);
+      // And it wrapped TIDILY. "Void sale" used to carry margin-left: auto to
+      // hold it away from the four pressed all day, which on one row is right
+      // and on a wrapped one throws it alone to the far end of a band of its
+      // own. The last line starts where the first line starts.
+      expect(m.lastLeft, "where the wrapped line begins").toBe(m.firstLeft);
+      // The bubble is fixed to this corner on every screen in the app, so the
+      // band keeps its own content out of it rather than moving the bubble.
+      expect(m.covered, "action buttons under the TillAI bubble").toEqual([]);
+      // And they wear the shop's own stroke rather than the hairline grey every
+      // divider on the screen wears, which read as a box drawn round some words
+      // instead of a thing to press.
+      expect(m.border, "the outline on an action button").toBe(m.accent);
+      expect(m.border, "the outline against a plain divider").not.toBe(m.divider);
+    });
+
     test("and the keys are still worth pressing", async ({ page }) => {
       await signedIn(page);
       // The pixels came from somewhere, and this says where they may not come

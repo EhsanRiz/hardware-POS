@@ -498,13 +498,54 @@
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
-  padding: 18px var(--sell-pad);
+  /* The bottom is --tillai-corner, never a plain number: see the note below
+     the .push rule. Four breakpoints set this padding and every one of them
+     has to keep that clearance, so it is named rather than repeated. */
+  padding: 18px var(--sell-pad) var(--tillai-corner);
   border-top: 1px solid var(--divider);
   flex: none;
 }
-.sell-actions .push { margin-left: auto; }
+/*
+ * "Void sale" USED to be pushed to the far right with margin-left: auto, to
+ * keep the destructive one away from the four a cashier presses all day. That
+ * works on one row and falls apart the moment the row wraps: an item carrying
+ * an automatic left margin and landing alone on a line is thrown to the right
+ * of it, so a delivery with a destination — "Deliver · Christ Church" is 90px
+ * more than "Deliver" — left one orphan button floating on a band of its own.
+ *
+ * They wrap together now, left to right, evenly spaced. The separation was
+ * the point and the float was never the only way to get it: Void sale is LAST,
+ * and when the row wraps it is last on a line of its own, which separates it
+ * further than a margin ever did. A margin does not survive the wrap either —
+ * an 18px inset meant for the gap before it becomes an 18px indent when it
+ * starts a line, so the wrapped row did not begin where the first row began.
+ */
+
+/*
+ * The corner the TillAI bubble sits in.
+ *
+ * The bubble is fixed to the bottom left of the window and the action row is
+ * the last thing above the foot of the page, so on a short screen the bubble
+ * lands on top of whichever button is bottom-left — and a button under a
+ * bubble is a button that cannot be pressed. It was covering "Save as quote"
+ * on one row and "Void sale" once the row wrapped.
+ *
+ * Reserved here rather than by moving the bubble: the bubble is fixed on
+ * purpose, so that it is in the same corner on every screen in the app, and
+ * chasing it around per screen is how it ends up somewhere different on each.
+ * The band simply keeps its own content out of that corner.
+ */
+.sell { --tillai-corner: 34px; }
 
 /* ---- Buttons ----------------------------------------------------------- */
+
+/*
+ * The shop's own outline. These wore the same hairline grey as every divider
+ * on the screen, which on a busy till reads as a box drawn round some words
+ * rather than a thing to press — so they take the amber the SYNCED chip wears,
+ * which is the one stroke this brand reserves for "this is a control".
+ */
+.sell-actions .btn-line { border-color: var(--color-accent); }
 
 .btn-line {
   display: inline-flex;
@@ -1865,8 +1906,10 @@
 
   .pay-close { display: flex; }
   .pay-bar { display: flex; }
-  /* Room for the bar, so the last line is never hidden under it. */
-  .sell-actions { padding-bottom: 14px; }
+  /* Room for the bar, so the last line is never hidden under it — and for the
+     whole of the bubble, because the colophon that was absorbing part of its
+     height is hidden here. */
+  .sell { --tillai-corner: 70px; }
   .sell-foot { display: none; }
   .total-row .fig { font-size: 34px; }
 }
@@ -3008,7 +3051,7 @@ tr.is-void td:last-child { text-decoration: none; }
      dropped onto a row of its own — a whole band across the till carrying one
      button. Padding and type give back the ~110px that costs nothing anyone
      can feel, and 40px is still a comfortable target. */
-  .sell-actions { gap: 8px; padding: 12px var(--sell-pad); }
+  .sell-actions { gap: 8px; padding: 12px var(--sell-pad) var(--tillai-corner); }
   .sell-actions .btn-line { min-height: 40px; padding: 0 12px; font-size: 13px; }
 }
 
@@ -3045,7 +3088,7 @@ tr.is-void td:last-child { text-decoration: none; }
   .disclose { padding-top: 2px; padding-bottom: 2px; font-size: 12px; }
   .pay-foot { padding-top: 8px; }
   .btn-tender { min-height: 48px; }
-  .sell-actions { padding-top: 8px; padding-bottom: 8px; }
+  .sell-actions { padding-top: 8px; }
 }
 
 /* Shorter still — a taskbar that is not hidden, or a browser carrying a
