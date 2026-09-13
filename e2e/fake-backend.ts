@@ -278,7 +278,7 @@ export class Backend {
      */
     last_code_error: string | null;
     /**
-     * The invitation SMS (0085): when the provider last took one, why the
+     * The invitation SMS (0087): when the provider last took one, why the
      * last attempt did not go, and how many went. Optional because a row
      * pushed by a test for somebody added before invitations were sent
      * leaves them out, exactly as the database does for such a row.
@@ -286,6 +286,8 @@ export class Backend {
     invite_sent_at?: string | null;
     invite_send_error?: string | null;
     invite_sms_count?: number;
+    /** The last attempt, sent or not: what the minute's cooldown counts. */
+    invite_tried_at?: string | null;
   }[] = [
     { id: "u1", name: "Manager", phone: "+27820000001", role: "admin",
       status: "active", active: true, permissions: [],
@@ -1165,7 +1167,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
   // 0056: the reader. The model itself is not here — what a test can pin is
   // that the till sends the pages, shows the answer for checking, and files
   // exactly what was on that screen.
-  // 0085: the invitation SMS. Sent by the auth function (where the SMS
+  // 0087: the invitation SMS. Sent by the auth function (where the SMS
   // secret lives) on the manager's register token and PIN, through the two
   // RPCs the migration adds; the refusals below are theirs, word for word.
   await page.route("**/functions/v1/auth", async (route: Route) => {
@@ -1190,9 +1192,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     if ((target.invite_sms_count ?? 0) >= 5) {
       return respond(400, { ok: false, message: `${target.name} has been sent the invitation five times already. Pass the message on yourself.` });
     }
-    if (target.invite_sent_at && Date.now() - Date.parse(target.invite_sent_at) < 60_000) {
+    if (target.invite_tried_at && Date.now() - Date.parse(target.invite_tried_at) < 60_000) {
       return respond(400, { ok: false, message: `An invitation went to ${target.name} less than a minute ago` });
     }
+    target.invite_tried_at = new Date().toISOString();
     const text =
       `You have been added to the till at work. ` +
       `Go to https://pos.innovaearth.com/enrol/ and enter your number ${target.phone} - ` +
@@ -3615,7 +3618,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // The count is the server's own bookkeeping; the roster does not
         // carry it, and the two SMS columns are null for a row that never had
         // one, as they are in the database.
-        return json(be.staff.map(({ invite_sms_count: _n, ...s }) => ({
+        return json(be.staff.map(({ invite_sms_count: _n, invite_tried_at: _t, ...s }) => ({
           ...s,
           invite_sent_at: s.invite_sent_at ?? null,
           invite_send_error: s.invite_send_error ?? null,

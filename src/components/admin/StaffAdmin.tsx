@@ -283,7 +283,7 @@ function smsFailed(s: StaffUser): boolean {
  * Adding somebody sends them the enrolment instructions by SMS, and this
  * dialog is where the manager watches that happen: it opens as the message
  * goes, says whether the provider took it, and — if it did not — says why in
- * the shop's own terms and offers to try again. Before 0085 nothing was sent
+ * the shop's own terms and offers to try again. Before 0087 nothing was sent
  * and the manager had to pass the message on by hand; the shop asked for the
  * phone to get it directly, and now it does.
  *
@@ -298,7 +298,7 @@ function smsFailed(s: StaffUser): boolean {
 type SmsState =
   | { kind: "none" }
   | { kind: "sending" }
-  | { kind: "sent"; at: string | null }
+  | { kind: "sent"; at: string | null; text?: string }
   | { kind: "failed"; reason: string }
   | { kind: "refused"; reason: string };
 
@@ -323,14 +323,18 @@ function WhatHappensNext({
           ? { kind: "sent", at: staff.invite_sent_at }
           : { kind: "none" }
   );
-  const message = inviteMessage(staff.phone, ENROL_URL);
+  // What the screen offers to copy: after a send, the words the server says
+  // it sent, so "the message they were sent" is that message and not a copy
+  // built here that could drift from it; before one, the same template.
+  const message =
+    sms.kind === "sent" && sms.text ? sms.text : inviteMessage(staff.phone, ENROL_URL);
 
   const send = useCallback(async () => {
     setSms({ kind: "sending" });
     try {
       const out = await sendInviteSms(pin, staff.id);
       setSms(out.sent
-        ? { kind: "sent", at: new Date().toISOString() }
+        ? { kind: "sent", at: new Date().toISOString(), text: out.text || undefined }
         : { kind: "failed", reason: out.reason ?? "The SMS did not go" });
     } catch (e) {
       // The server would not send at all — they can already sign in, or one

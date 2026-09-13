@@ -19,6 +19,7 @@
 -- still their own. Only the delivery of the instructions changed.
 
 alter table public.app_users
+  add column invite_tried_at   timestamptz,             -- the last attempt, sent or not
   add column invite_sent_at    timestamptz,             -- the provider took it
   add column invite_send_error text,                    -- or why it would not
   add column invite_sms_count  int not null default 0;  -- messages that went
@@ -33,6 +34,11 @@ comment on column public.app_users.invite_send_error is
 -- the dialog: the person can already sign in, or was signed out, or has had
 -- the message five times already (SMSes cost money, and after five the
 -- manager passes it on by hand), or had one less than a minute ago.
+--
+-- The minute counts every attempt, sent or not, and is claimed here before
+-- the number is handed over: a provider that is down must not turn "try
+-- again" into a loop against it. The cap of five counts only what went,
+-- because a message that never went cost nothing.
 create function public.pos_admin_invite_to_send(
   p_register_token text,
   p_pin text,
@@ -58,10 +64,11 @@ begin
     raise exception '% has been sent the invitation five times already. Pass the message on yourself.',
       v_target.name;
   end if;
-  if v_target.invite_sent_at > now() - interval '60 seconds' then
+  if v_target.invite_tried_at > now() - interval '60 seconds' then
     raise exception 'An invitation went to % less than a minute ago', v_target.name;
   end if;
 
+  update public.app_users u set invite_tried_at = now() where u.id = v_target.id;
   return query select v_target.id, v_target.name, v_target.phone_e164;
 end;
 $$;

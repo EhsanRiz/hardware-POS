@@ -5000,7 +5000,7 @@ begin
   perform public.pos_delete_parked_sale(v_tok, v_row.id);
 end $$;
 
--- 0085: the invitation goes by SMS ------------------------------------------
+-- 0087: the invitation goes by SMS ------------------------------------------
 --
 -- The auth function sends; these two RPCs are its permission to and its
 -- record of what happened. What the database can hold to account is that
@@ -5035,7 +5035,7 @@ begin
   perform assert_refuses(
     format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
     'a second invitation within a minute');
-  update public.app_users set invite_sent_at = now() - interval '2 minutes' where id = v_new;
+  update public.app_users set invite_tried_at = now() - interval '2 minutes' where id = v_new;
   select * into v_row from public.pos_admin_invite_to_send(v_tok, '1234', v_new);
   perform assert_eq(v_row.id, v_new, 'and allowed once the minute is up');
 
@@ -5047,14 +5047,18 @@ begin
     'the roster carries why it did not go');
   select invite_sms_count into v_n from public.app_users where id = v_new;
   perform assert_eq(v_n, 1, 'a message that never went is not counted');
+  -- But it did use the minute: a provider that is down is not hammered.
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
+    'a retry straight after a failed send');
   -- A later success clears it.
-  update public.app_users set invite_sent_at = now() - interval '2 minutes' where id = v_new;
+  update public.app_users set invite_tried_at = now() - interval '2 minutes' where id = v_new;
   perform public.pos_admin_invite_sms_outcome(v_tok, '1234', v_new, null);
   select u.* into v_row from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
   perform assert(v_row.invite_send_error is null, 'a send that went clears the earlier failure');
 
   -- Five is the cap; after that the manager passes it on by hand.
-  update public.app_users set invite_sms_count = 5, invite_sent_at = now() - interval '1 day'
+  update public.app_users set invite_sms_count = 5, invite_tried_at = now() - interval '1 day'
    where id = v_new;
   perform assert_refuses(
     format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),

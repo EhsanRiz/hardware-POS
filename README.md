@@ -339,7 +339,7 @@ on by hand.
 The sending is `send_invite` on the auth function (the BulkSMS secret lives
 there), authorised by the manager's register token and PIN through
 `pos_admin_invite_to_send` and recorded through `pos_admin_invite_sms_outcome`
-(0085). `supabase/functions/auth/invite-message.ts` is the message, read by
+(0087). `supabase/functions/auth/invite-message.ts` is the message, read by
 the function and by the staff screen, and held to GSM 7-bit and two segments
 by `test/invite-message.test.mjs`. Deploy with
 `npx supabase functions deploy auth`.

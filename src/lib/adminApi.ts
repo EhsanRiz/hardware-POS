@@ -268,7 +268,7 @@ export interface StaffUser {
    */
   last_code_error: string | null;
   /**
-   * The invitation SMS (0085): when the provider last took one for this
+   * The invitation SMS (0087): when the provider last took one for this
    * person, and why the last attempt did not go. Both null for somebody
    * added before invitations were sent at all. Absent from the row
    * pos_admin_invite_user returns, which is why they are optional.

@@ -3243,7 +3243,7 @@ test("staff are invited by phone, sent the instructions by SMS, and nobody's PIN
   expect(invited?.phone).toBe("+27825550100");
 
   // The instructions went to their phone, and the screen says so first. Before
-  // 0085 nothing was sent and the manager passed the message on by hand.
+  // 0087 nothing was sent and the manager passed the message on by hand.
   await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();
   expect(be.smsSent).toEqual([{
     to: "+27825550100",
@@ -3302,8 +3302,17 @@ test("an invitation that fails to send is said so, blamed on the shop's side, an
   await expect(failed).toContainText("The SMS service could not be reached");
   await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i })).toHaveCount(0);
 
-  // The service comes back; the row's own "try again" sends it.
+  // Straight away, "try again" is refused: a provider that is down is not
+  // hammered, and the failed attempt used the minute like a sent one.
+  await failed.click();
+  await page.getByRole("button", { name: /^Try again$/ }).click();
+  await expect(page.getByText("An invitation went to Thabo less than a minute ago.")).toBeVisible();
+  expect(be.smsSent).toEqual([]);
+  await page.getByRole("button", { name: /^Got it$/ }).click();
+
+  // A minute on, the service is back; the row's own "try again" sends it.
   be.inviteSmsFails = null;
+  be.staff.find((s) => s.name === "Thabo")!.invite_tried_at = new Date(Date.now() - 90_000).toISOString();
   await failed.click();
   await page.getByRole("button", { name: /^Try again$/ }).click();
   await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();

@@ -186,7 +186,7 @@ async function verifyCode(phone: string, code: string) {
 //
 // Not uniform, unlike request_code: the caller here is not the anonymous
 // public but a manager holding a register token and a PIN, and both RPCs
-// check them (0085) before a phone number or a send is reached. Their
+// check them (0087) before a phone number or a send is reached. Their
 // refusals — already signed in, sent five times, sent a minute ago — are
 // the manager's to read, so they are returned as they are. The outcome of
 // the send is written back where the staff screen finds it, so "the SMS
