@@ -4,10 +4,12 @@ import {
   adminInviteUser,
   adminListUsers,
   adminUpdateUser,
+  sendInviteSms,
   staffEnrolmentCode,
   type StaffUser,
 } from "../../lib/adminApi";
 import { CURRENCY, ENROL_URL } from "../../lib/config";
+import { inviteMessage } from "../../../supabase/functions/auth/invite-message.ts";
 import { errorMessage } from "../../lib/errors";
 import {
   ADMIN_LEVEL_PERMS,
@@ -52,10 +54,10 @@ export default function StaffAdmin({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<StaffUser | "new" | null>(null);
-  // Who the "what happens next" dialog is open for: whoever was just added, or
-  // whoever a manager has since tapped on the staff list because that person
-  // still has no PIN.
-  const [invited, setInvited] = useState<StaffUser | null>(null);
+  // Who the "what happens next" dialog is open for: whoever was just added
+  // (and is being sent the invitation as it opens), or whoever a manager has
+  // since tapped on the staff list because that person still has no PIN.
+  const [invited, setInvited] = useState<{ staff: StaffUser; sendNow: boolean } | null>(null);
   // Whose phone is being set up. Separate from `invited`: that dialog is about
   // somebody who cannot sign in ANYWHERE yet; this one is about giving
   // somebody who already signs in at the counter their own device as well.
@@ -169,20 +171,21 @@ export default function StaffAdmin({
                     smallest thing on the row.
 
                     Two different situations wear this strip, and they must not
-                    read the same: amber is "waiting on them" (they have not
-                    asked for a code, or theirs went out fine), red is "waiting
-                    on us" (they asked, and the SMS failed on the shop's side).
-                    Telling a manager to chase the colleague when the fault is
-                    the shop's SMS account sends the chase in the wrong
-                    direction. */}
+                    read the same: amber is "waiting on them" (the invitation
+                    reached their phone, or they have not asked for a code, or
+                    theirs went out fine), red is "waiting on us" (the
+                    invitation SMS or the code they asked for failed on the
+                    shop's side). Telling a manager to chase the colleague when
+                    the fault is the shop's SMS account sends the chase in the
+                    wrong direction. */}
                 {needsEnrolment(s) && (
                   <button
                     className={`w-full text-left px-4 py-2.5 flex items-center gap-2 border-t ${
-                      s.last_code_error
+                      smsFailed(s)
                         ? "bg-red-50 border-red-200 hover:bg-red-100"
                         : "bg-amber-50 border-amber-200 hover:bg-amber-100"
                     }`}
-                    onClick={() => setInvited(s)}
+                    onClick={() => setInvited({ staff: s, sendNow: false })}
                   >
                     {s.last_code_error ? (
                       <span className="text-sm text-red-900">
@@ -191,15 +194,24 @@ export default function StaffAdmin({
                         </span>{" "}
                         Tap for what to do.
                       </span>
+                    ) : s.invite_send_error ? (
+                      <span className="text-sm text-red-900">
+                        <span className="font-medium">
+                          {s.name}’s invitation SMS did not go: {s.invite_send_error}.
+                        </span>{" "}
+                        Tap to try again.
+                      </span>
                     ) : (
                       <span className="text-sm text-amber-900">
                         <span className="font-medium">{s.name} cannot sign in yet.</span>{" "}
-                        Tap for the link to send them.
+                        {s.invite_sent_at
+                          ? "They were sent the link by SMS. Tap to see it, or send it again."
+                          : "Tap to send them the link."}
                       </span>
                     )}
                     <span
                       aria-hidden="true"
-                      className={`ml-auto ${s.last_code_error ? "text-red-700" : "text-amber-700"}`}
+                      className={`ml-auto ${smsFailed(s) ? "text-red-700" : "text-amber-700"}`}
                     >
                       ›
                     </span>
@@ -228,7 +240,7 @@ export default function StaffAdmin({
           onClose={() => setEditing(null)}
           onSaved={async (added) => {
             setEditing(null);
-            if (added) setInvited(added);
+            if (added) setInvited({ staff: added, sendNow: true });
             await load();
           }}
           onRemove={remove}
@@ -239,7 +251,15 @@ export default function StaffAdmin({
         />
       )}
 
-      {invited && <WhatHappensNext staff={invited} onClose={() => setInvited(null)} />}
+      {invited && (
+        <WhatHappensNext
+          pin={pin}
+          staff={invited.staff}
+          sendNow={invited.sendNow}
+          onSent={load}
+          onClose={() => setInvited(null)}
+        />
+      )}
       {enrolling && (
         <EnrolPhone pin={pin} staff={enrolling} onClose={() => setEnrolling(null)} />
       )}
@@ -252,39 +272,90 @@ function needsEnrolment(s: StaffUser): boolean {
   return s.active && s.status === "invited";
 }
 
+/** An SMS the shop owed this person — invitation or code — did not go. */
+function smsFailed(s: StaffUser): boolean {
+  return !!(s.last_code_error || s.invite_send_error);
+}
+
 /**
  * What happens after somebody is added, said where the manager will look.
  *
- * Adding somebody sends them nothing, on purpose: an unsolicited SMS with a
- * link is what a phishing message looks like, and the code that matters is the
- * one they ask for themselves. But nothing said so, so it looked like a button
- * that did nothing — the row appeared, no message arrived, and the obvious
- * conclusion was that it was broken. A shop reached exactly that conclusion:
- * a manager added a colleague, waited for an OTP that was never coming, and
- * reported the feature as broken. Nothing was broken. Nobody had been told.
+ * Adding somebody sends them the enrolment instructions by SMS, and this
+ * dialog is where the manager watches that happen: it opens as the message
+ * goes, says whether the provider took it, and — if it did not — says why in
+ * the shop's own terms and offers to try again. Before 0085 nothing was sent
+ * and the manager had to pass the message on by hand; the shop asked for the
+ * phone to get it directly, and now it does.
  *
- * Three things follow from that, and all three are the point of this dialog:
- * the fact that no SMS was sent leads, rather than being the fourth sentence of
- * a paragraph; the enrolment address is a link that can be opened and checked
- * rather than a string to be copied off a screen by eye; and none of it depends
- * on this dialog being read at the one moment it first appears, because it can
- * be reopened from the person's row for as long as they have no PIN.
+ * Three things still hold from the hand-delivered version: the state of the
+ * SMS leads, rather than being the fourth sentence of a paragraph; the
+ * enrolment address is a link that can be opened and checked; and none of it
+ * depends on this dialog being read at the one moment it first appears,
+ * because it can be reopened from the person's row for as long as they have
+ * no PIN — and the message re-sent from there, or copied, if their phone was
+ * off or the number was wrong.
  */
-function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => void }) {
+type SmsState =
+  | { kind: "none" }
+  | { kind: "sending" }
+  | { kind: "sent"; at: string | null }
+  | { kind: "failed"; reason: string }
+  | { kind: "refused"; reason: string };
+
+function WhatHappensNext({
+  pin, staff, sendNow, onSent, onClose,
+}: {
+  pin: string;
+  staff: StaffUser;
+  /** True when they were just added: the SMS goes as the dialog opens. */
+  sendNow: boolean;
+  /** The roster is re-read after a send, so the row says what happened. */
+  onSent: () => Promise<void>;
+  onClose: () => void;
+}) {
   const [copied, setCopied] = useState(false);
-  const message =
-    `You have been added to the till at work. ` +
-    `Go to ${ENROL_URL} and enter your number ${staff.phone} — ` +
-    `you will get an SMS code, and then you choose your own PIN.`;
+  const [sms, setSms] = useState<SmsState>(() =>
+    sendNow
+      ? { kind: "sending" }
+      : staff.invite_send_error
+        ? { kind: "failed", reason: staff.invite_send_error }
+        : staff.invite_sent_at
+          ? { kind: "sent", at: staff.invite_sent_at }
+          : { kind: "none" }
+  );
+  const message = inviteMessage(staff.phone, ENROL_URL);
+
+  const send = useCallback(async () => {
+    setSms({ kind: "sending" });
+    try {
+      const out = await sendInviteSms(pin, staff.id);
+      setSms(out.sent
+        ? { kind: "sent", at: new Date().toISOString() }
+        : { kind: "failed", reason: out.reason ?? "The SMS did not go" });
+    } catch (e) {
+      // The server would not send at all — they can already sign in, or one
+      // went a minute ago. Its own words, since they name the reason.
+      setSms({ kind: "refused", reason: errorMessage(e, "The invitation could not be sent just now") });
+    }
+    await onSent();
+  }, [pin, staff.id, onSent]);
+
+  useEffect(() => {
+    if (sendNow) void send();
+    // Once, as the dialog opens for somebody just added; a re-send is a tap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const busy = sms.kind === "sending";
 
   return (
     <div className="vv-fixed bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        {/* The one thing a manager gets wrong, said before anything else. Two
-            versions, because there are two truths: usually no SMS was sent
-            because nobody asked for one, but when a requested code failed on
-            the shop's side, opening with "nobody asked" would be blaming the
-            one person who did everything right. */}
+        {/* The state of the SMS, said before anything else. Red is the shop's
+            side (the SMS service refused or could not be reached, or the code
+            they asked for failed); amber is waiting on them or on the send;
+            green is "it reached the provider" — the one thing the shop can
+            vouch for, since delivery to the handset is the network's. */}
         {staff.last_code_error ? (
           <div className="bg-red-100 text-red-900 px-5 py-3">
             <p className="font-semibold">
@@ -296,12 +367,38 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
               nothing they did is lost.
             </p>
           </div>
+        ) : sms.kind === "sending" ? (
+          <div className="bg-amber-100 text-amber-900 px-5 py-3" aria-live="polite">
+            <p className="font-semibold">Sending the SMS to {staff.phone}…</p>
+          </div>
+        ) : sms.kind === "sent" ? (
+          <div className="bg-emerald-100 text-emerald-900 px-5 py-3" aria-live="polite">
+            <p className="font-semibold">An SMS has been sent to {staff.phone}.</p>
+            <p className="text-sm">
+              {sms.at ? `${whenSent(sms.at)}. ` : ""}
+              It tells {staff.name} what to do. The same steps are below, in case
+              they ask.
+            </p>
+          </div>
+        ) : sms.kind === "failed" ? (
+          <div className="bg-red-100 text-red-900 px-5 py-3" aria-live="polite">
+            <p className="font-semibold">The SMS to {staff.phone} could not be sent.</p>
+            <p className="text-sm">
+              {sms.reason}. Nothing has reached {staff.name}. Try again, or pass
+              the message below on yourself.
+            </p>
+          </div>
+        ) : sms.kind === "refused" ? (
+          <div className="bg-amber-100 text-amber-900 px-5 py-3" aria-live="polite">
+            <p className="font-semibold">Not sent.</p>
+            <p className="text-sm">{sms.reason}.</p>
+          </div>
         ) : (
           <div className="bg-amber-100 text-amber-900 px-5 py-3">
-            <p className="font-semibold">No SMS has been sent.</p>
+            <p className="font-semibold">No SMS has been sent yet.</p>
             <p className="text-sm">
-              Nobody is ever sent a code they did not ask for, so {staff.name}{" "}
-              has to request it themselves. Here is what to tell them.
+              {staff.name} was added before invitations went by SMS. Send it
+              now, or pass the message below on yourself.
             </p>
           </div>
         )}
@@ -334,8 +431,9 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
             <li>Type the SMS code, then choose a PIN nobody else knows</li>
           </ol>
 
-          {/* The counter is busy and the person is standing right there, so the
-              message is ready to send rather than something to compose. */}
+          {/* The message as it goes by SMS, word for word, and ready to copy:
+              a phone that is off, or a number typed wrong, is found out at
+              the counter with the person standing right there. */}
           <button
             className="w-full text-left text-sm bg-stone-50 border border-stone-200 rounded-lg p-3"
             onClick={() => {
@@ -346,7 +444,11 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
             }}
           >
             <span className="block text-xs uppercase tracking-wide text-stone-400 mb-1">
-              {copied ? "Copied — send it to them" : "Tap to copy a message for them"}
+              {copied
+                ? "Copied — send it to them"
+                : sms.kind === "sent"
+                  ? "The message they were sent — tap to copy it"
+                  : "Tap to copy a message for them"}
             </span>
             {message}
           </button>
@@ -357,7 +459,16 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
           </p>
         </div>
 
-        <div className="px-5 py-4 border-t border-stone-200 flex justify-end">
+        <div className="px-5 py-4 border-t border-stone-200 flex gap-2 justify-end">
+          {!busy && (
+            <button className="px-4 py-2 text-stone-600" onClick={() => void send()}>
+              {sms.kind === "sent"
+                ? "Send the SMS again"
+                : sms.kind === "failed"
+                  ? "Try again"
+                  : "Send the SMS"}
+            </button>
+          )}
           <button className="px-4 py-2 rounded-lg bg-colophon text-paper" onClick={onClose}>
             Got it
           </button>
@@ -365,6 +476,19 @@ function WhatHappensNext({ staff, onClose }: { staff: StaffUser; onClose: () => 
       </div>
     </div>
   );
+}
+
+/** "Sent at 15:02 today", or with the date once it is not today. */
+function whenSent(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Sent";
+  // 24-hour, whatever the browser's locale: the shop reads "15:02", not
+  // "3:02 PM", and the suite matches on it.
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? `Sent at ${time} today`
+    : `Sent at ${time} on ${d.toLocaleDateString([], { day: "numeric", month: "short" })}`;
 }
 
 /**
@@ -675,14 +799,13 @@ function StaffEditor({
                 aria-label="Staff mobile number"
               />
               {/* The number is the invitation: it is how they prove who they
-                  are and how they come to set a PIN nobody else knows. That it
-                  goes nowhere by itself is said here, before the button is
-                  pressed rather than only after — a manager who expects an SMS
-                  is not wrong to expect one, the screen never said otherwise
-                  until it was already done. */}
+                  are and how they come to set a PIN nobody else knows. What
+                  pressing the button sends is said here, before it is pressed
+                  rather than only after. */}
               <span className="text-xs text-stone-500">
                 They set their own PIN on this number. It cannot be changed here
-                later. Adding them sends no SMS — you will get a link to pass on.
+                later. Adding them sends an SMS to this number with the link and
+                what to do.
               </span>
             </label>
           )}

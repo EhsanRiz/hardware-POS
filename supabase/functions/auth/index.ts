@@ -9,6 +9,7 @@
 // A PIN is never sent by SMS. The code authorises the person to CHOOSE a PIN;
 // daily sign-in is phone-free (register token + PIN) and works offline.
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { inviteMessage } from "./invite-message.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -180,6 +181,45 @@ async function verifyCode(phone: string, code: string) {
   return { ok: true, token: permit!.token };
 }
 
+// The invitation, sent to somebody a manager has just added — or again, from
+// their row, for as long as they have no PIN.
+//
+// Not uniform, unlike request_code: the caller here is not the anonymous
+// public but a manager holding a register token and a PIN, and both RPCs
+// check them (0085) before a phone number or a send is reached. Their
+// refusals — already signed in, sent five times, sent a minute ago — are
+// the manager's to read, so they are returned as they are. The outcome of
+// the send is written back where the staff screen finds it, so "the SMS
+// went" and "the SMS service refused" are told apart on the row.
+async function sendInvite(body: Record<string, string>) {
+  const auth = { p_register_token: body.register_token ?? "", p_pin: body.pin ?? "" };
+  if (!auth.p_register_token || !auth.p_pin || !body.user_id) {
+    return { status: 400, data: { ok: false, message: "Bad request" } };
+  }
+  const { data, error } = await supabase.rpc("pos_admin_invite_to_send", {
+    ...auth,
+    p_user_id: body.user_id,
+  });
+  if (error) return { status: 400, data: { ok: false, message: error.message } };
+  const target = (data as { id: string; name: string; phone: string }[] | null)?.[0];
+  if (!target) return { status: 400, data: { ok: false, message: "No such staff member" } };
+
+  const message = inviteMessage(target.phone);
+  const out = await sendSms(target.phone, message);
+  const { error: recErr } = await supabase.rpc("pos_admin_invite_sms_outcome", {
+    ...auth,
+    p_user_id: target.id,
+    p_error: out.sent ? null : out.reason,
+  });
+  if (recErr) console.error("invite outcome not recorded", recErr);
+  return {
+    status: 200,
+    data: out.sent
+      ? { ok: true, sent: true, reason: null, phone: target.phone, text: message }
+      : { ok: true, sent: false, reason: out.reason, phone: target.phone, text: message },
+  };
+}
+
 async function setPin(token: string, pin: string) {
   if (!/^\d{6}$/.test(pin)) {
     return { ok: false, message: "The PIN must be exactly 6 digits." };
@@ -229,6 +269,10 @@ Deno.serve(async (req: Request) => {
       }
       case "set_pin":
         return json(await setPin(body.token ?? "", body.pin ?? ""));
+      case "send_invite": {
+        const r = await sendInvite(body);
+        return json(r.data, r.status);
+      }
       default:
         return json({ ok: false, message: "Unknown action" }, 400);
     }

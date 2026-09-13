@@ -5000,4 +5000,92 @@ begin
   perform public.pos_delete_parked_sale(v_tok, v_row.id);
 end $$;
 
+-- 0085: the invitation goes by SMS ------------------------------------------
+--
+-- The auth function sends; these two RPCs are its permission to and its
+-- record of what happened. What the database can hold to account is that
+-- only a manager gets the number, that the outcome lands on the person, and
+-- that the cooldown and the cap stand between a tap and a bill.
+
+do $$
+declare v_tok text; v_new uuid; v_row record; v_n int;
+begin
+  select token into v_tok from till;
+  select id into v_new from public.pos_admin_invite_user(
+    v_tok, '1234', 'Invited by SMS', '+27820000085', 'employee'::user_role, array[]::text[]);
+
+  -- Fresh from the invite: nothing sent, nothing failed, and the roster says so.
+  select u.* into v_row from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_row.invite_sent_at is null and v_row.invite_send_error is null,
+    'a new invitee has no SMS outcome yet');
+
+  -- The manager may send, and gets the number the person was added with.
+  select * into v_row from public.pos_admin_invite_to_send(v_tok, '1234', v_new);
+  perform assert_eq(v_row.phone, '+27820000085', 'the invitation goes to the number they were added with');
+
+  -- It went: the timestamp is set, the count goes up.
+  perform public.pos_admin_invite_sms_outcome(v_tok, '1234', v_new, null);
+  select u.* into v_row from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_row.invite_sent_at is not null, 'the roster carries when it went');
+  perform assert(v_row.invite_send_error is null, 'and no error');
+  select invite_sms_count into v_n from public.app_users where id = v_new;
+  perform assert_eq(v_n, 1, 'one message counted');
+
+  -- Not again within a minute: a manager tapping "send again" is not a bill.
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
+    'a second invitation within a minute');
+  update public.app_users set invite_sent_at = now() - interval '2 minutes' where id = v_new;
+  select * into v_row from public.pos_admin_invite_to_send(v_tok, '1234', v_new);
+  perform assert_eq(v_row.id, v_new, 'and allowed once the minute is up');
+
+  -- It did not go: the reason lands on the person, the count does not move,
+  -- and the failure is what the roster now reports.
+  perform public.pos_admin_invite_sms_outcome(v_tok, '1234', v_new, 'The SMS service could not be reached');
+  select u.* into v_row from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert_eq(v_row.invite_send_error, 'The SMS service could not be reached',
+    'the roster carries why it did not go');
+  select invite_sms_count into v_n from public.app_users where id = v_new;
+  perform assert_eq(v_n, 1, 'a message that never went is not counted');
+  -- A later success clears it.
+  update public.app_users set invite_sent_at = now() - interval '2 minutes' where id = v_new;
+  perform public.pos_admin_invite_sms_outcome(v_tok, '1234', v_new, null);
+  select u.* into v_row from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_row.invite_send_error is null, 'a send that went clears the earlier failure');
+
+  -- Five is the cap; after that the manager passes it on by hand.
+  update public.app_users set invite_sms_count = 5, invite_sent_at = now() - interval '1 day'
+   where id = v_new;
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
+    'a sixth invitation');
+
+  -- Nobody who can already sign in is sent one, nor anybody signed out.
+  update public.app_users set invite_sms_count = 0, status = 'active',
+         pin_hash = crypt('8585', gen_salt('bf')) where id = v_new;
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
+    'an invitation to somebody with a PIN');
+  update public.app_users set status = 'invited', active = false where id = v_new;
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '1234', v_new),
+    'an invitation to somebody signed out');
+  update public.app_users set active = true where id = v_new;
+
+  -- A cashier's PIN gets no number and writes no outcome: the function is a
+  -- relay only for somebody who could already add staff.
+  perform assert_refuses(
+    format('select public.pos_admin_invite_to_send(%L, %L, %L)', v_tok, '8585', v_new),
+    'a cashier asking for an invitee''s number');
+  perform assert_refuses(
+    format('select public.pos_admin_invite_sms_outcome(%L, %L, %L, null)', v_tok, '8585', v_new),
+    'a cashier recording a send');
+  -- And an unknown person is refused rather than silently nothing.
+  perform assert_refuses(
+    format('select public.pos_admin_invite_sms_outcome(%L, %L, %L, null)', v_tok, '1234', gen_random_uuid()),
+    'an outcome for nobody');
+
+  delete from public.app_users where id = v_new;
+end $$;
+
 select 'all database tests passed' as result;

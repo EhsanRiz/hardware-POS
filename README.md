@@ -323,6 +323,27 @@ makes nothing. A number that cannot be read, or that already belongs to
 somebody, is refused with words; the email's SQL line is the fallback.
 Deploy with `npx supabase functions deploy pos-approve --no-verify-jwt`.
 
+## Inviting staff
+
+Manage → Staff → Add someone takes a name, a mobile number and a role. The
+row is created `invited` with no PIN, and the person is sent the enrolment
+instructions by SMS to that number, word for word what the dialog then
+shows: open the enrolment page, enter the number, type the code, choose a
+PIN. The message carries no code and no PIN — the code is still the one they
+ask for on the enrolment page, from their own phone, and the PIN is their
+own. The dialog says whether the provider took the message, or why not, and
+the row carries the same until they have set a PIN; from either it can be
+sent again (not within a minute, not more than five times) or copied to pass
+on by hand.
+
+The sending is `send_invite` on the auth function (the BulkSMS secret lives
+there), authorised by the manager's register token and PIN through
+`pos_admin_invite_to_send` and recorded through `pos_admin_invite_sms_outcome`
+(0085). `supabase/functions/auth/invite-message.ts` is the message, read by
+the function and by the staff screen, and held to GSM 7-bit and two segments
+by `test/invite-message.test.mjs`. Deploy with
+`npx supabase functions deploy auth`.
+
 ## Wiping a shop, or deleting it
 
 A shop that was used for testing must start its books at invoice number 1

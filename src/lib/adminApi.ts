@@ -267,6 +267,70 @@ export interface StaffUser {
    * failed them" stop looking identical from the staff screen.
    */
   last_code_error: string | null;
+  /**
+   * The invitation SMS (0085): when the provider last took one for this
+   * person, and why the last attempt did not go. Both null for somebody
+   * added before invitations were sent at all. Absent from the row
+   * pos_admin_invite_user returns, which is why they are optional.
+   */
+  invite_sent_at?: string | null;
+  invite_send_error?: string | null;
+}
+
+/**
+ * What the auth function reports after trying to send somebody their
+ * invitation. `sent` false is a delivery failure with the reason the staff
+ * screen shows; a refusal to send at all (they can already sign in, one went
+ * a minute ago) is thrown, message and all.
+ */
+export interface InviteSmsOutcome {
+  sent: boolean;
+  reason: string | null;
+  phone: string;
+  /** The text that went, word for word, so the screen can show it. */
+  text: string;
+}
+
+/**
+ * Send somebody the enrolment instructions by SMS.
+ *
+ * The auth edge function sends, because that is where the SMS secret lives;
+ * it proves this call with the same register token and manager PIN every
+ * staff RPC takes, so nobody with only the anon key can make it send
+ * anything. Needs the line: there is nothing to queue, since a message that
+ * goes later is a message the manager no longer knows about.
+ */
+export async function sendInviteSms(pin: string, userId: string): Promise<InviteSmsOutcome> {
+  const res = await fetch(`${API_BASE}/functions/v1/auth`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({
+      action: "send_invite",
+      register_token: requireToken(),
+      pin,
+      user_id: userId,
+    }),
+  });
+  // `message` is the function's error wording; the SMS body itself is `text`.
+  let out: Partial<InviteSmsOutcome> & { ok?: boolean; message?: string } = {};
+  try {
+    out = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !out.ok || typeof out.sent !== "boolean") {
+    throw new Error(out.message ?? "The invitation could not be sent just now.");
+  }
+  return {
+    sent: out.sent,
+    reason: out.reason ?? null,
+    phone: out.phone ?? "",
+    text: out.text ?? "",
+  };
 }
 
 export async function adminListUsers(pin: string): Promise<StaffUser[]> {

@@ -3222,7 +3222,7 @@ test("a buyer's address is kept, and the slip carries their name next time", asy
   await expect(page.locator("#print-area")).toContainText("T. Mokoena");
 });
 
-test("staff are invited by phone, and nobody's PIN is set for them", async ({ page }) => {
+test("staff are invited by phone, sent the instructions by SMS, and nobody's PIN is set for them", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Staff$/ }).click();
@@ -3231,11 +3231,8 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
   await page.getByRole("button", { name: /Add someone/i }).click();
   await page.getByLabel("Staff name").fill("Thabo");
   await page.getByLabel("Staff mobile number").fill("082 555 0100");
-
-  // The button must not promise a message it does not send. "Send invite" did,
-  // and a shop believed it: a manager added a colleague, waited for an OTP that
-  // was never coming, and reported the till as broken.
-  await expect(page.getByRole("button", { name: /Send invite/i })).toHaveCount(0);
+  // Said before the button is pressed: an SMS goes to this number.
+  await expect(page.getByText(/Adding them sends an SMS to this number/)).toBeVisible();
   await page.getByRole("button", { name: /Add to staff list/i }).click();
 
   // Invited, not active: they choose their own PIN on their own phone, so a
@@ -3245,10 +3242,19 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
   // Stored in E.164, which is what the enrolment lookup matches on.
   expect(invited?.phone).toBe("+27825550100");
 
-  // Adding somebody sends nothing, on purpose — so the screen has to say so
-  // first, not as an aside. This is the step a manager would otherwise have to
-  // already know.
-  await expect(page.getByText("No SMS has been sent.")).toBeVisible();
+  // The instructions went to their phone, and the screen says so first. Before
+  // 0085 nothing was sent and the manager passed the message on by hand.
+  await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();
+  expect(be.smsSent).toEqual([{
+    to: "+27825550100",
+    // Word for word what the dialog shows — and no code, no PIN: the code is
+    // still the one they ask for themselves, and the PIN is still their own.
+    body: "You have been added to the till at work. Go to https://pos.innovaearth.com/enrol/ " +
+      "and enter your number +27825550100 - you will get an SMS code, and then you choose your own PIN.",
+  }]);
+  expect(be.smsSent[0].body.replace("+27825550100", "")).not.toMatch(/\d{6}/);
+  // Recorded on the person, where the roster reads it.
+  expect(invited?.invite_sent_at).toBeTruthy();
 
   // And the enrolment address is a link that can be opened and checked, rather
   // than a string to be read off a screen and retyped into somebody's phone.
@@ -3256,12 +3262,74 @@ test("staff are invited by phone, and nobody's PIN is set for them", async ({ pa
     page.getByRole("link", { name: /pos\.innovaearth\.com\/enrol/ })
   ).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
 
-  const next = page.getByRole("button", { name: /copy a message for them/i });
-  await expect(next).toContainText("pos.innovaearth.com/enrol/");
-  await expect(next).toContainText("+27825550100");
+  // The message as sent, ready to copy in case their phone was off.
+  const sent = page.getByRole("button", { name: /The message they were sent/i });
+  await expect(sent).toContainText(be.smsSent[0].body);
   await page.getByRole("button", { name: /^Got it$/ }).click();
 
   await expect(page.getByText("PIN not set")).toBeVisible();
+  // The row says the link went, not that it is waiting to be sent.
+  await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i }))
+    .toContainText("They were sent the link by SMS");
+});
+
+test("an invitation that fails to send is said so, blamed on the shop's side, and can be tried again", async ({ page }) => {
+  be.inviteSmsFails = "The SMS service could not be reached";
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Add someone/i }).click();
+  await page.getByLabel("Staff name").fill("Thabo");
+  await page.getByLabel("Staff mobile number").fill("082 555 0100");
+  await page.getByRole("button", { name: /Add to staff list/i }).click();
+
+  // They are on the list — the add succeeded — but nothing reached them, and
+  // the dialog says which, and why, rather than "sent" for a message that
+  // never went.
+  expect(be.staff.find((s) => s.name === "Thabo")?.status).toBe("invited");
+  await expect(page.getByText("The SMS to +27825550100 could not be sent.")).toBeVisible();
+  await expect(page.getByText(/The SMS service could not be reached\. Nothing has reached Thabo/)).toBeVisible();
+  await expect(page.getByText(/An SMS has been sent/)).toHaveCount(0);
+  expect(be.smsSent).toEqual([]);
+  // The message is still there to pass on by hand.
+  await expect(page.getByRole("button", { name: /copy a message for them/i })).toContainText("+27825550100");
+  await page.getByRole("button", { name: /^Got it$/ }).click();
+
+  // The row wears the failure in red, aimed at the shop's side, not the amber
+  // "waiting on them" that would send the manager to chase the colleague.
+  const failed = page.getByRole("button", { name: /Thabo.s invitation SMS did not go/i });
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText("The SMS service could not be reached");
+  await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i })).toHaveCount(0);
+
+  // The service comes back; the row's own "try again" sends it.
+  be.inviteSmsFails = null;
+  await failed.click();
+  await page.getByRole("button", { name: /^Try again$/ }).click();
+  await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();
+  expect(be.smsSent.map((m) => m.to)).toEqual(["+27825550100"]);
+  await page.getByRole("button", { name: /^Got it$/ }).click();
+  await expect(page.getByRole("button", { name: /Thabo cannot sign in yet/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /invitation SMS did not go/i })).toHaveCount(0);
+});
+
+test("a second invitation within a minute is refused, in the server's words", async ({ page }) => {
+  // SMSes cost money and a stuck manager tapping "send again" must not turn
+  // into a bill; the server's cooldown is the guard, and the dialog shows its
+  // refusal rather than claiming a send that did not happen.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await page.getByRole("button", { name: /Add someone/i }).click();
+  await page.getByLabel("Staff name").fill("Thabo");
+  await page.getByLabel("Staff mobile number").fill("082 555 0100");
+  await page.getByRole("button", { name: /Add to staff list/i }).click();
+  await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();
+
+  await page.getByRole("button", { name: /Send the SMS again/i }).click();
+  await expect(page.getByText("Not sent.")).toBeVisible();
+  await expect(page.getByText("An invitation went to Thabo less than a minute ago.")).toBeVisible();
+  expect(be.smsSent).toHaveLength(1);
 });
 
 test("the link to send stays on the row of anyone who cannot sign in yet", async ({ page }) => {
@@ -3280,6 +3348,9 @@ test("the link to send stays on the row of anyone who cannot sign in yet", async
     discount_limit_percent: null,
     discount_limit_amount: null,
     last_code_error: null,
+    // Sent on that shift, long enough ago that sending again is allowed.
+    invite_sent_at: new Date(Date.now() - 3_600_000).toISOString(),
+    invite_send_error: null,
   });
 
   await pairAndSignIn(page, USERS.manager.pin);
@@ -3289,18 +3360,25 @@ test("the link to send stays on the row of anyone who cannot sign in yet", async
   // In words on the row, and tappable — not a chip that reads as decoration.
   const pending = page.getByRole("button", { name: /Thabo cannot sign in yet/i });
   await expect(pending).toBeVisible();
+  await expect(pending).toContainText("They were sent the link by SMS");
   await pending.click();
 
-  // It opens the same instructions, link and all.
-  await expect(page.getByText("No SMS has been sent.")).toBeVisible();
+  // It opens the same instructions, link and all — and says what went, when.
+  await expect(page.getByText("An SMS has been sent to +27825550100.")).toBeVisible();
+  await expect(page.getByText(/^Sent at \d\d:\d\d today\./)).toBeVisible();
   await expect(
     page.getByRole("link", { name: /pos\.innovaearth\.com\/enrol/ })
   ).toHaveAttribute("href", "https://pos.innovaearth.com/enrol/");
   // Naming the right number matters: enrolment matches on it, and a code
   // requested against any other number is silently never sent.
   await expect(
-    page.getByRole("button", { name: /copy a message for them/i })
+    page.getByRole("button", { name: /The message they were sent/i })
   ).toContainText("+27825550100");
+
+  // Their phone was off, or they deleted it: it can go again from here.
+  await page.getByRole("button", { name: /Send the SMS again/i }).click();
+  await expect(page.getByText(/^Sent at \d\d:\d\d today\./)).toBeVisible();
+  expect(be.smsSent.map((m) => m.to)).toEqual(["+27825550100"]);
   await page.getByRole("button", { name: /^Got it$/ }).click();
 
   // Still there after the dialog is dismissed: it is the job, not a receipt for
@@ -3344,7 +3422,8 @@ test("a code that failed to send is reported as the shop's problem, not the coll
   // And the dialog leads with the failure, aimed at the shop's side of it.
   await failed.click();
   await expect(page.getByText("asked for a code, and it failed to send")).toBeVisible();
-  await expect(page.getByText("No SMS has been sent.")).toHaveCount(0);
+  await expect(page.getByText(/No SMS has been sent/)).toHaveCount(0);
+  await expect(page.getByText(/An SMS has been sent/)).toHaveCount(0);
 
   // The instructions are still there underneath: once the SMS account is put
   // right, the same steps are the way back in.

@@ -277,6 +277,15 @@ export class Backend {
      * directly the way they set a discount limit.
      */
     last_code_error: string | null;
+    /**
+     * The invitation SMS (0085): when the provider last took one, why the
+     * last attempt did not go, and how many went. Optional because a row
+     * pushed by a test for somebody added before invitations were sent
+     * leaves them out, exactly as the database does for such a row.
+     */
+    invite_sent_at?: string | null;
+    invite_send_error?: string | null;
+    invite_sms_count?: number;
   }[] = [
     { id: "u1", name: "Manager", phone: "+27820000001", role: "admin",
       status: "active", active: true, permissions: [],
@@ -291,6 +300,15 @@ export class Backend {
       discount_limit_percent: null, discount_limit_amount: null,
       last_code_error: null },
   ];
+  /**
+   * Every SMS the auth function would have handed to the provider, in order.
+   * The real function sends through BulkSMS; what the browser suite can hold
+   * to account is that the till asked for the right person's invitation with
+   * the manager's credentials, and what the screen then claims went.
+   */
+  smsSent: { to: string; body: string }[] = [];
+  /** When set, the provider refuses every invitation with this reason. */
+  inviteSmsFails: string | null = null;
   /** Credit notes written against sales (0045), newest last. */
   returns: {
     id: string; sale_id: string; doc_number: string; reason: string;
@@ -1147,6 +1165,49 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
   // 0056: the reader. The model itself is not here — what a test can pin is
   // that the till sends the pages, shows the answer for checking, and files
   // exactly what was on that screen.
+  // 0085: the invitation SMS. Sent by the auth function (where the SMS
+  // secret lives) on the manager's register token and PIN, through the two
+  // RPCs the migration adds; the refusals below are theirs, word for word.
+  await page.route("**/functions/v1/auth", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    let b: Record<string, unknown> = {};
+    try {
+      b = JSON.parse(route.request().postData() || "{}");
+    } catch { /* falls through to the checks below */ }
+    const respond = (status: number, data: unknown) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (b.action !== "send_invite") return respond(400, { ok: false, message: "Unknown action" });
+    // A till's token, or a phone's: user_with_perm proves either the same way.
+    const tok = String(b.register_token ?? "");
+    if (tok !== REGISTER_TOKEN && !tok.startsWith("personal-token-")) {
+      return respond(400, { ok: false, message: "Register not paired or revoked" });
+    }
+    if (b.pin !== USERS.manager.pin) return respond(400, { ok: false, message: "Invalid PIN" });
+    const target = be.staff.find((u) => u.id === b.user_id);
+    if (!target) return respond(400, { ok: false, message: "No such staff member" });
+    if (!target.active) return respond(400, { ok: false, message: `${target.name} has been signed out` });
+    if (target.status !== "invited") return respond(400, { ok: false, message: `${target.name} can already sign in` });
+    if ((target.invite_sms_count ?? 0) >= 5) {
+      return respond(400, { ok: false, message: `${target.name} has been sent the invitation five times already. Pass the message on yourself.` });
+    }
+    if (target.invite_sent_at && Date.now() - Date.parse(target.invite_sent_at) < 60_000) {
+      return respond(400, { ok: false, message: `An invitation went to ${target.name} less than a minute ago` });
+    }
+    const text =
+      `You have been added to the till at work. ` +
+      `Go to https://pos.innovaearth.com/enrol/ and enter your number ${target.phone} - ` +
+      `you will get an SMS code, and then you choose your own PIN.`;
+    if (be.inviteSmsFails) {
+      target.invite_send_error = be.inviteSmsFails;
+      return respond(200, { ok: true, sent: false, reason: be.inviteSmsFails, phone: target.phone, text });
+    }
+    be.smsSent.push({ to: target.phone, body: text });
+    target.invite_sent_at = new Date().toISOString();
+    target.invite_send_error = null;
+    target.invite_sms_count = (target.invite_sms_count ?? 0) + 1;
+    return respond(200, { ok: true, sent: true, reason: null, phone: target.phone, text });
+  });
+
   await page.route("**/functions/v1/tillai", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
     let b: Record<string, unknown> = {};
@@ -3551,7 +3612,14 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_admin_list_users":
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        return json(be.staff.map((s) => ({ ...s })));
+        // The count is the server's own bookkeeping; the roster does not
+        // carry it, and the two SMS columns are null for a row that never had
+        // one, as they are in the database.
+        return json(be.staff.map(({ invite_sms_count: _n, ...s }) => ({
+          ...s,
+          invite_sent_at: s.invite_sent_at ?? null,
+          invite_send_error: s.invite_send_error ?? null,
+        })));
 
       case "rpc/pos_admin_invite_user": {
         if (!tokenOk) return fail("Register not paired or revoked");
