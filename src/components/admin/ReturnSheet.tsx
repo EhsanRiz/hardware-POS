@@ -5,6 +5,7 @@ import {
   saleReturns,
   type SaleReturn,
 } from "../../lib/adminApi";
+import { cashSessionStatus } from "../../lib/cashup";
 import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/format";
 import { printReceipt } from "../../lib/print";
@@ -49,6 +50,17 @@ export default function ReturnSheet({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Is there a drawer open on this till?
+   *
+   * null while it is being asked, so nothing is claimed before it is known.
+   * Cash cannot leave a drawer nobody is counting — that is the server's rule
+   * and it is a good one — but this sheet used to let the cashier pick the
+   * lines, choose shelf or damaged, type a reason and press the button before
+   * saying so. Worse, it said "recorded against the OPEN till session" while
+   * it was doing it, which was a statement about a session that did not exist.
+   */
+  const [drawerOpen, setDrawerOpen] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +77,18 @@ export default function ReturnSheet({
         if (!cancelled) setError(errorMessage(e, "Could not open this sale for a return"));
       }
     })();
+    // Asked separately and never allowed to fail the sheet: a return to an
+    // ACCOUNT needs no drawer at all, and a sheet that refused to open because
+    // it could not check something it may not need would be worse than one
+    // that finds out at the end.
+    void cashSessionStatus()
+      .then((st) => {
+        if (!cancelled) setDrawerOpen(st != null);
+      })
+      .catch(() => {
+        if (!cancelled) setDrawerOpen(true);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -110,6 +134,8 @@ export default function ReturnSheet({
   const total = chosen.reduce((t, li) => t + lineRefund(li, state[li.id].qty), 0);
   const isAccount = sale.payment_method === "account";
   const cardNote = !isAccount && sale.payment_method && sale.payment_method !== "cash";
+  /** Cash has to come out of a drawer, and there is not one open. */
+  const needsDrawer = !isAccount && drawerOpen === false;
 
   async function confirm() {
     setBusy(true);
@@ -191,6 +217,25 @@ export default function ReturnSheet({
         </header>
 
         <div className="p-5 space-y-4">
+          {/* Said FIRST, and said as an instruction.
+              The rule is the server's and it is a good one — cash must not
+              leave a drawer nobody is counting — but the cashier met it as a
+              refusal after choosing the lines, marking them shelf or damaged,
+              typing a reason and pressing the button, with a customer standing
+              there. And "money cannot leave a drawer nobody is counting" says
+              why, not what to do about it. This says where to go.
+
+              The goods can still come back either way: it is only the CASH
+              that is blocked, so the quantities and the reason are left alone
+              rather than the sheet refusing to open. */}
+          {needsDrawer && (
+            <p className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg">
+              <strong>No drawer is open on this till.</strong> Cash cannot go
+              back out of a drawer nobody is counting. Open the day first —
+              Manage → Cash-up → Open the day — then come back to this invoice.
+            </p>
+          )}
+
           {error && (
             <p
               className="px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg cursor-pointer"
@@ -288,7 +333,9 @@ export default function ReturnSheet({
                 <span className="ml-auto text-xs text-stone-500 text-right">
                   {isAccount
                     ? "Credited to the customer's account"
-                    : "Cash from the drawer — recorded against the open till session"}
+                    : needsDrawer
+                      ? "Cash out of the drawer — and there is no drawer open"
+                      : "Cash from the drawer — recorded against the open till session"}
                 </span>
               </div>
 
@@ -310,8 +357,9 @@ export default function ReturnSheet({
                 </button>
                 <button
                   className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
-                  disabled={busy || chosen.length === 0 || !reason.trim()}
+                  disabled={busy || chosen.length === 0 || !reason.trim() || needsDrawer}
                   onClick={() => void confirm()}
+                  title={needsDrawer ? "Open the day first — Manage → Cash-up" : undefined}
                 >
                   {busy
                     ? "Refunding…"

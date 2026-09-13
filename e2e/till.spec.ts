@@ -4340,6 +4340,61 @@ test("a search result opens the closer look, and the quantity is settled there",
   await expect(page.getByLabel("Quantity of Chain 6mm Galvanised")).toHaveValue("6");
 });
 
+test("a return with no drawer open says so first, and says where to open it", async ({ page }) => {
+  // The rule is the server's and it is a good one: cash must not leave a
+  // drawer nobody is counting. The cashier used to meet it as a REFUSAL after
+  // choosing the lines, marking them shelf or damaged, typing a reason and
+  // pressing the button, with a customer standing at the counter — and the
+  // sheet said "recorded against the open till session" while they did it,
+  // which was a claim about a session that did not exist.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  // Nobody has opened the day on this till.
+  be.cashSession = null;
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Sales$/ }).click();
+  await page.getByRole("button", { name: /^Return$/ }).click();
+
+  // Said BEFORE anything is filled in, and said as an instruction: where to
+  // go, not merely why not.
+  // The paragraph, not the bold half of it: getByText matches the <strong>,
+  // which carries the headline and not the instruction under it.
+  const warning = page
+    .locator("p")
+    .filter({ hasText: /No drawer is open on this till/i })
+    .first();
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText(/Cash-up/);
+
+  // And it does not claim a session it has not got.
+  await expect(page.getByText(/recorded against the open till session/i)).toHaveCount(0);
+
+  // The goods can still be chosen — it is only the CASH that is blocked — but
+  // the button will not pretend it can pay out.
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("burst bag");
+  await expect(page.getByRole("button", { name: /print credit note/ })).toBeDisabled();
+
+  // Open the day, reopen the invoice, and the same return goes through.
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  await page.getByRole("button", { name: /^Cancel$/ }).click();
+  await page.getByRole("button", { name: /^Return$/ }).click();
+  await expect(page.locator("p").filter({ hasText: /No drawer is open/i })).toHaveCount(0);
+  await page.getByLabel("More Cement 42.5N 50kg").click();
+  await page.getByLabel("Return reason").fill("burst bag");
+  await expect(page.getByRole("button", { name: /print credit note/ })).toBeEnabled();
+});
+
 test("goods come back against the invoice: partial, then the rest, then nothing", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
 
@@ -4422,6 +4477,12 @@ test("goods come back against the invoice: partial, then the rest, then nothing"
 });
 
 test("no open till session means no cash refund", async ({ page }) => {
+  // The SERVER's refusal, which is the one that matters. The sheet now warns
+  // up front and disables the button when it knows there is no drawer — so to
+  // reach the server this has to be the case the sheet cannot know about: the
+  // drawer was open when the sheet was opened and was CLOSED while it sat
+  // there, which on a shop with two tills and one cash-up is a Friday
+  // afternoon. The client guard is a courtesy; this is the rule.
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
@@ -4429,13 +4490,20 @@ test("no open till session means no cash refund", async ({ page }) => {
   await page.getByRole("button", { name: /Tender & print/i }).click();
   await page.getByLabel("Close").click();
 
-  be.cashSession = null;
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
 
   await openManage(page);
   await page.getByRole("button", { name: /^Sales$/ }).click();
   await page.getByRole("button", { name: /^Return$/ }).click();
   await page.getByLabel("More Cement 42.5N 50kg").click();
   await page.getByLabel("Return reason").fill("no drawer open");
+
+  // Somebody cashes up on the other till while this one is being filled in.
+  be.cashSession = null;
+
   await page.getByRole("button", { name: /& print credit note/ }).click();
 
   // The server's refusal reaches the person, in its own words, and nothing
