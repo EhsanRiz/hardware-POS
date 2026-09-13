@@ -1377,8 +1377,20 @@ export default function POS() {
               className="btn-line"
               disabled={lines.length === 0 || busy}
               onClick={() => setAskDelivery(true)}
+              title={delivery ? `Deliver to ${delivery.customerName}` : undefined}
             >
-              {delivery ? `Deliver · ${delivery.customerName}` : "Deliver"}
+              {/* The destination is shown but BOUNDED. A trading name has no
+                  length limit and this button shares its row with five others
+                  that must not be pushed off it, so the name truncates here and
+                  is carried whole by the banner above the sale and by the
+                  button's own title. */}
+              {delivery ? (
+                <span className="deliver-who">
+                  Deliver · {delivery.customerName}
+                </span>
+              ) : (
+                "Deliver"
+              )}
             </button>
 
             <button
@@ -1399,7 +1411,13 @@ export default function POS() {
 
             {parkedEntries.length > 0 && (
               <button className="btn-line" onClick={resumeParked}>
-                Resume parked · {parkedEntries.length}
+                {/* "Parked · 3", not "Resume parked · 3". It sits beside
+                    "Park sale", which is what makes it unambiguous, and the
+                    word it loses was 45px — the difference between six buttons
+                    on one row of a 1024 counter screen and five plus an orphan.
+                    Pressing a thing called "Parked" to get the parked ones back
+                    is not a sentence anybody has to be taught. */}
+                Parked · {parkedEntries.length}
               </button>
             )}
 

@@ -2006,7 +2006,7 @@ test("a sale open when the screen reloads comes back parked", async ({ page }) =
   await expect(banner(page)).toContainText(/has been parked/i);
   await expect(page.locator(".line-row")).toHaveCount(0);
 
-  await page.getByRole("button", { name: /Resume parked/i }).click();
+  await page.getByRole("button", { name: /^Parked ·/ }).click();
   await expect(page.locator(".line-row")).toHaveCount(2);
   await expect(page.locator(".total-row .fig")).toContainText("1 565.00");
 
@@ -2031,7 +2031,7 @@ test("two parked sales are chosen between, not resumed blind", async ({ page }) 
 
   // TWO PARKED: the button asks which. It used to bring back the last one
   // parked, silently, and the cashier parked it again to reach the other.
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   const which = page.getByRole("dialog", { name: "Which parked sale?" });
   await expect(which).toBeVisible();
   const rows = which.locator(".modal-row");
@@ -2047,10 +2047,10 @@ test("two parked sales are chosen between, not resumed blind", async ({ page }) 
   await expect(which).toHaveCount(0);
   await expect(page.locator(".line-row")).toHaveCount(1);
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
-  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 1" })).toBeVisible();
 
   // With a sale open, the other cannot be pulled over it.
-  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: "Parked · 1" }).click();
   await expect(banner(page)).toContainText(/Finish or park this sale/);
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
 
@@ -2059,10 +2059,10 @@ test("two parked sales are chosen between, not resumed blind", async ({ page }) 
   await page.getByRole("button", { name: "Void sale" }).click();
   await page.getByRole("dialog", { name: "This sale was parked" }).getByRole("button", { name: "Delete it" }).click();
   await expect(page.locator(".line-row")).toHaveCount(0);
-  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: "Parked · 1" }).click();
   await expect(page.getByRole("dialog", { name: "Which parked sale?" })).toHaveCount(0);
   await expect(page.locator(".line-row")).toContainText("Twin & Earth 2.5mm 100m");
-  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Parked ·/ })).toHaveCount(0);
 });
 
 test("a parked sale stays parked until it is sold or deleted", async ({ page }) => {
@@ -2075,18 +2075,18 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
   };
   await scanCement(); await park();
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "2"); await park();
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
   const which = page.getByRole("dialog", { name: "Which parked sale?" });
   const rows = which.locator(".modal-row");
 
   // RESUMED AND PARKED AGAIN IS THE SAME SALE, in the same slot at the same
   // time — not a third entry with a new time.
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await rows.nth(0).click();
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
   await park();
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
   await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
@@ -2099,26 +2099,26 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
   await expect(ask).toBeVisible();
   await ask.getByRole("button", { name: "Put it back" }).click();
   await expect(page.locator(".line-row")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
 
   // A SALE NOBODY IS COMING BACK FOR is deleted from the list itself, after
   // a confirm; the other stays where it was.
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
   await which.getByRole("button", { name: "Keep it" }).click();
   await expect(rows).toHaveCount(2);
   await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
   await which.getByRole("button", { name: "Delete it" }).click();
   await expect(which).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 1" })).toBeVisible();
 
   // AND "DELETE IT" ON THE VOID PROMPT IS THE OTHER WAY OUT.
-  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: "Parked · 1" }).click();
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
   await page.getByRole("button", { name: "Void sale" }).click();
   await ask.getByRole("button", { name: "Delete it" }).click();
   await expect(page.locator(".line-row")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Parked ·/ })).toHaveCount(0);
 
   // THE COUNTER CLEARS AT ONCE, before the server has answered: the next
   // customer's first keystrokes must not land in a basket about to be wiped.
@@ -2134,7 +2134,7 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
   await expect(page.locator(".result-row", { hasText: "Twin & Earth 2.5mm 100m" })).toBeVisible();
   be.parkDelayMs = 0;
   await page.getByPlaceholder(/Scan barcode/i).fill("");
-  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: "Parked · 1" }).click();
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
   await page.getByRole("button", { name: "Void sale" }).click();
   await ask.getByRole("button", { name: "Delete it" }).click();
@@ -2142,26 +2142,26 @@ test("a parked sale stays parked until it is sold or deleted", async ({ page }) 
 
   // SOLD IS GONE: a resumed sale that is tendered leaves nothing parked.
   await scanCement(); await park();
-  await page.getByRole("button", { name: "Resume parked · 1" }).click();
+  await page.getByRole("button", { name: "Parked · 1" }).click();
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
   await expect(banner(page)).toContainText(/INV-\d+/);
   await page.getByLabel("Close", { exact: true }).click();
-  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Parked ·/ })).toHaveCount(0);
 
   // A REFRESH WITH A RESUMED SALE OPEN puts it back in its own slot, not a
   // new one: still two parked, not three.
   await scanCement(); await park();
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1"); await park();
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await rows.nth(0).click();
   await expect(page.locator(".line-row")).toContainText("Cement 42.5N 50kg");
   await page.reload();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(banner(page)).toContainText(/has been parked/i);
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
   // In its own slot: still first, at the time it was first parked.
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await expect(rows.nth(0)).toContainText("Cement 42.5N 50kg");
   await expect(rows.nth(1)).toContainText("Twin & Earth 2.5mm 100m");
 });
@@ -2191,21 +2191,21 @@ test("a sale parked on one till is picked up on another, by anyone", async ({ pa
 
   // ZAIB WALKS OVER TO THE YARD, where the manager is on the till. The
   // basket is there without anybody refreshing anything.
-  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
-  await yard.getByRole("button", { name: "Resume parked · 1" }).click();
+  await expect(yard.getByRole("button", { name: "Parked · 1" })).toBeVisible({ timeout: 15000 });
+  await yard.getByRole("button", { name: "Parked · 1" }).click();
   await expect(yard.locator(".line-row")).toContainText("Cement 42.5N 50kg");
   await expect(yard.getByRole("button", { name: /Zaib Ahmad/ })).toBeVisible();
   // Taken off the list as it is taken: the front counter cannot also have it.
   expect(be.parkedSales).toHaveLength(0);
-  await expect(page.getByRole("button", { name: /Resume parked/ })).toHaveCount(0, { timeout: 15000 });
+  await expect(page.getByRole("button", { name: /^Parked ·/ })).toHaveCount(0, { timeout: 15000 });
 
   // PARKED AGAIN IN THE YARD, it says so on the front counter's list, next
   // to one parked there. And the yard's is picked up at the front.
   await yard.getByRole("button", { name: "Park sale" }).click();
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
   await page.getByRole("button", { name: "Park sale" }).click();
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   const which = page.getByRole("dialog", { name: "Which parked sale?" });
   const rows = which.locator(".modal-row");
   await expect(rows.nth(0)).toContainText("Zaib Ahmad");
@@ -2217,11 +2217,11 @@ test("a sale parked on one till is picked up on another, by anyone", async ({ pa
 
   // DELETED ON ONE TILL IS GONE ON THE OTHER.
   await page.getByRole("button", { name: "Park sale" }).click();
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await which.getByRole("button", { name: /^Delete the sale parked at/ }).nth(1).click();
   await which.getByRole("button", { name: "Delete it" }).click();
-  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
-  await expect(yard.getByRole("button", { name: "Resume parked · 1" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Parked · 1" })).toBeVisible();
+  await expect(yard.getByRole("button", { name: "Parked · 1" })).toBeVisible({ timeout: 15000 });
   expect(be.parkedSales).toHaveLength(1);
   await yardContext.close();
 });
@@ -2235,12 +2235,12 @@ test("parked with the line down, a sale stays on this till until the line return
   await page.getByRole("button", { name: "Park sale" }).click();
   await expect(banner(page)).toContainText(/on this till/);
   expect(be.parkedSales).toHaveLength(0);
-  await expect(page.getByRole("button", { name: "Resume parked · 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parked · 1" })).toBeVisible();
 
   // Kept on the device, said so, and still resumable with the line down.
   await addBySearch(page, "twin", "Twin & Earth 2.5mm 100m", "1");
   await page.getByRole("button", { name: "Park sale" }).click();
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   const which = page.getByRole("dialog", { name: "Which parked sale?" });
   await expect(which.locator(".modal-row").nth(0)).toContainText("this till only");
   await which.getByRole("button", { name: "Cancel" }).click();
@@ -2249,8 +2249,8 @@ test("parked with the line down, a sale stays on this till until the line return
   be.offline = false;
   await expect.poll(() => be.parkedSales.length, { timeout: 20000 }).toBe(2);
   expect(be.parkedSales.map((p) => p.register_name)).toEqual(["Front Counter", "Front Counter"]);
-  await expect(page.getByRole("button", { name: "Resume parked · 2" })).toBeVisible();
-  await page.getByRole("button", { name: "Resume parked · 2" }).click();
+  await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Parked · 2" }).click();
   await expect(which.locator(".modal-row").nth(0)).toContainText("Front Counter · Sam");
 });
 
@@ -2338,7 +2338,7 @@ test("a completed sale does not come back parked", async ({ page }) => {
   await page.reload();
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
   await expect(page.getByText(/has been parked/i)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Resume parked/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Parked ·/ })).toHaveCount(0);
 });
 
 test("an approval code releases a sale taken offline, and survives the queue", async ({ page }) => {
@@ -7729,6 +7729,11 @@ test("the slip on screen is big enough to read, and none of it is off the edge",
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
 
+  // Waited for, not raced. This measured the popup the instant the button was
+  // clicked and happened to win; the slip is drawn after the sale comes back
+  // from the server, so on a slower run it read null and blamed the layout.
+  await expect(page.locator(".animate-scale-in pre")).toBeVisible();
+
   const m = await page.evaluate(() => {
     const pre = document.querySelector(".animate-scale-in pre") as HTMLElement;
     const box = pre.parentElement!;
@@ -7907,6 +7912,10 @@ test("Manage's sections and the way out share one row at the counter", async ({ 
   await page.setViewportSize({ width: 1024, height: 768 });
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
+  // Waited for. openManage presses the PIN and returns; the screen behind it
+  // is rendered when the PIN comes back, so measuring straight after was a
+  // race that won on its own and lost under a full suite.
+  await expect(page.getByRole("heading", { name: "Manage" })).toBeVisible();
 
   const m = await page.evaluate(() => {
     const head = document.querySelector("header:has(h1)") as HTMLElement;
@@ -8157,6 +8166,14 @@ test("a counter machine prints without being asked twice", async ({ page }) => {
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  // Waited for, not raced: the slip goes to the printer once the sale is back
+  // from the server, so reading the counter the instant the button is clicked
+  // asks whether it has printed before it could have.
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints))
+    .toBeGreaterThanOrEqual(1);
 
   // Paper, with the sale on it.
   const out = await page.evaluate(() => {

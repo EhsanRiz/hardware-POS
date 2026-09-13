@@ -537,6 +537,35 @@
  */
 .sell { --tillai-corner: 34px; }
 
+/*
+ * Six buttons, one row, on a 1024 counter screen.
+ *
+ * They came to 767px in a 643px row and wrapped — and they wrapped even with a
+ * SHORT destination, because the five fixed ones plus the gaps are already
+ * 533px and "Deliver · Maxim" is another 125. The compaction that was meant to
+ * hold them was keyed on the screen's HEIGHT, which is the wrong axis for a row
+ * that runs out of WIDTH: a tall 1024 monitor got the roomy buttons and wrapped
+ * worse than a short one.
+ *
+ * Keyed on width now, at the breakpoint the line-item columns already use.
+ */
+@media (max-width: 1359px) {
+  .sell-actions { gap: 6px; }
+  .sell-actions .btn-line { padding: 0 9px; }
+  /* And the one button whose width is not ours to decide. A trading name has
+     no length limit; this caps it and lets it trail off, which is honest
+     because the banner above the sale carries the whole thing and so does the
+     button's title. */
+  .deliver-who {
+    display: inline-block;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+}
+
 /* ---- Buttons ----------------------------------------------------------- */
 
 /*

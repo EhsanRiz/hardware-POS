@@ -326,14 +326,14 @@ test.describe("the shop's own till", () => {
     test("the sale's actions are one row, not two", async ({ page }) => {
       await signedIn(page);
       // WITH A SALE PARKED, which is the state the photograph from the shop was
-      // taken in and the only state that shows the bug: "Resume parked · 2" is
+      // taken in and the only state that shows the bug: "Parked · 2" is
       // a sixth button and ~156px, and it is what tips the row over. Without it
       // five buttons fit at any width this till is ever run at, and a test that
       // skips this step passes with the fix removed — it did.
       await page.getByRole("button", { name: /Park sale/i }).click();
       await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
       await page.keyboard.press("Enter");
-      const resume = page.getByRole("button", { name: /Resume parked/i });
+      const resume = page.getByRole("button", { name: /^Parked ·/ });
       await expect(resume).toBeVisible();
 
       // Measured by TOP EDGE rather than by row height: a wrapped button is the
@@ -422,7 +422,7 @@ test.describe("the shop's own till", () => {
       await page.getByRole("button", { name: /Park sale/i }).click();
       await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("button", { name: /Resume parked/i })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Parked ·/ })).toBeVisible();
       const tops = await page.evaluate(() =>
         [...document.querySelectorAll<HTMLElement>(".sell-actions .btn-line")].map(
           (b) => Math.round(b.getBoundingClientRect().top)
@@ -557,7 +557,7 @@ test.describe("the shop's own till", () => {
       expect(gap, "clearance between the second rule and the total").toBeGreaterThan(0);
     });
 
-    test("a named delivery wraps the actions tidily, clear of the TillAI bubble", async ({ page }) => {
+    test("a named delivery keeps the actions on one row, clear of the bubble", async ({ page }) => {
       await signedIn(page);
       // With a sale parked, which is the state the counter was in: "Resume
       // parked" is a sixth button, and six plus a named destination is what
@@ -565,14 +565,20 @@ test.describe("the shop's own till", () => {
       await page.getByRole("button", { name: /Park sale/i }).click();
       await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("button", { name: /Resume parked/i })).toBeVisible();
+      // Matched loosely on purpose: this step only needs the sixth button to
+      // exist. Pinned to the exact wording, shortening the label would fail
+      // HERE — "the button I look for is gone" — instead of at the row
+      // measurement below, which is the thing actually being protected.
+      await expect(page.getByRole("button", { name: /parked ·/i })).toBeVisible();
 
       await page.getByRole("button", { name: /^Deliver$/ }).click();
-      await page.getByLabel("Deliver to").fill("Christ Church");
+      // A long one deliberately: a trading name has no length limit, and the
+      // short ones fit even before this was fixed.
+      await page.getByLabel("Deliver to").fill("Christ Church Ladybrand");
       await page.getByLabel("Address").fill("12 Church St, Ladybrand");
       await page.getByRole("button", { name: "Add to the sale" }).click();
       await expect(
-        page.getByRole("button", { name: /Deliver · Christ Church/ })
+        page.getByRole("button", { name: /^Deliver · Christ Church/ })
       ).toBeVisible();
 
       const m = await page.evaluate(() => {
@@ -620,14 +626,25 @@ test.describe("the shop's own till", () => {
         };
       });
 
-      // It wrapped — that is the arrangement, not the bug.
-      expect(m.rows, "rows the actions occupy with a named delivery")
-        .toBeGreaterThanOrEqual(2);
-      // And it wrapped TIDILY. "Void sale" used to carry margin-left: auto to
-      // hold it away from the four pressed all day, which on one row is right
-      // and on a wrapped one throws it alone to the far end of a band of its
-      // own. The last line starts where the first line starts.
-      expect(m.lastLeft, "where the wrapped line begins").toBe(m.firstLeft);
+      // ONE row, with the longest destination this shop is likely to type.
+      // Six buttons came to 767px in a 643px row and wrapped — and wrapped even
+      // with a short destination, because the five fixed ones and their gaps
+      // are already 533. "Void sale" ending up alone on a band of its own is
+      // what the counter saw, and it is what this stops.
+      expect(m.rows, "rows the actions occupy with a named delivery").toBe(1);
+
+      // AND on a TALL 1024 screen, which is the case the width rule exists for.
+      // The compaction used to be keyed on the screen's height, so a tall
+      // monitor got the roomy buttons and overflowed by ~100px while a short
+      // one was fine — and a test that only looked at the short one passed with
+      // the width rule taken out. It did.
+      await page.setViewportSize({ width: 1024, height: 900 });
+      const tall = await page.evaluate(() => {
+        const acts = document.querySelector(".sell-actions") as HTMLElement;
+        const btns = [...acts.querySelectorAll<HTMLElement>("button")];
+        return new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size;
+      });
+      expect(tall, "rows the actions occupy on a tall 1024 screen").toBe(1);
       // The bubble is fixed to this corner on every screen in the app, so the
       // band keeps its own content out of it rather than moving the bubble.
       expect(m.covered, "action buttons under the TillAI bubble").toEqual([]);
