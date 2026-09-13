@@ -5173,7 +5173,7 @@ test("a sale is cancelled from the receipt with a manager's PIN, and the stock c
   for (const d of USERS.employee.pin.split("")) {
     await ask.locator(`button:text-is("${d}")`).first().click();
   }
-  await expect(ask.getByRole("alert")).toContainText(/Not permitted/);
+  await expect(ask.getByRole("alert")).toContainText(/Not a manager's PIN, and not a code we recognise/);
   for (const d of USERS.manager.pin.split("")) {
     await ask.locator(`button:text-is("${d}")`).first().click();
   }

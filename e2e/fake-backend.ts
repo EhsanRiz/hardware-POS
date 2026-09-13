@@ -1523,9 +1523,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const secret = String(body.p_pin ?? "");
         if (secret === USERS.manager.pin) {
           // fine
-        } else if (secret === USERS.employee.pin || secret === USERS.shelf.pin) {
-          return fail("Not permitted: void_refund");
         } else {
+          // 0092: a real PIN without the right and a wrong PIN are one
+          // refusal — the old "Not permitted" told a guesser which six digits
+          // were somebody's. Both fall through to the code reading.
+
           const code = be.approvalCodes.find(
             (c) => c.code === secret && !c.used_at && Date.parse(c.expires_at) > Date.now()
           );

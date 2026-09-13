@@ -45,6 +45,11 @@ begin
   end;
   raise exception 'FAILED: % — it was allowed', what;
 end $$;
+-- Some checks run with the role set to anon, and since 0092 a new function
+-- is nobody's until granted — these are the test's own.
+grant execute on function assert(boolean, text) to anon;
+grant execute on function assert_eq(anyelement, anyelement, text) to anon;
+grant execute on function assert_refuses(text, text) to anon;
 
 -- The fixture: a paired till, a manager and a cashier who can both sign in.
 do $$
@@ -4261,11 +4266,11 @@ begin
   perform assert_eq(v_row.assigned_to, v_emp, 'belonging to one named person');
 
   -- RULE 4: single use, and dead once used.
-  perform assert_refuses(
-    format('select * from public.pos_enrol_device(%L, %L)', v_code, 'another phone'),
+  -- 0092: refused as no row, so the attempt stays counted.
+  perform assert_eq((select count(*)::int from public.pos_enrol_device(v_code, 'another phone')), 0,
     'a code cannot enrol a second device');
-  perform assert_refuses(
-    format('select * from public.pos_enrol_device(%L, %L)', 'ZZZZZZZZ', 'a stranger'),
+  -- 0092: refused as no row, so the attempt stays counted.
+  perform assert_eq((select count(*)::int from public.pos_enrol_device('ZZZZZZZZ', 'a stranger')), 0,
     'and a code nobody issued enrols nothing');
 
   -- Issuing a new code kills the old one, so a code read out and forgotten
@@ -4274,8 +4279,7 @@ begin
   begin
     select code into v_first from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
     select code into v_second from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
-    perform assert_refuses(
-      format('select * from public.pos_enrol_device(%L, %L)', v_first, 'stale'),
+    perform assert_eq((select count(*)::int from public.pos_enrol_device(v_first, 'stale')), 0,
       'the older code is dead the moment a new one is issued');
     perform assert(
       (select count(*) from public.pos_enrol_device(v_second, 'live')) = 1,
@@ -4390,6 +4394,9 @@ begin
   end;
   if v_n > 0 then raise exception 'FAILED: % — % row(s) came back', what, v_n; end if;
 end $$;
+-- Called with the role set to anon below, and since 0092 a new function is
+-- nobody's until granted — this one is the test's own.
+grant execute on function assert_hidden(text, text) to anon;
 
 do $$
 declare
@@ -5314,6 +5321,140 @@ begin
   perform assert(not has_table_privilege('anon', 'public.document_reads', 'select'),
     'nor read what was read');
   delete from public.auth_otps where id = v_id;
+end $$;
+
+-- 0092: the smaller things the review found ----------------------------------
+
+-- 1. A void answers a wrong PIN and a real-but-unentitled PIN with one voice.
+do $$
+declare v_tok text; v_emp uuid; v_prod uuid; v_price numeric; v_sale public.sales;
+        v_a text; v_b text;
+begin
+  select token into v_tok from till;
+  select id into v_emp from public.pos_admin_invite_user(
+    v_tok, '1234', 'Cashier 92', '+27820000095', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9595', gen_salt('bf')) where id = v_emp;
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  delete from public.approval_attempts;
+
+  begin
+    perform public.pos_void_sale(v_sale.id, v_tok, '9595', 'oops', v_emp);
+    raise exception 'FAILED: a cashier''s PIN voided a sale';
+  exception when others then v_a := sqlerrm;
+  end;
+  begin
+    perform public.pos_void_sale(v_sale.id, v_tok, '000000', 'oops', v_emp);
+    raise exception 'FAILED: a wrong PIN voided a sale';
+  exception when others then v_b := sqlerrm;
+  end;
+  perform assert_eq(v_a, v_b, 'a real PIN without the right and a wrong PIN are refused in the same words');
+  perform assert(v_a like 'Not a manager%', 'and neither names the permission');
+
+  -- The manager's PIN still voids, through the same door every RPC uses.
+  v_sale := public.pos_void_sale(v_sale.id, v_tok, '1234', 'changed their mind', v_emp);
+  perform assert_eq(v_sale.status::text, 'voided', 'a manager voids');
+  delete from public.approval_attempts;
+end $$;
+
+-- 3. Phone enrolment is throttled per caller — and the throttle counts,
+-- which the one in 0074 never did.
+do $$
+declare v_msg text := ''; v_n int; i int;
+begin
+  delete from public.enrolment_attempts;
+  perform set_config('request.headers', '{"cf-connecting-ip": "203.0.113.9"}', true);
+  for i in 1..20 loop
+    select count(*) into v_n from public.pos_enrol_device('NOTACODE', 'Phone');
+    perform assert_eq(v_n, 0, 'a wrong code enrols nothing');
+  end loop;
+  select count(*) into v_n from public.enrolment_attempts where ip = '203.0.113.9';
+  perform assert_eq(v_n, 20, 'and every wrong code was counted against the caller');
+  begin
+    perform public.pos_enrol_device('NOTACODE', 'Phone');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Too many wrong codes%', 'twenty wrong codes lock that caller');
+
+  perform set_config('request.headers', '{"x-forwarded-for": "198.51.100.4, 10.0.0.1"}', true);
+  select count(*) into v_n from public.pos_enrol_device('NOTACODE', 'Phone');
+  perform assert_eq(v_n, 0, 'another caller is answered — with nothing, not with the lock');
+  perform assert_eq(public.request_ip(), '198.51.100.4', 'the first address in a forwarded chain is the caller');
+  perform set_config('request.headers', '', true);
+  perform assert_eq(public.request_ip(), 'unknown', 'and with no gateway the bucket is one shared unknown');
+  delete from public.enrolment_attempts;
+end $$;
+
+-- 4. Codes come from the cryptographic generator, and still look right.
+do $$
+declare v_tok text; v_row record; v_emp uuid; i int;
+begin
+  select token into v_tok from till;
+  for i in 1..20 loop
+    select * into v_row from public.pos_issue_approval_code(v_tok, '1234', 10, null, null);
+    perform assert(v_row.code ~ '^\d{6}$', 'an approval code is six digits');
+    perform assert(public.random_digits(3) ~ '^\d{3}$', 'random_digits keeps leading zeros');
+  end loop;
+  select id into v_emp from public.app_users u where u.phone_e164 = '+27820000095';
+  select * into v_row from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+  perform assert(v_row.code ~ '^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$', 'an enrolment code is eight from the alphabet');
+  delete from public.approval_codes where org_id = (select org_id from fixture) and used_at is null;
+  delete from public.device_enrolments where app_user_id = v_emp;
+  -- Cashier 92 stays: their name is on the voided sale above.
+end $$;
+
+-- 6. A wiped shop keeps no parked baskets.
+do $$
+declare v_org uuid; v_n int;
+begin
+  v_org := public.innova_create_org('Parked Reset Shop', 'Old Manager', '+27820000096');
+  insert into public.parked_sales (id, org_id, register_name, parked_by_name, lines)
+  values (gen_random_uuid(), v_org, 'Front', 'Somebody', '[]'::jsonb);
+  perform public.innova_reset_org(v_org, 'Parked Reset Shop', 'Owner', '+27820000097');
+  select count(*) into v_n from public.parked_sales where org_id = v_org;
+  perform assert_eq(v_n, 0, 'the tester''s parked baskets go with the tester');
+end $$;
+
+-- 5. The grants, in both directions: every till entry point is callable by
+-- the anon key, and nothing else that runs as definer is.
+do $$
+declare r record; v_bad text := '';
+begin
+  for r in
+    select p.proname, p.oid::regprocedure::text as sig
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname like 'pos\_%'
+       -- The one helper that wears the prefix: 0022 revoked it on purpose.
+       and p.proname <> 'pos_admin_org_for'
+       and not has_function_privilege('anon', p.oid, 'execute')
+  loop
+    v_bad := v_bad || r.sig || '; ';
+  end loop;
+  perform assert(v_bad = '', 'every pos_* entry point is granted to anon: ' || v_bad);
+
+  v_bad := '';
+  for r in
+    select p.proname, p.oid::regprocedure::text as sig
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prosecdef
+       and (p.proname not like 'pos\_%' or p.proname = 'pos_admin_org_for')
+       and has_function_privilege('anon', p.oid, 'execute')
+  loop
+    v_bad := v_bad || r.sig || '; ';
+  end loop;
+  perform assert(v_bad = '', 'no other definer function is reachable by anon: ' || v_bad);
+
+  -- And a function nobody granted is a function nobody outside can call:
+  -- the defaults no longer hand it over.
+  create function public.zz_ungranted_probe() returns int language sql as 'select 1';
+  perform assert(not has_function_privilege('anon', 'public.zz_ungranted_probe()', 'execute'),
+    'a function created after 0092 without a grant is not anon''s');
+  drop function public.zz_ungranted_probe();
 end $$;
 
 select 'all database tests passed' as result;
