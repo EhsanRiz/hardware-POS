@@ -8,8 +8,10 @@ import {
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { fmtDate, fmtDateTime } from "../../lib/dates";
+import { cacheGet, cacheSet } from "../../lib/localCache";
 import { money } from "../../lib/money";
-import { useOnline } from "../../lib/offline";
+import { isNetworkError, useOnline } from "../../lib/offline";
+import { enqueueAction, onQueueChange, pendingDeliveryIds } from "../../lib/queue";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
 import type { User } from "../../lib/types";
@@ -24,12 +26,21 @@ import type { User } from "../../lib/types";
  * Outstanding first, oldest promise at the top: that is the order a driver
  * loads in, and it is the order the server returns.
  */
+const LIST_KEY = "deliveries.list";
+
 export default function Deliveries({ user }: { user: User }) {
   const online = useOnline();
-  const [rows, setRows] = useState<DeliveryRow[] | null>(null);
+  // The last list the line gave, so the driver's phone still shows this
+  // morning's load at a site with no signal — where the page gets signed.
+  const [rows, setRows] = useState<DeliveryRow[] | null>(() =>
+    cacheGet<DeliveryRow[] | null>(LIST_KEY, null)
+  );
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [busy, setBusy] = useState(false);
+  // Marked off on this device and not yet told to the server. Read from the
+  // queue itself, so a reload shows the same "will sync" the tap did.
+  const [pending, setPending] = useState<Set<string>>(pendingDeliveryIds);
 
   const [viewing, setViewing] = useState<DeliveryRow | null>(null);
   const [viewLines, setViewLines] = useState<DeliveryLine[] | null>(null);
@@ -38,15 +49,32 @@ export default function Deliveries({ user }: { user: User }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      setRows(await listDeliveries());
+      const fresh = await listDeliveries();
+      setRows(fresh);
+      cacheSet(LIST_KEY, fresh);
     } catch (e) {
-      setError(errorMessage(e, "Could not load the deliveries"));
+      // With the line down the cached list stands; only a real refusal is an error.
+      if (!isNetworkError(e)) setError(errorMessage(e, "Could not load the deliveries"));
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // When the queue drains (the line came back and sync sent the mark-offs),
+  // the server's list is the truth again.
+  useEffect(
+    () =>
+      onQueueChange(() => {
+        const now = pendingDeliveryIds();
+        setPending((prev) => {
+          if (prev.size > 0 && now.size === 0) void load();
+          return now;
+        });
+      }),
+    [load]
+  );
 
   useEffect(() => {
     if (!viewing) return;
@@ -105,15 +133,40 @@ export default function Deliveries({ user }: { user: User }) {
     };
   }
 
+  // Marked off on the phone: sent now if the line is up, queued if it is
+  // not — or if it drops mid-tap, which at a site is the usual way. The row
+  // shows delivered either way, with "will sync" until the server has it.
+  function markOffLocally(d: DeliveryRow) {
+    const at = new Date().toISOString();
+    enqueueAction({ id: `md-${d.id}`, kind: "mark_delivered", deliveryId: d.id, userId: user.id, at });
+    const local: DeliveryRow = {
+      ...d, status: "delivered", delivered_at: at, delivered_by_name: user.name,
+    };
+    setRows((prev) => {
+      const next = (prev ?? []).map((r) => (r.id === d.id ? local : r));
+      cacheSet(LIST_KEY, next);
+      return next;
+    });
+  }
+
   async function markOff(d: DeliveryRow) {
     setBusy(true);
     setError(null);
     try {
-      await markDelivered(user.id, d.id);
+      if (!online) {
+        markOffLocally(d);
+      } else {
+        await markDelivered(user.id, d.id);
+        await load();
+      }
       setViewing(null);
-      await load();
     } catch (e) {
-      setError(errorMessage(e, "Could not mark that delivered"));
+      if (isNetworkError(e)) {
+        markOffLocally(d);
+        setViewing(null);
+      } else {
+        setError(errorMessage(e, "Could not mark that delivered"));
+      }
     } finally {
       setBusy(false);
     }
@@ -186,13 +239,14 @@ export default function Deliveries({ user }: { user: User }) {
                 {d.status === "delivered" ? (
                   <span className="acc-sub">
                     Delivered{d.delivered_by_name ? ` · ${d.delivered_by_name}` : ""}
+                    {pending.has(d.id) ? " · will sync" : ""}
                     {d.delivered_at ? <br /> : null}
                     {d.delivered_at ? fmtDateTime(d.delivered_at) : ""}
                   </span>
                 ) : (
                   <button
                     className="btn-line"
-                    disabled={busy || !online}
+                    disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
                       void markOff(d);
@@ -254,7 +308,7 @@ export default function Deliveries({ user }: { user: User }) {
               {viewing.status === "pending" && (
                 <button
                   className="btn-fill"
-                  disabled={busy || !online}
+                  disabled={busy}
                   onClick={() => void markOff(viewing)}
                 >
                   Mark delivered

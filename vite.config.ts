@@ -99,7 +99,10 @@ export default defineConfig({
         theme_color: "#0e3a2d",
         background_color: "#f5f2ea",
         display: "standalone",
-        orientation: "landscape",
+        // "any", not "landscape": the till is a tablet on its side, but a
+        // manager's phone is held upright, and a landscape lock turned the
+        // installed app sideways in their hand.
+        orientation: "any",
         start_url: "/",
         icons: [
           { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },

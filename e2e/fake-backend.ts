@@ -2163,7 +2163,13 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }
         const u = Object.values(USERS).find((x) => x.row.id === body.p_user_id);
         d.status = "delivered";
-        d.delivered_at = new Date().toISOString();
+        // 0094: a phone that marked it off with the line down says when; the
+        // server keeps that, within reason, rather than the moment it heard.
+        const at = body.p_delivered_at ? new Date(String(body.p_delivered_at)) : null;
+        const now = Date.now();
+        d.delivered_at = (at && !Number.isNaN(at.getTime())
+          ? new Date(Math.min(Math.max(at.getTime(), now - 30 * 86400_000), now + 5 * 60_000))
+          : new Date()).toISOString();
         d.delivered_by_name = u?.row.name ?? "Sam";
         if (body.p_note) d.note = String(body.p_note);
         return json(d);

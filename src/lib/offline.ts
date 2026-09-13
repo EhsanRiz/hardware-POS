@@ -14,10 +14,38 @@ import { API_BASE } from "./supabase";
 // actually uses rather than a second one that could fail differently.
 const PROBE_URL = `${API_BASE}/auth/v1/health`;
 const PROBE_INTERVAL_MS = 15000;
-const PROBE_TIMEOUT_MS = 6000;
+// Twelve seconds, not six. On the shop's line a probe that stalls for eight
+// seconds is a slow line, not a dead one, and six seconds turned every such
+// stall into an "offline" banner while the sale requests beside it went
+// through. The banner flapped all afternoon on a till that was never off.
+const PROBE_TIMEOUT_MS = 12000;
+// A miss is re-checked sooner than the next heartbeat, so a real outage is
+// still called within a few seconds of the second miss.
+const RETRY_AFTER_MISS_MS = 3000;
 
 let online = typeof navigator === "undefined" ? true : navigator.onLine;
 let probing = false;
+let misses = 0;
+
+/**
+ * What one probe result means for the till's state. Pure, so it is tested.
+ *
+ * One miss is not an outage: it is re-checked. Two in a row is, and so is
+ * one when the browser itself says it has no network — that is not a slow
+ * line, and waiting to be sure would only delay the queue. One success puts
+ * the till back online at once; a line that has come back should not be
+ * made to prove it twice while somebody is waiting to sync.
+ */
+export function judge(
+  prev: { online: boolean; misses: number },
+  result: "ok" | "miss",
+  browserOffline: boolean
+): { online: boolean; misses: number; retrySoon: boolean } {
+  if (result === "ok") return { online: true, misses: 0, retrySoon: false };
+  const misses = prev.misses + 1;
+  const offline = misses >= 2 || browserOffline;
+  return { online: offline ? false : prev.online, misses, retrySoon: !offline };
+}
 
 type Listener = (online: boolean) => void;
 const listeners = new Set<Listener>();
@@ -52,7 +80,15 @@ async function refresh(): Promise<void> {
   if (probing) return;
   probing = true;
   try {
-    setOnline(await probe());
+    const ok = await probe();
+    const next = judge(
+      { online, misses },
+      ok ? "ok" : "miss",
+      typeof navigator !== "undefined" && navigator.onLine === false
+    );
+    misses = next.misses;
+    setOnline(next.online);
+    if (next.retrySoon) setTimeout(() => void refresh(), RETRY_AFTER_MISS_MS);
   } finally {
     probing = false;
   }

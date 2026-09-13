@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import InnovaMark from "./InnovaMark";
+import InstallButton from "./InstallButton";
 import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
 import { can, canAny } from "../lib/permissions";
 import type { PermKey } from "../lib/permissions";
@@ -74,7 +75,9 @@ export const PHONE_TILES: Tile[] = [
     label: "Deliveries",
     hint: "What is still to go out, and marking it off",
     perms: [],
-    online: true,
+    // Works from the last list it saw, and a mark-off queues: the site is
+    // where the signal is worst and the page gets signed.
+    online: false,
     icon: <Icon d="M3 7h11v9H3zM14 10h4l3 3v3h-7zM7.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z" />,
   },
   {
@@ -166,6 +169,9 @@ export default function PhoneHome({
           {deviceName}
           {!online && <> · <span className="is-bad">no line</span></>}
         </p>
+        {/* On the phone itself, where the person is: an app on the home
+            screen is what makes it "their phone" rather than a web page. */}
+        <InstallButton className="mt-3" />
       </div>
 
       {tiles.length === 0 ? (

@@ -66,8 +66,10 @@ margin change leaves every test green. Check a real slip.
 3. **Phone stage 2** — the destination screens made phone-shaped. Deliveries
    and Stock are the first two, opened whole from tiles on the phone's home
    (the shop asked for them so a manager or owner can work them remotely);
-   they fit 390 wide as they are, so nothing was reshaped. The rest not
-   started.
+   they fit 390 wide as they are, so nothing was reshaped. Deliveries works
+   with no signal (README, "With the line down"); Stock does not, and cannot
+   without a design for re-asking the PIN at sync, since a receipt is
+   PIN-gated and the phone stores no PIN. The rest not started.
 4. **`Cancel this sale`** sits one tap from `Close` in the slip popup, which
    appears after every sale. A manager PIN and a typed reason mean a mis-tap
    cannot void anything, but the placement is worth revisiting.

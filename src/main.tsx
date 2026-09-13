@@ -8,6 +8,8 @@ import { installErrorReporting } from "./lib/errorReport";
 import "./index.css";
 import { startUpdateWatch } from "./lib/appUpdate";
 import { publishSlipMetrics } from "./lib/config";
+// Catches the browser's install offer, which fires before React mounts.
+import "./lib/install";
 
 /**
  * Boot.

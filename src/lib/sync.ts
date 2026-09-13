@@ -6,19 +6,23 @@
 // client-generated UUID guarantees no duplicates even if a request committed
 // server-side but its response was lost on the way back.
 import { useEffect, useState } from "react";
-import { createSale } from "./api";
+import { createSale, markDelivered } from "./api";
 import { errorMessage } from "./errors";
 import { findByPinOffline } from "./auth";
 import { isNetworkError, isOnline, onNetworkChange } from "./offline";
 import { can } from "./permissions";
 import {
+  actionCount,
   bumpAttempt,
   enqueue,
+  failAction,
   failedCount,
+  listActions,
   listQueue,
   moveToFailed,
   onQueueChange,
   queueCount,
+  removeAction,
   removeFromQueue,
 } from "./queue";
 import type { CartLine, Payment, PaymentMethod, Sale } from "./types";
@@ -274,6 +278,21 @@ export async function syncNow(): Promise<void> {
         moveToFailed(item, errorMessage(e, "Sync rejected"));
       }
     }
+    // Then what a phone did with the line down. A delivery already marked
+    // off by somebody else in the meantime is done, not an error.
+    for (const a of listActions()) {
+      try {
+        await markDelivered(a.userId, a.deliveryId, null, a.at);
+        removeAction(a.id);
+      } catch (e) {
+        if (isNetworkError(e)) break;
+        if (errorMessage(e, "").includes("already marked as delivered")) {
+          removeAction(a.id);
+          continue;
+        }
+        failAction(a, errorMessage(e, "Sync rejected"));
+      }
+    }
   } finally {
     syncing = false;
   }
@@ -286,7 +305,7 @@ if (typeof window !== "undefined") {
     if (online) void syncNow();
   });
   setInterval(() => {
-    if (queueCount() > 0) void syncNow();
+    if (queueCount() > 0 || actionCount() > 0) void syncNow();
   }, 30_000);
   setTimeout(() => void syncNow(), 1_500);
 }

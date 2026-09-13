@@ -5505,4 +5505,42 @@ begin
   delete from public.app_users where id = v_sup;
 end $$;
 
+-- 0094: a delivery marked off with the line down keeps its time -------------
+
+do $$
+declare v_tok text; v_emp uuid; v_prod uuid; v_price numeric; v_sale public.sales; v_del public.deliveries; v_n int;
+begin
+  select token into v_tok from till;
+  select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  v_del := public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'T. Mokoena', '14 Mabille Rd', current_date);
+
+  -- The old signature is gone: the new one with its default is the only one.
+  select count(*) into v_n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_mark_delivered';
+  perform assert_eq(v_n, 1, 'one signature for pos_mark_delivered');
+
+  -- Marked at the site two hours ago, synced now: the record says two hours ago.
+  v_del := public.pos_mark_delivered(v_tok, v_emp, v_del.id, null, now() - interval '2 hours');
+  perform assert(v_del.delivered_at between now() - interval '3 hours' and now() - interval '1 hour',
+    'a queued mark-off keeps the time it was made');
+  perform assert_eq(v_del.status::text, 'delivered', 'and is delivered');
+
+  -- Without a time, or with a time out of reason, it is now.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price)));
+  v_del := public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'T. Mokoena', '14 Mabille Rd', current_date);
+  v_del := public.pos_mark_delivered(v_tok, v_emp, v_del.id, null, now() + interval '3 days');
+  perform assert(v_del.delivered_at < now() + interval '1 minute', 'a time from next week is filed now');
+  perform assert_refuses(format('select public.pos_mark_delivered(%L, %L, %L)', v_tok, v_emp, v_del.id),
+    'marked off twice');
+end $$;
+
 select 'all database tests passed' as result;

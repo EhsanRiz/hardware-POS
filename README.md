@@ -302,6 +302,34 @@ the finger, so it is neither a row nor the action beside it. A delivery form
 opens with the buyer's address on file already in it, still editable; the
 record itself is not changed by a one-off delivery elsewhere.
 
+## With the line down
+
+The shop's line stalls more than it drops, and the till is judged by what it
+does then. `src/lib/offline.ts` decides "online" by asking the server, not the
+browser: a GET of `/api/auth/v1/health` every fifteen seconds, allowed twelve
+seconds to answer. **One miss is not an outage** — it is re-checked three
+seconds later, and only a second miss (or the browser itself saying it has no
+network) turns the banner over; one answer turns it back. The rule is the
+pure `judge()` there, tested in `test/offline.test.mjs`, because the earlier
+six-second, one-strike version put a working till "offline" every time a
+probe stalled while the sale beside it went through.
+
+What still works with no line, from what the device kept:
+
+- **Signing in**, against the PIN hashes cached at the last online sign-in.
+- **Selling**: the catalogue and the customer list are cached; a sale is
+  queued (`src/lib/queue.ts`) and replayed exactly once by `src/lib/sync.ts`
+  under its `client_ref`, with the time it was taken; the slip prints.
+- **Parking a sale**, on this till, until the line returns.
+- **Marking a delivery off on a phone** (0094): the list it last saw stands,
+  the tap queues, the row says "will sync", and the server keeps the time the
+  page was signed rather than the moment the phone found signal.
+- Error reports queue too.
+
+What refuses, and says so: returns, voids, account payments, cash-up, Manage,
+TillAI, and receiving stock on a phone — each needs a PIN proved on the
+server, and the device never stores one it could replay.
+
 ## Fixing a buyer at the counter
 
 Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone

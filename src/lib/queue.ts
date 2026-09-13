@@ -138,3 +138,50 @@ export function requeueFailed(clientUuid: string): void {
   void _e;
   enqueue(payload);
 }
+
+/**
+ * Actions from a phone taken with the line down, replayed like sales are.
+ *
+ * The first is a delivery marked off at the site, where the signal is worst
+ * and the page is signed. It carries the ids the server needs and the time
+ * it was marked; no PIN, because pos_mark_delivered takes none.
+ */
+export interface QueuedAction {
+  id: string;
+  kind: "mark_delivered";
+  deliveryId: string;
+  userId: string;
+  /** ISO time it was marked on the phone, kept when it syncs. */
+  at: string;
+  attempts: number;
+  lastError?: string;
+}
+
+const A_KEY = "queue.actions";
+const A_DEAD_KEY = "queue.actions_failed";
+
+export function listActions(): QueuedAction[] {
+  return cacheGet<QueuedAction[]>(A_KEY, []);
+}
+export function actionCount(): number {
+  return listActions().length;
+}
+/** Deliveries this device has marked off but not yet told the server about. */
+export function pendingDeliveryIds(): Set<string> {
+  return new Set(listActions().filter((a) => a.kind === "mark_delivered").map((a) => a.deliveryId));
+}
+export function enqueueAction(a: Omit<QueuedAction, "attempts">): void {
+  const q = listActions();
+  if (q.some((x) => x.kind === a.kind && x.deliveryId === a.deliveryId)) return;
+  cacheSet(A_KEY, [...q, { ...a, attempts: 0 }]);
+  notify();
+}
+export function removeAction(id: string): void {
+  cacheSet(A_KEY, listActions().filter((a) => a.id !== id));
+  notify();
+}
+export function failAction(a: QueuedAction, why: string): void {
+  cacheSet(A_KEY, listActions().filter((x) => x.id !== a.id));
+  cacheSet(A_DEAD_KEY, [...cacheGet<QueuedAction[]>(A_DEAD_KEY, []), { ...a, lastError: why }].slice(-50));
+  notify();
+}

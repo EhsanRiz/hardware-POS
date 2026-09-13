@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
-
-// Captured browser install prompt (Chrome/Edge/Android). Not in the standard
-// lib DOM types, so we type the bits we use.
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-}
+import { installPrompt, onInstallChange, promptInstall, wasInstalled } from "../lib/install";
 
 function isStandalone(): boolean {
   return (
@@ -19,46 +13,40 @@ function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
 
-// "Install app" affordance for the PWA. Shows a real install button when the
-// browser offers one (Android/Chrome), or a short "Add to Home Screen" hint on
-// iOS. Renders nothing once the app is already installed/standalone.
-export default function InstallButton({ className = "" }: { className?: string }) {
-  const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(
-    null
-  );
-  const [installed, setInstalled] = useState(isStandalone());
-  const [showIosHint, setShowIosHint] = useState(false);
+function isAndroid(): boolean {
+  return /android/i.test(navigator.userAgent);
+}
 
-  useEffect(() => {
-    if (installed) return;
-    const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setPromptEvent(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => setInstalled(true);
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
-  }, [installed]);
+// "Install app" affordance for the PWA. A real install button when the
+// browser has offered one (Android/Chrome — caught at boot, see lib/install.ts),
+// or a short "how to" on a phone that has not: Safari has no offer to make,
+// and an Android browser other than Chrome may not either. Renders nothing
+// once the app is already installed/standalone, and nothing on a desktop
+// with no offer, where there is nothing a person could do.
+export default function InstallButton({ className = "" }: { className?: string }) {
+  const [, bump] = useState(0);
+  const [installed, setInstalled] = useState(isStandalone() || wasInstalled());
+  const [showHint, setShowHint] = useState(false);
+
+  useEffect(() => onInstallChange(() => {
+    if (wasInstalled()) setInstalled(true);
+    bump((n) => n + 1);
+  }), []);
 
   if (installed) return null;
 
+  const offer = installPrompt();
+  const phone = isIos() || isAndroid();
+  // Only render when we can actually do something.
+  if (!offer && !phone) return null;
+
   const handleClick = async () => {
-    if (promptEvent) {
-      await promptEvent.prompt();
-      const { outcome } = await promptEvent.userChoice;
-      if (outcome === "accepted") setInstalled(true);
-      setPromptEvent(null);
-    } else if (isIos()) {
-      setShowIosHint((v) => !v);
+    if (offer) {
+      if (await promptInstall()) setInstalled(true);
+    } else {
+      setShowHint((v) => !v);
     }
   };
-
-  // Only render when we can actually do something (Android prompt or iOS hint).
-  if (!promptEvent && !isIos()) return null;
 
   return (
     <div className={`flex flex-col items-center ${className}`}>
@@ -68,10 +56,13 @@ export default function InstallButton({ className = "" }: { className?: string }
       >
         📲 Install app
       </button>
-      {showIosHint && (
-        <p className="mt-2 max-w-xs text-center text-xs text-stone-500">
-          Tap the <b>Share</b> icon in Safari, then choose{" "}
-          <b>Add to Home Screen</b>.
+      {showHint && (
+        <p className="mt-2 max-w-xs text-center text-xs text-stone-500 install-hint">
+          {isIos() ? (
+            <>Tap the <b>Share</b> icon in Safari, then choose <b>Add to Home Screen</b>.</>
+          ) : (
+            <>Open the browser's menu (⋮), then choose <b>Install app</b> or <b>Add to Home screen</b>.</>
+          )}
         </p>
       )}
     </div>

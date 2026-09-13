@@ -1006,13 +1006,16 @@ export async function deliveryItems(deliveryId: string): Promise<DeliveryLine[]>
 
 /** The signed page came back. Anyone may say so; who said so is recorded. */
 export async function markDelivered(
-  userId: string, deliveryId: string, note?: string | null
+  userId: string, deliveryId: string, note?: string | null, deliveredAt?: string | null
 ): Promise<DeliveryRow> {
   const { data, error } = await supabase.rpc("pos_mark_delivered", {
     p_register_token: requireToken(),
     p_user_id: userId,
     p_delivery_id: deliveryId,
     p_note: note ?? null,
+    // The time it was marked on the phone, for one that queued with the
+    // line down (0094); null means now.
+    p_delivered_at: deliveredAt ?? null,
   });
   if (error) throw error;
   return data as DeliveryRow;

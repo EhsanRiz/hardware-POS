@@ -2261,7 +2261,11 @@ test("parked with the line down, a sale stays on this till until the line return
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
+  // The browser's own "offline" too: a real drop says so, and the probe is
+  // now patient with a mere stall — one miss on a line the browser still
+  // believes in is re-checked, not believed.
   be.offline = true;
+  await page.context().setOffline(true);
   await expect(page.getByText(/offline/i).first()).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Park sale" }).click();
   await expect(banner(page)).toContainText(/on this till/);
@@ -2278,6 +2282,7 @@ test("parked with the line down, a sale stays on this till until the line return
 
   // THE LINE RETURNS: both go to the shop's list by themselves.
   be.offline = false;
+  await page.context().setOffline(false);
   await expect.poll(() => be.parkedSales.length, { timeout: 20000 }).toBe(2);
   expect(be.parkedSales.map((p) => p.register_name)).toEqual(["Front Counter", "Front Counter"]);
   await expect(page.getByRole("button", { name: "Parked · 2" })).toBeVisible();
@@ -8630,4 +8635,141 @@ test("and the phone says it too, since it goes just as stale", async ({ page }) 
   await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
   // Still the phone's own screen, not a reload back to sign-in.
   await expect(page.locator(".phone-tiles")).toBeVisible();
+});
+
+/*
+ * The line is not the work.
+ *
+ * A driver signs the page at a gate with no signal; the till loses the shop's
+ * Wi-Fi for a minute in the afternoon. Neither should stop anything or lose
+ * anything: what was done with the line down is kept on the device, said to
+ * be so, and sent — once — when the line returns.
+ */
+test("from the phone, a delivery marked off with no signal is kept, says so, and syncs when the line returns", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s1", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd, Maseru", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
+  });
+  await enrolPhoneAndSignIn(page, be);
+
+  // Seen once with the line up, so the phone has the morning's load.
+  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await expect(page.getByText("T. Mokoena")).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+
+  // At the gate: no signal. The tile still opens, on the list it kept.
+  be.offline = true;
+  await page.context().setOffline(true);
+  await expect(page.locator(".phone-home-who")).toContainText("no line", { timeout: 30000 });
+  const tile = page.getByRole("button", { name: /^Deliveries/ });
+  await expect(tile).toBeEnabled();
+  await tile.click();
+  await expect(page.getByText("T. Mokoena")).toBeVisible();
+
+  // Marked off: the row turns over at once, and says the server does not
+  // know yet. Nothing reached the fake.
+  const before = Date.now();
+  await page.getByRole("button", { name: "Delivered" }).first().click();
+  const row = page.locator("tr.acc-row", { hasText: "DEL-000001" });
+  await expect(row).toContainText("Delivered · Manager · will sync");
+  expect(be.deliveries[0].status).toBe("pending");
+  const afterTap = Date.now();
+
+  // Survives the page: a phone that is closed and reopened at the next stop
+  // shows the same thing, from the queue, not from memory. (The browser is
+  // let back on so the test can reload the app, which the real phone has
+  // installed; the shop's server stays unreachable.)
+  await page.context().setOffline(false);
+  await page.reload();
+  await page.waitForSelector(".phone-home");
+  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await expect(row).toContainText("will sync");
+  expect(be.deliveries[0].status).toBe("pending");
+
+  // THE LINE RETURNS. Sent by itself, with the time it was actually signed
+  // for — not the moment the phone found signal — and "will sync" goes.
+  be.offline = false;
+  await expect.poll(() => be.deliveries[0].status, { timeout: 30000 }).toBe("delivered");
+  expect(be.deliveries[0].delivered_by_name).toBe("Manager");
+  // The reload and the wait for the line put seconds between the tap and
+  // the send; a server that stamped its own clock would land after afterTap.
+  const at = new Date(be.deliveries[0].delivered_at!).getTime();
+  expect(at).toBeGreaterThanOrEqual(before - 1000);
+  expect(at).toBeLessThanOrEqual(afterTap + 500);
+  await expect(row).not.toContainText("will sync");
+  await expect(row).toContainText("Delivered · Manager");
+});
+
+test("one slow probe does not put the till offline; two misses do, and one answer brings it back", async ({ page }) => {
+  // The banner flapped all afternoon on a till that was never off: every
+  // probe that stalled past six seconds was called an outage while the sale
+  // beside it went through. Now a miss is re-checked before it is believed.
+  test.setTimeout(120_000);
+  await pairAndSignIn(page);
+  await page.getByRole("button", { name: /Sign out/i }).click();
+  const status = page.locator(".login-status");
+  await expect(status).toContainText("Online");
+
+  // The fake's health route is replaced by one the test controls: it
+  // answers or fails on a switch, and counts what it was asked. The browser
+  // itself still says it has a network, as it does on a stalling line.
+  let fail = true;
+  let asked = 0;
+  await page.route("**/auth/v1/health*", async (route) => {
+    asked += 1;
+    if (fail) return route.abort("failed");
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+
+  // One miss: the till stays online, and the miss is re-checked soon. The
+  // pause is so the miss has been judged before "still Online" is read.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => asked, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+  await page.waitForTimeout(1500);
+  await expect(status).toContainText("Online");
+  const afterFirst = asked;
+  // The second miss lands within a few seconds, not at the next heartbeat.
+  await expect.poll(() => asked, { timeout: 10_000 }).toBeGreaterThan(afterFirst);
+  await expect(status).toContainText("Offline", { timeout: 10_000 });
+
+  // One answer, and it is back: the line does not have to prove itself twice.
+  fail = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(status).toContainText("Online", { timeout: 10_000 });
+});
+
+test("the phone offers to install itself, even though the browser made the offer before the app was drawn", async ({ page }) => {
+  // Chrome fires beforeinstallprompt once, early, before React has mounted
+  // the button that used to listen for it. It went by unheard, and the
+  // phone looked like it could not be installed. It is caught at boot now.
+  await page.setViewportSize({ width: 390, height: 844 });
+  let prompted = 0;
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const e = new Event("beforeinstallprompt", { cancelable: true }) as Event & {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+      };
+      e.prompt = async () => { (window as unknown as { __prompted: number }).__prompted = 1; };
+      e.userChoice = Promise.resolve({ outcome: "accepted" as const });
+      window.dispatchEvent(e);
+    });
+  });
+  await enrolPhoneAndSignIn(page, be);
+  const install = page.locator(".phone-home").getByRole("button", { name: /Install app/i });
+  await expect(install).toBeVisible();
+  await install.click();
+  prompted = await page.evaluate(() => (window as unknown as { __prompted?: number }).__prompted ?? 0);
+  expect(prompted).toBe(1);
+  // Accepted: the offer is spent and the button goes.
+  await expect(install).toHaveCount(0);
+
+  // And what gets installed holds whichever way the phone is held: the
+  // manifest no longer locks the app to the tablet's landscape.
+  const manifest = await (await page.request.get("/manifest.webmanifest")).json();
+  expect(manifest.orientation).toBe("any");
+  expect(manifest.display).toBe("standalone");
 });
