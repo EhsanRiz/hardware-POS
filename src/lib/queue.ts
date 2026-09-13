@@ -42,6 +42,11 @@ export interface QueuedSalePayload {
   customerVatNumber?: string | null;
   /** ISO time the sale was actually taken, not when it syncs. */
   createdAt: string;
+  /**
+   * The invoice number the till gave it from its reserved block, already on
+   * the printed slip. Replayed with the sale so the server keeps it.
+   */
+  docNumber?: string | null;
 }
 
 export interface QueuedSale extends QueuedSalePayload {
@@ -146,7 +151,7 @@ export function requeueFailed(clientUuid: string): void {
  * and the page is signed. It carries the ids the server needs and the time
  * it was marked; no PIN, because pos_mark_delivered takes none.
  */
-export interface QueuedAction {
+export interface MarkDeliveredAction {
   id: string;
   kind: "mark_delivered";
   deliveryId: string;
@@ -156,6 +161,34 @@ export interface QueuedAction {
   attempts: number;
   lastError?: string;
 }
+
+/**
+ * A delivery arranged with the line down. The note belongs to a sale, and
+ * the sale is itself in the queue: it is created once the sale is in, from
+ * the server id the sale comes back with (sync.ts fills saleId in). Its
+ * number was given by the till from its reserved block, like the invoice's.
+ */
+export interface CreateDeliveryAction {
+  id: string;
+  kind: "create_delivery";
+  /** The queued sale it belongs to; null once saleId is known. */
+  saleClientRef: string | null;
+  saleId: string | null;
+  saleNumber: string | null;
+  cashierId: string;
+  customerName: string;
+  address: string;
+  deliverOn: string;
+  deliverAt: string | null;
+  charge: number;
+  note: string | null;
+  docNumber: string | null;
+  at: string;
+  attempts: number;
+  lastError?: string;
+}
+
+export type QueuedAction = MarkDeliveredAction | CreateDeliveryAction;
 
 const A_KEY = "queue.actions";
 const A_DEAD_KEY = "queue.actions_failed";
@@ -170,11 +203,33 @@ export function actionCount(): number {
 export function pendingDeliveryIds(): Set<string> {
   return new Set(listActions().filter((a) => a.kind === "mark_delivered").map((a) => a.deliveryId));
 }
-export function enqueueAction(a: Omit<QueuedAction, "attempts">): void {
+/** Deliveries arranged on this device and not yet filed with the server. */
+export function queuedDeliveries(): CreateDeliveryAction[] {
+  return listActions().filter((a): a is CreateDeliveryAction => a.kind === "create_delivery");
+}
+export function enqueueAction(
+  a: Omit<MarkDeliveredAction, "attempts"> | Omit<CreateDeliveryAction, "attempts">
+): void {
   const q = listActions();
-  if (q.some((x) => x.kind === a.kind && x.deliveryId === a.deliveryId)) return;
-  cacheSet(A_KEY, [...q, { ...a, attempts: 0 }]);
+  if (q.some((x) => x.id === a.id)) return;
+  cacheSet(A_KEY, [...q, { ...a, attempts: 0 } as QueuedAction]);
   notify();
+}
+/** The sale a queued delivery was waiting on has synced: it can be filed now. */
+export function attachSaleToDeliveries(saleClientRef: string, saleId: string): void {
+  const q = listActions();
+  let changed = false;
+  for (const a of q) {
+    if (a.kind === "create_delivery" && a.saleClientRef === saleClientRef) {
+      a.saleId = saleId;
+      a.saleClientRef = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    cacheSet(A_KEY, q);
+    notify();
+  }
 }
 export function removeAction(id: string): void {
   cacheSet(A_KEY, listActions().filter((a) => a.id !== id));

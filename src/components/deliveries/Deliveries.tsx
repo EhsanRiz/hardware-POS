@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deliveryItems,
   listDeliveries,
@@ -11,7 +11,9 @@ import { fmtDate, fmtDateTime } from "../../lib/dates";
 import { cacheGet, cacheSet } from "../../lib/localCache";
 import { money } from "../../lib/money";
 import { isNetworkError, useOnline } from "../../lib/offline";
-import { enqueueAction, onQueueChange, pendingDeliveryIds } from "../../lib/queue";
+import {
+  actionCount, enqueueAction, onQueueChange, pendingDeliveryIds, queuedDeliveries,
+} from "../../lib/queue";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
 import type { User } from "../../lib/types";
@@ -41,6 +43,9 @@ export default function Deliveries({ user }: { user: User }) {
   // Marked off on this device and not yet told to the server. Read from the
   // queue itself, so a reload shows the same "will sync" the tap did.
   const [pending, setPending] = useState<Set<string>>(pendingDeliveryIds);
+  // Arranged on this device with the line down, not yet filed: on the list
+  // as rows of their own, so the driver sees the load before it syncs.
+  const [queued, setQueued] = useState(queuedDeliveries);
 
   const [viewing, setViewing] = useState<DeliveryRow | null>(null);
   const [viewLines, setViewLines] = useState<DeliveryLine[] | null>(null);
@@ -64,17 +69,28 @@ export default function Deliveries({ user }: { user: User }) {
 
   // When the queue drains (the line came back and sync sent the mark-offs),
   // the server's list is the truth again.
+  const actionsBefore = useRef(actionCount());
   useEffect(
     () =>
       onQueueChange(() => {
-        const now = pendingDeliveryIds();
-        setPending((prev) => {
-          if (prev.size > 0 && now.size === 0) void load();
-          return now;
-        });
+        setPending(pendingDeliveryIds());
+        setQueued(queuedDeliveries());
+        const now = actionCount();
+        if (actionsBefore.current > 0 && now === 0) void load();
+        actionsBefore.current = now;
       }),
     [load]
   );
+
+  /** A queued delivery, shaped as a row; its id says it is not the server's. */
+  const queuedRows: DeliveryRow[] = queued.map((a) => ({
+    id: a.id, doc_number: a.docNumber ?? "DEL-—", sale_id: a.saleId ?? "",
+    sale_number: a.saleNumber, customer_name: a.customerName, address: a.address,
+    deliver_on: a.deliverOn, deliver_at: a.deliverAt, charge: a.charge, note: a.note,
+    status: "pending", created_at: a.at, cashier_name: user.name,
+    delivered_at: null, delivered_by_name: null, item_count: 0,
+  }));
+  const isQueued = (d: DeliveryRow) => d.id.startsWith("cd-");
 
   useEffect(() => {
     if (!viewing) return;
@@ -90,16 +106,17 @@ export default function Deliveries({ user }: { user: User }) {
 
   const shown = useMemo(() => {
     const q = term.trim().toLowerCase();
-    if (!rows) return [];
-    if (!q) return rows;
-    return rows.filter(
+    const all = [...queuedRows, ...(rows ?? [])];
+    if (!q) return all;
+    return all.filter(
       (d) =>
         (d.doc_number ?? "").toLowerCase().includes(q) ||
         d.customer_name.toLowerCase().includes(q) ||
         d.address.toLowerCase().includes(q) ||
         (d.sale_number ?? "").toLowerCase().includes(q)
     );
-  }, [rows, term]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, term, queued]);
 
   const outstanding = shown.filter((d) => d.status === "pending").length;
 
@@ -200,10 +217,10 @@ export default function Deliveries({ user }: { user: User }) {
           </tr>
         </thead>
         <tbody>
-          {rows === null && (
+          {rows === null && queuedRows.length === 0 && (
             <tr><td colSpan={5} className="acc-empty">Looking…</td></tr>
           )}
-          {rows !== null && shown.length === 0 && (
+          {(rows !== null || queuedRows.length > 0) && shown.length === 0 && (
             <tr>
               <td colSpan={5} className="acc-empty">
                 {term
@@ -216,7 +233,8 @@ export default function Deliveries({ user }: { user: User }) {
             <tr
               key={d.id}
               className={`acc-row${d.status === "delivered" ? " is-quiet" : ""}`}
-              onClick={() => setViewing(d)}
+              // A queued one has no note on the server to open yet.
+              onClick={() => !isQueued(d) && setViewing(d)}
             >
               <td>
                 <span className="acc-name">{d.doc_number}</span>
@@ -243,6 +261,8 @@ export default function Deliveries({ user }: { user: User }) {
                     {d.delivered_at ? <br /> : null}
                     {d.delivered_at ? fmtDateTime(d.delivered_at) : ""}
                   </span>
+                ) : isQueued(d) ? (
+                  <span className="acc-sub">Arranged · will sync</span>
                 ) : (
                   <button
                     className="btn-line"

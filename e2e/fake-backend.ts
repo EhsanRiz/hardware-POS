@@ -147,6 +147,8 @@ const SEED_REORDER = new Map(PRODUCTS.map((p) => [p.id, p.reorder_level]));
 
 export interface RecordedSale {
   client_ref: string | null;
+  /** 0096: the number the till gave it, or the one the fake issued. Null while parked. */
+  doc_number?: string | null;
   cashier_id: string;
   customer_id: string | null;
   items: {
@@ -527,9 +529,18 @@ export class Backend {
   tillaiLookedAt = ["products"];
   tillaiFails = false;
   private seq = 0;
+  /** 0096: DEL- numbers issued or reserved, as seq is for INV-. */
+  private delSeq = 0;
+  /** The blocks each till holds, by its token. */
+  reservations: { token: string; type: "sale" | "delivery"; from: number; to: number }[] = [];
+  /** How many numbers a reservation hands out; null means as many as asked. 0 leaves the till with none. */
+  numbersToReserve: number | null = null;
 
   reset() {
     this.sales = [];
+    this.delSeq = 0;
+    this.reservations = [];
+    this.numbersToReserve = null;
     this.calls = [];
     this.customers = [];
     this.accountPayments = [];
@@ -621,7 +632,7 @@ export class Backend {
     if (ref) {
       const existing = this.sales.find((s) => s.client_ref === ref);
       // The whole point of the idempotency key: a replay returns the original.
-      if (existing) return this.saleRow(existing, false);
+      if (existing) return this.saleRow(existing);
     }
 
     const items =
@@ -793,8 +804,13 @@ export class Backend {
           ? Math.max(0, Math.round((tendered - (total + rounding)) * 100) / 100)
           : null,
     };
+    // 0096: the till's own number, checked; else the fake issues one — and a
+    // sale parked for approval gets none until it is released, as on the server.
+    const parkedNow = discount > 0 && !sale.approved_by && !within;
+    const given = this.claim(String(body.p_register_token ?? ""), "sale", body.p_doc_number);
+    sale.doc_number = parkedNow ? null : (given ?? "INV-" + String(++this.seq).padStart(6, "0"));
     this.sales.push(sale);
-    const row = this.saleRow(sale, true);
+    const row = this.saleRow(sale);
     if (code) {
       code.used_at = new Date().toISOString();
       code.used_by_name = cashier?.name ?? null;
@@ -803,8 +819,41 @@ export class Backend {
     return row;
   }
 
-  private saleRow(sale: RecordedSale, fresh: boolean) {
-    if (fresh) this.seq += 1;
+  /** A sale's invoice number: the one it carries, else the one its place implies. */
+  invNo(i: number): string {
+    return this.sales[i]?.doc_number ?? "INV-" + String(i + 1).padStart(6, "0");
+  }
+
+  /** 0096: a block of numbers for a till, advancing the sequence past it. */
+  reserve(token: string, type: "sale" | "delivery", asked: number) {
+    const count = this.numbersToReserve ?? Math.min(Math.max(asked, 1), 50);
+    if (count <= 0) return null;
+    const from = (type === "sale"
+      ? Math.max(this.seq, this.sales.length)
+      : Math.max(this.delSeq, this.deliveries.length)) + 1;
+    const to = from + count - 1;
+    if (type === "sale") this.seq = to; else this.delSeq = to;
+    this.reservations.push({ token, type, from, to });
+    return { prefix: type === "sale" ? "INV-" : "DEL-", pad_width: 6, from_number: from, to_number: to };
+  }
+
+  /** The server's check on a number a till gave: its own, formatted right, unspent. */
+  claim(token: string, type: "sale" | "delivery", given: unknown): string | null {
+    if (given == null || String(given).trim() === "") return null;
+    const doc = String(given).trim().toUpperCase();
+    const m = doc.match(/^(INV|DEL)-(\d{6})$/);
+    const n = m ? Number(m[2]) : NaN;
+    const own = m && (type === "sale" ? "INV" : "DEL") === m[1]
+      && this.reservations.some((r) => r.token === token && r.type === type && n >= r.from && n <= r.to);
+    if (!own) throw new Error(`Number ${doc} is not one this till was given`);
+    const used = type === "sale"
+      ? this.sales.some((x) => x.doc_number === doc)
+      : this.deliveries.some((d) => d.doc_number === doc);
+    if (used) throw new Error(`Number ${doc} has already been used`);
+    return doc;
+  }
+
+  saleRow(sale: RecordedSale) {
     // A discount inside what the cashier may give on their own authority
     // completes with no approver recorded — nobody was asked. The fake used to
     // park every unapproved discount, which is what the shop did before limits
@@ -816,7 +865,7 @@ export class Backend {
       // It used to be the 1-based sequence, so a sale rung on the till came
       // back with an id under which its own lines could not be found.
       id: "s" + this.sales.indexOf(sale),
-      doc_number: pending ? null : "INV-" + String(this.seq).padStart(6, "0"),
+      doc_number: pending ? null : (sale.doc_number ?? this.invNo(this.sales.indexOf(sale))),
       cashier_id: sale.cashier_id,
       cashier_name: "Sam",
       customer_id: sale.customer_id,
@@ -1475,7 +1524,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           .reverse();
         return json(mine.map(({ x, i }) => ({
           sale_id: "s" + i,
-          doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+          doc_number: be.invNo(i),
           created_at: x.created_at ?? new Date().toISOString(),
           total: x.total,
           payment_method: x.payment_method,
@@ -1541,13 +1590,13 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           if (!who) return fail("A code has to be used by a signed-in cashier");
           code.used_at = new Date().toISOString();
           code.used_by_name = who.row.name;
-          code.doc_number = "INV-" + String(idx + 1).padStart(6, "0");
+          code.doc_number = be.invNo(idx);
         }
         x.voided = true;
         x.void_reason = String(body.p_reason ?? "").trim() || null;
         // Stock is not put back here because a sale never takes it off in
         // this fake; the database test is where restocking is proved.
-        return json({ ...be.saleRow(x, false), id: body.p_sale_id, status: "voided" });
+        return json({ ...be.saleRow(x), id: body.p_sale_id, status: "voided" });
       }
       case "rpc/pos_sale_by_number": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -1558,13 +1607,13 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const idx = tr
           ? be.sales.findIndex((x) =>
               (x.client_ref ?? "").replace(/-/g, "").slice(0, 8).toUpperCase() === tr[1])
-          : be.sales.findIndex((_, i) => "INV-" + String(i + 1).padStart(6, "0") === want);
+          : be.sales.findIndex((_, i) => be.invNo(i) === want);
         if (idx < 0) return json(null);
         const x = be.sales[idx];
         const r2 = (n: number) => Math.round(n * 100) / 100;
         // The same row the Sales screen lists, so a reprint has every figure.
         return json({
-          id: "s" + idx, doc_number: "INV-" + String(idx + 1).padStart(6, "0"),
+          id: "s" + idx, doc_number: be.invNo(idx),
           created_at: x.created_at ?? new Date().toISOString(),
           cashier_name: Object.values(USERS).find((u) => u.row.id === x.cashier_id)?.row.name ?? "",
           customer_name: be.customers.find((c) => c.id === x.customer_id)?.name ?? null,
@@ -2112,9 +2161,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const already = be.deliveries.find((d) => d.sale_id === body.p_sale_id);
         if (already) return json(already);
         const u = Object.values(USERS).find((x) => x.row.id === body.p_cashier_id);
+        let delNo: string;
+        try {
+          delNo = be.claim(String(body.p_register_token ?? ""), "delivery", body.p_doc_number)
+            ?? `DEL-${String(++be["delSeq"]).padStart(6, "0")}`;
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "Rejected");
+        }
         const row = {
           id: `d${be.deliveries.length + 1}`,
-          doc_number: `DEL-${String(be.deliveries.length + 1).padStart(6, "0")}`,
+          doc_number: delNo,
           sale_id: String(body.p_sale_id),
           customer_name: String(body.p_customer_name),
           address: String(body.p_address),
@@ -2138,7 +2194,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const sale = be.sales[Number(d.sale_id.replace(/^s/, ""))];
           return {
             ...d,
-            sale_number: sale ? `INV-${String(be.sales.indexOf(sale) + 1).padStart(6, "0")}` : null,
+            sale_number: sale ? be.invNo(be.sales.indexOf(sale)) : null,
             created_at: "2026-01-01T08:00:00Z",
             // Goods only: the carriage charge is a line on the invoice, not
             // something anybody signs for at a gate.
@@ -2286,7 +2342,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           if (s.customer_id !== custId || s.payment_method !== "account") return;
           running += s.total;
           rows.push({ kind: "charge", entry_at: s.created_at ?? new Date().toISOString(),
-            ref: `INV-${String(i + 1).padStart(6, "0")}`, detail: "Invoice",
+            ref: be.invNo(i), detail: "Invoice",
             charge: s.total, payment: 0,
             balance: Math.round(running * 100) / 100,
             // The sale's own id, or the line cannot open it (0073). It was
@@ -2337,7 +2393,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           if (sale.payment_method !== "account") return;
           all.push({
             at: sale.created_at ?? new Date().toISOString(), kind: "charge",
-            ref: `INV-${String(i + 1).padStart(6, "0")}`, detail: "Invoice",
+            ref: be.invNo(i), detail: "Invoice",
             charge: sale.total, payment: 0, voided: false,
           });
         });
@@ -2447,6 +2503,13 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_search_products":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(searchProducts(String(body.p_query ?? "")));
+      case "rpc/pos_reserve_doc_numbers": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const type = String(body.p_doc_type ?? "");
+        if (type !== "sale" && type !== "delivery") return fail("A till does not number that");
+        const r = be.reserve(String(body.p_register_token), type, Number(body.p_count ?? 25));
+        return json(r ? [r] : []);
+      }
       case "rpc/pos_create_sale": {
         if (!tokenOk) return fail("Register not paired or revoked");
         try {
@@ -3071,8 +3134,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
                 id: d.id, doc_number: d.doc_number, customer_name: d.customer_name,
                 address: d.address, deliver_on: d.deliver_on, deliver_at: d.deliver_at,
                 charge: d.charge, cashier_name: d.cashier_name,
-                sale_number: "INV-" + String(
-                  Number(d.sale_id.replace(/^s/, "")) + 1).padStart(6, "0"),
+                sale_number: be.invNo(Number(d.sale_id.replace(/^s/, ""))),
                 days_late: Math.max(0, Math.round(
                   (Date.parse(today) - Date.parse(d.deliver_on)) / 86400000)),
               })),
@@ -3112,7 +3174,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
               .map(({ sale, i }) => ({
                 kind: "cancelled", at: sale.created_at ?? new Date().toISOString(),
                 amount: sale.total,
-                doc_number: "INV-" + String(i + 1).padStart(6, "0"),
+                doc_number: be.invNo(i),
                 against: null,
                 who: Object.values(USERS).find((u) => u.row.id === sale.cashier_id)?.row.name ?? null,
                 reason: sale.void_reason ?? null, refund_method: sale.payment_method,
@@ -3221,7 +3283,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
 
         // Export
         return json(lines.map(({ sale, line }, n) => ({
-          doc_number: "INV-" + String(be.sales.indexOf(sale) + 1).padStart(6, "0"),
+          doc_number: be.invNo(be.sales.indexOf(sale)),
           created_at: sale.created_at ?? new Date().toISOString(),
           status: "completed",
           cashier: Object.values(USERS).find((u) => u.row.id === sale.cashier_id)?.row.name ?? "",
@@ -3288,7 +3350,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const gross = round2(done.reduce((t, x) => t + x.total, 0));
         return json({
           rows: inWindow.map((x, i) => {
-            const docNumber = parked(x) ? null : "INV-" + String(i + 1).padStart(6, "0");
+            const docNumber = parked(x) ? null : be.invNo(i);
             return {
             id: "s" + i,
             doc_number: docNumber,
@@ -3392,6 +3454,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const sale = be.sales[idx];
         if (!sale) return fail("Sale not found");
         sale.approved_by = USERS.manager.row.id;
+        sale.doc_number ??= "INV-" + String(++be["seq"]).padStart(6, "0");
         return json({ id: body.p_sale_id, status: "completed" });
       }
 

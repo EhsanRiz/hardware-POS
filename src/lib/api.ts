@@ -10,6 +10,8 @@
 //     manager physically stands at the counter to do — approving a discount,
 //     voiding a sale, pairing a till.
 import { registerToken } from "./device";
+import { cacheGet, cacheSet } from "./localCache";
+import { isNetworkError } from "./offline";
 import { API_BASE, supabase } from "./supabase";
 import type { SaleRow } from "./sales";
 import type {
@@ -268,6 +270,8 @@ export interface CreateSaleInput {
   /** When the sale was actually taken — matters for queued offline sales. */
   createdAt: string | null;
   note: string | null;
+  /** The number the till gave it, from its reserved block (docNumbers.ts). */
+  docNumber?: string | null;
 }
 
 /**
@@ -294,9 +298,34 @@ export async function createSale(input: CreateSaleInput): Promise<Sale> {
     p_payments: input.payments ?? null,
     p_po_number: input.poNumber ?? null,
     p_customer_vat_number: input.customerVatNumber ?? null,
+    p_doc_number: input.docNumber ?? null,
   });
   if (error) throw error;
   return data as Sale;
+}
+
+/**
+ * A block of invoice or delivery-note numbers for this till to give out
+ * itself, so a slip printed with the line down carries a real number. Null
+ * when the server has none to give (it never has none; the fake can).
+ */
+export async function reserveDocNumbers(
+  docType: "sale" | "delivery", count: number
+): Promise<{ prefix: string; padWidth: number; from: number; to: number } | null> {
+  const { data, error } = await supabase.rpc("pos_reserve_doc_numbers", {
+    p_register_token: requireToken(),
+    p_doc_type: docType,
+    p_count: count,
+  });
+  if (error) throw error;
+  const row = (data as {
+    prefix: string; pad_width: number; from_number: number | string; to_number: number | string;
+  }[])?.[0];
+  if (!row) return null;
+  return {
+    prefix: row.prefix, padWidth: Number(row.pad_width),
+    from: Number(row.from_number), to: Number(row.to_number),
+  };
 }
 
 /**
@@ -950,13 +979,26 @@ export interface DeliveryLine {
 export async function deliveryProduct(): Promise<{
   id: string; sku: string; name: string; unit_code: string;
 }> {
-  const { data, error } = await supabase.rpc("pos_delivery_product", {
-    p_register_token: requireToken(),
-  });
-  if (error) throw error;
-  const rows = data as { id: string; sku: string; name: string; unit_code: string }[];
-  if (!rows?.length) throw new Error("The delivery line could not be set up.");
-  return rows[0];
+  // Kept on the device: the Deliver button fetched this every time, so with
+  // the line down a delivery could not even be arranged — the first thing
+  // the shop noticed when it tried. The shop's delivery line does not
+  // change, so the last answer stands until the line gives a fresh one.
+  const KEY = "delivery.product";
+  type Row = { id: string; sku: string; name: string; unit_code: string };
+  try {
+    const { data, error } = await supabase.rpc("pos_delivery_product", {
+      p_register_token: requireToken(),
+    });
+    if (error) throw error;
+    const rows = data as Row[];
+    if (!rows?.length) throw new Error("The delivery line could not be set up.");
+    cacheSet(KEY, rows[0]);
+    return rows[0];
+  } catch (e) {
+    const kept = cacheGet<Row | null>(KEY, null);
+    if (kept && isNetworkError(e)) return kept;
+    throw e;
+  }
 }
 
 /** Write the note, once the sale that carries the goods exists. */
@@ -969,6 +1011,8 @@ export async function createDelivery(args: {
   deliverAt?: string | null;
   charge?: number;
   note?: string | null;
+  /** The number the till gave it, from its reserved block (docNumbers.ts). */
+  docNumber?: string | null;
 }): Promise<DeliveryRow> {
   const { data, error } = await supabase.rpc("pos_create_delivery", {
     p_register_token: requireToken(),
@@ -980,6 +1024,7 @@ export async function createDelivery(args: {
     p_deliver_at: args.deliverAt ?? null,
     p_charge: args.charge ?? 0,
     p_note: args.note ?? null,
+    p_doc_number: args.docNumber ?? null,
   });
   if (error) throw error;
   return data as DeliveryRow;

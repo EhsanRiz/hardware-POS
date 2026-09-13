@@ -6588,7 +6588,8 @@ test("a delivery arranged offline says so rather than losing the address quietly
   be.offline = true;
   await page.getByRole("button", { name: /^Cash$/ }).click();
   await page.getByRole("button", { name: /Tender & print/i }).click();
-  await expect(banner(page)).toContainText(/delivery note follows when the connection returns/i);
+  // 0096: named now — the till numbers the note from its own block.
+  await expect(banner(page)).toContainText(/Delivery note DEL-\d{6} for Morija Exports follows when the connection returns/i);
   expect(be.deliveries).toHaveLength(0);
 });
 
@@ -8781,6 +8782,12 @@ test("a sale taken offline prints a till reference the counter can scan, and it 
   // carries a till reference, as text and as bars; scanned while the sale is
   // still on this till it says so, and once the sale is in it opens the
   // invoice the server numbered.
+  //
+  // 0096: a till normally holds a block of numbers and gives the sale one
+  // itself; this is the till that holds none — the block ran out with the
+  // line still down, or was never reserved — and the reference is what is
+  // left. The fake is told to hand out nothing.
+  be.numbersToReserve = 0;
   await pairAndSignIn(page);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
@@ -8792,6 +8799,7 @@ test("a sale taken offline prints a till reference the counter can scan, and it 
 
   const slip = page.locator("#print-area");
   await expect(slip).toContainText("Invoice No: issued when the line returns");
+  await expect(slip).not.toContainText("INV-");
   await expect(slip).toContainText(/Till ref: TR-[0-9A-F]{8}/);
   await expect(slip).not.toContainText("pending sync");
   const ref = (await slip.locator("[data-barcode]").getAttribute("data-barcode"))!;
@@ -8832,4 +8840,198 @@ test("Manage with the line down says so in words, before and after the PIN", asy
   const alert = gate.getByRole("alert");
   await expect(alert).toContainText("No connection to the server. Try again when the line is back.");
   await expect(alert).not.toContainText(/TypeError|Failed to fetch/);
+});
+
+
+/*
+ * 0096: the till numbers its own invoices.
+ *
+ * The number is issued by the server so two tills never issue the same one;
+ * a sale taken with the line down therefore had none, and the shop wants the
+ * number on the paper, line or no line. The till reserves a block of numbers
+ * while the line is up and gives each sale the next one itself — online too,
+ * so its numbers run in the order its sales were made — and the server keeps
+ * the number the till gave.
+ */
+test("the till numbers its own invoices from a block it reserved, with the line down too", async ({ page }) => {
+  await pairAndSignIn(page);
+  // Signed in, the till asked for its blocks: twenty-five invoice numbers
+  // and twenty-five delivery-note numbers, from where the shop's sequence stood.
+  await expect.poll(() => be.reservations.filter((r) => r.type === "sale").length).toBe(1);
+  expect(be.reservations.find((r) => r.type === "sale")).toMatchObject({ from: 1, to: 25 });
+  await expect.poll(() => be.reservations.filter((r) => r.type === "delivery").length).toBe(1);
+
+  // Online: the till's number, and the server kept it.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000001 completed/);
+  expect(be.storedSales[0].doc_number).toBe("INV-000001");
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // The line goes down. The next sale is numbered all the same, on the slip
+  // and in its barcode, and the number is the next in the till's run.
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/will sync when the connection returns/i);
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("Invoice No: INV-000002");
+  await expect(slip).not.toContainText("issued when the line returns");
+  await expect(slip).not.toContainText("Till ref");
+  expect(await slip.locator("[data-barcode]").getAttribute("data-barcode")).toBe("INV-000002");
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // The line returns: the sale goes in under the number on the customer's slip.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.storedSales.length, { timeout: 45_000 }).toBe(2);
+  expect(be.storedSales[1].doc_number).toBe("INV-000002");
+
+  // And the run continues; the slip in the hand opens its invoice.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-000003 completed/);
+  await page.getByLabel("Close", { exact: true }).click();
+  await page.getByPlaceholder(/Scan barcode/i).fill("INV-000002");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: "Sale INV-000002" })).toBeVisible();
+});
+
+test("a delivery arranged with the line down is numbered, listed, and filed when the line returns", async ({ page }) => {
+  // "In offline mode the delivery is not adding." Two things: the Deliver
+  // button fetched the shop's delivery line every time, so it could not even
+  // be arranged; and a queued sale had no id for a note to belong to. Now the
+  // line's product is kept on the device, and the note is queued with the
+  // sale, numbered from the till's block, and filed once the sale is in.
+  await pairAndSignIn(page, USERS.employee.pin);
+  await expect.poll(() => be.reservations.filter((r) => r.type === "delivery").length).toBe(1);
+
+  be.offline = true;
+  await page.context().setOffline(true);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Deliver$/ }).click();
+  const form = page.getByRole("dialog", { name: "Deliver this sale" });
+  await form.getByLabel("Deliver to").fill("Morija Exports");
+  await form.getByLabel("Address").fill("14 Kolonyama Rd");
+  await form.getByLabel("Delivery charge").fill("90");
+  await form.getByRole("button", { name: "Add to the sale" }).click();
+  // Arranged, with the line down: the charge is on the sale.
+  await expect(page.getByRole("button", { name: /Deliver · Morija Exports/ })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/Delivery note DEL-000001 for Morija Exports follows when the connection returns/);
+  expect(be.deliveries).toHaveLength(0);
+  await page.getByLabel("Close", { exact: true }).click();
+
+  // On the Deliveries tab meanwhile, as a load that is coming.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Deliveries" }).click();
+  const row = page.locator("tr.acc-row", { hasText: "DEL-000001" });
+  await expect(row).toContainText("Morija Exports");
+  await expect(row).toContainText("14 Kolonyama Rd");
+  await expect(row).toContainText("Arranged · will sync");
+
+  // THE LINE RETURNS: the sale goes in, then the note, under its number and
+  // against that sale — and the row is the server's now.
+  be.offline = false;
+  await page.context().setOffline(false);
+  await expect.poll(() => be.deliveries.length, { timeout: 45_000 }).toBe(1);
+  expect(be.deliveries[0].doc_number).toBe("DEL-000001");
+  expect(be.deliveries[0].sale_id).toBe("s0");
+  expect(be.deliveries[0].customer_name).toBe("Morija Exports");
+  expect(be.deliveries[0].charge).toBe(90);
+  await expect(row).not.toContainText("will sync");
+  await expect(row.getByRole("button", { name: "Delivered" })).toBeVisible();
+});
+
+test("the dividing lines over the two footers meet", async ({ page }) => {
+  // Each footer was as tall as its own contents, so the line across the
+  // bottom of the till broke at the column edge. The taller sets both.
+  await pairAndSignIn(page);
+  const left = page.locator(".sell-actions");
+  const right = page.locator(".pay-foot");
+  await expect(left).toBeVisible();
+  await expect(right).toBeVisible();
+  await expect.poll(async () => {
+    const a = (await left.boundingBox())!, b = (await right.boundingBox())!;
+    return Math.abs(a.y - b.y);
+  }).toBeLessThanOrEqual(1);
+  const a = (await left.boundingBox())!, b = (await right.boundingBox())!;
+  expect(Math.abs(a.y + a.height - (b.y + b.height))).toBeLessThanOrEqual(1);
+});
+
+test("the TillAI bubble can be dragged anywhere, stays there, and opens beside itself", async ({ page }) => {
+  await pairAndSignIn(page);
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  const before = (await bubble.boundingBox())!;
+  // Dragged from the corner to the upper right.
+  await page.mouse.move(before.x + 20, before.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(before.x + 200, before.y - 200, { steps: 8 });
+  await page.mouse.move(900, 120, { steps: 8 });
+  await page.mouse.up();
+  const after = (await bubble.boundingBox())!;
+  expect(after.x).toBeGreaterThan(before.x + 300);
+  expect(after.y).toBeLessThan(before.y - 300);
+  // Letting go is not a tap: nothing opened.
+  await expect(page.getByRole("dialog", { name: "TillAI" })).toHaveCount(0);
+
+  // A tap opens it, beside the bubble — below it, since it is in the upper half.
+  await bubble.click();
+  const sheet = page.getByRole("dialog", { name: "TillAI" });
+  await expect(sheet).toBeVisible();
+  const s = (await sheet.boundingBox())!;
+  expect(s.y).toBeGreaterThan(after.y + after.height);
+  expect(Math.abs(s.x - after.x)).toBeLessThan(200);
+  await page.keyboard.press("Escape");
+
+  // Still there after a reload.
+  await page.reload();
+  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  const kept = (await page.getByRole("button", { name: "TillAI" }).boundingBox())!;
+  expect(Math.abs(kept.x - after.x)).toBeLessThan(2);
+  expect(Math.abs(kept.y - after.y)).toBeLessThan(2);
+});
+
+test("on a wide screen the action row sits low, beside the TillAI bubble, and takes the corner back when the bubble moves", async ({ page }) => {
+  // The row kept a band clear beneath it for the bubble, and that band was
+  // lines of the basket the counter could not see. In line with the bubble
+  // now: nothing under a button, and no band.
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await pairAndSignIn(page);
+  const row = page.locator(".sell-actions");
+  const bubble = page.getByRole("button", { name: "TillAI" });
+  const overlaps = async () => {
+    const b = (await bubble.boundingBox())!;
+    for (const box of await row.locator("button").evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, w: r.width, h: r.height })))) {
+      if (box.x < b.x + b.width && box.x + box.w > b.x && box.y < b.y + b.height && box.y + box.h > b.y) return true;
+    }
+    return false;
+  };
+  expect(await overlaps(), "the bubble sits on a button").toBe(false);
+  const pad = async () => row.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { bottom: parseFloat(cs.paddingBottom), left: parseFloat(cs.paddingLeft) };
+  });
+  expect((await pad()).bottom).toBeLessThanOrEqual(18);
+  expect((await pad()).left).toBeGreaterThanOrEqual(120);
+
+  // Dragged away, the row starts at the edge again — and still nothing under a button.
+  const b = (await bubble.boundingBox())!;
+  await page.mouse.move(b.x + 20, b.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(700, 200, { steps: 10 });
+  await page.mouse.up();
+  await expect.poll(async () => (await pad()).left).toBeLessThan(60);
+  expect(await overlaps()).toBe(false);
 });

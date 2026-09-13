@@ -35,7 +35,9 @@ import {
 } from "../lib/adminApi";
 import { findByPinOffline } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
-import { listQueue } from "../lib/queue";
+import { enqueueAction, listQueue } from "../lib/queue";
+import { commitDocNumber, peekDocNumber, topUpAllDocNumbers, topUpDocNumbers } from "../lib/docNumbers";
+import { isNetworkError, onNetworkChange, useOnline } from "../lib/offline";
 import { useAwayLock } from "../lib/awayLock";
 import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
@@ -47,7 +49,6 @@ import {
 import { money } from "../lib/money";
 import { cacheGet, cacheSet } from "../lib/localCache";
 import { cashSessionStatus, STALE_SESSION_HOURS, type CashSessionStatus } from "../lib/cashup";
-import { useOnline } from "../lib/offline";
 import { can, canAny } from "../lib/permissions";
 import { printReceipt } from "../lib/print";
 import { buildQuoteText, buildReceiptText, cartQuoteLines, tillRef } from "../lib/receipt";
@@ -346,6 +347,48 @@ export default function POS() {
   // A phone that has been put away asks for its owner's PIN again. The
   // till does not: it is watched, shared, and takes money all day.
   const [locked, unlock] = useAwayLock(kind === "personal");
+
+  // The dividers over the two footers meet (sell.css, --sell-foot): the
+  // left footer is made at least as tall as the right one. Never the other
+  // way — the right column is the tender keypad, and on a 620-tall window
+  // raising its footer put the keys behind a scrollbar. So the lines meet
+  // wherever the left's own contents are the shorter, which on a wide screen
+  // is always (the bubble sits in the row, not under it), and under 1200
+  // wide they can still part on a short window. Only while the columns stand
+  // side by side — stacked on a phone, their bottoms are on different lines.
+  useEffect(() => {
+    if (kind === "personal" || typeof ResizeObserver === "undefined") return;
+    const body = document.querySelector<HTMLElement>(".sell-body");
+    if (!body) return;
+    const measure = () => {
+      const a = body.querySelector<HTMLElement>(".sell-actions");
+      const b = body.querySelector<HTMLElement>(".pay-foot");
+      if (!a || !b) return;
+      body.style.setProperty("--sell-foot", "0px");
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const next = Math.abs(ra.bottom - rb.bottom) <= 2 ? `${Math.ceil(rb.height)}px` : "";
+      if (next) body.style.setProperty("--sell-foot", next);
+      else body.style.removeProperty("--sell-foot");
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(body);
+    body.querySelectorAll<HTMLElement>(".sell-actions, .pay-foot").forEach((el) => ro.observe(el));
+    measure();
+    return () => ro.disconnect();
+  }, [kind]);
+
+  // The till's own invoice and delivery-note numbers (docNumbers.ts): a
+  // block reserved while the line is up, topped up whenever it returns. A
+  // phone does not sell, so it holds none.
+  useEffect(() => {
+    if (kind === "personal") return;
+    topUpAllDocNumbers();
+    // And the delivery line's product, so Deliver works with the line down.
+    void deliveryProduct().catch(() => undefined);
+    return onNetworkChange((on) => {
+      if (on) topUpAllDocNumbers();
+    });
+  }, [kind]);
   // The one screen a locked phone will still show, and only when the PIN
   // cannot be proved for want of a line.
   const [lockedPeek, setLockedPeek] = useState(false);
@@ -1035,26 +1078,50 @@ export default function POS() {
       // load a bakkie.
       let deliveryNote = "";
       if (delivery) {
+        // Numbered by the till from its reserved block, like the invoice, so
+        // the driver has a note number with the line down.
+        const docNumber = peekDocNumber("delivery");
+        const details = {
+          cashierId: user.id,
+          customerName: delivery.customerName,
+          address: delivery.address,
+          deliverOn: delivery.deliverOn,
+          deliverAt: delivery.deliverAt || null,
+          charge: delivery.charge,
+          note: delivery.note || null,
+          docNumber,
+        };
+        // Kept on this device and filed when the line is back — after the
+        // sale, if the sale is itself still on its way. The Deliveries tab
+        // lists it meanwhile, so the load is not a surprise to anybody.
+        const queueIt = (saleClientRef: string | null, saleId: string | null) => {
+          enqueueAction({
+            id: `cd-${saleClientRef ?? saleId}`, kind: "create_delivery",
+            saleClientRef, saleId, saleNumber: sale.doc_number, ...details,
+            at: new Date().toISOString(),
+          });
+          commitDocNumber("delivery", docNumber);
+          deliveryNote = docNumber
+            ? ` Delivery note ${docNumber} for ${delivery.customerName} follows when the connection returns.`
+            : ` The delivery note for ${delivery.customerName} follows when the connection returns.`;
+        };
         if (queued || !sale.id) {
-          deliveryNote = " The delivery note follows when the connection returns.";
+          queueIt(sale.id, null);
         } else {
           try {
-            await createDelivery({
-              cashierId: user.id,
-              saleId: sale.id,
-              customerName: delivery.customerName,
-              address: delivery.address,
-              deliverOn: delivery.deliverOn,
-              deliverAt: delivery.deliverAt || null,
-              charge: delivery.charge,
-              note: delivery.note || null,
-            });
-            deliveryNote = ` Delivery note for ${delivery.customerName}.`;
+            const note = await createDelivery({ ...details, saleId: sale.id });
+            if (note.doc_number === docNumber) commitDocNumber("delivery", docNumber);
+            void topUpDocNumbers("delivery");
+            deliveryNote = ` Delivery note ${note.doc_number} for ${delivery.customerName}.`;
           } catch (e) {
-            // Said out loud on the same line as the sale: somebody is waiting
-            // to load a bakkie, and a note that silently did not happen is a
-            // delivery nobody knows about.
-            deliveryNote = ` ${errorMessage(e, "The delivery note did not save")}`;
+            if (isNetworkError(e)) {
+              queueIt(null, sale.id);
+            } else {
+              // Said out loud on the same line as the sale: somebody is
+              // waiting to load a bakkie, and a note that silently did not
+              // happen is a delivery nobody knows about.
+              deliveryNote = ` ${errorMessage(e, "The delivery note did not save")}`;
+            }
           }
         }
       }

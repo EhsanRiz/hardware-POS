@@ -492,16 +492,30 @@
 
 /* ---- Left-column footer ------------------------------------------------ */
 
+/* The two footers' dividers meet. Each column's footer is as tall as its own
+   contents — the buttons on the left, the tender button and its caption on
+   the right — and the two came out different, so the line across the bottom
+   of the till broke at the column edge. POS.tsx measures the right one and
+   sets --sell-foot; the left is at least that. Never the other way: the
+   right column is the keypad, and a taller footer there costs it keys. */
+.sell-actions {
+  min-height: var(--sell-foot, auto);
+  box-sizing: border-box;
+}
+
 .sell-actions {
   margin-top: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  /* Extra height (see --sell-foot below) goes under the buttons, so they
+     stay on the divider rather than sinking towards the page edge. */
+  align-content: flex-start;
   /* The bottom is --tillai-corner, never a plain number: see the note below
      the .push rule. Four breakpoints set this padding and every one of them
      has to keep that clearance, so it is named rather than repeated. */
-  padding: 18px var(--sell-pad) var(--tillai-corner);
+  padding: 18px var(--sell-pad) var(--tillai-corner) max(var(--sell-pad), var(--tillai-inline));
   border-top: 1px solid var(--divider);
   flex: none;
 }
@@ -535,7 +549,21 @@
  * chasing it around per screen is how it ends up somewhere different on each.
  * The band simply keeps its own content out of that corner.
  */
-.sell { --tillai-corner: 34px; }
+.sell { --tillai-corner: 34px; --tillai-inline: 0px; }
+
+/*
+ * On a wide counter screen the bubble sits IN the row instead — in line with
+ * the buttons at the far left, the row starting to its right — and the band
+ * under the row goes, which is what gives the lines above it the room back.
+ * Only from 1200 wide: narrower, the six buttons need every pixel of the
+ * row and would wrap, which costs more height than the band did. And only
+ * while the bubble is in its corner: dragged away (TillAI.tsx marks the
+ * body), the row has the corner too.
+ */
+@media (min-width: 1200px) {
+  .sell { --tillai-corner: 18px; --tillai-inline: 134px; }
+  body[data-tillai-moved] .sell { --tillai-inline: 0px; }
+}
 
 /*
  * Six buttons, one row, on a 1024 counter screen.
@@ -1300,6 +1328,9 @@
   cursor: pointer;
 }
 .tillai-bubble:hover, .tillai-bubble.is-open { border-color: var(--color-accent); }
+/* Dragged: a finger on it moves it, so the browser must not scroll instead. */
+.tillai-bubble { touch-action: none; user-select: none; -webkit-user-select: none; }
+.tillai-bubble.is-moved { cursor: move; }
 .tillai {
   position: fixed;
   left: 18px;
@@ -3091,7 +3122,7 @@ tr.is-void td:last-child { text-decoration: none; }
      dropped onto a row of its own — a whole band across the till carrying one
      button. Padding and type give back the ~110px that costs nothing anyone
      can feel, and 40px is still a comfortable target. */
-  .sell-actions { gap: 8px; padding: 12px var(--sell-pad) var(--tillai-corner); }
+  .sell-actions { gap: 8px; padding: 12px var(--sell-pad) var(--tillai-corner) max(var(--sell-pad), var(--tillai-inline)); }
   .sell-actions .btn-line { min-height: 40px; padding: 0 12px; font-size: 13px; }
 }
 

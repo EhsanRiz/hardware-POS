@@ -319,12 +319,23 @@ What still works with no line, from what the device kept:
 - **Signing in**, against the PIN hashes cached at the last online sign-in.
 - **Selling**: the catalogue and the customer list are cached; a sale is
   queued (`src/lib/queue.ts`) and replayed exactly once by `src/lib/sync.ts`
-  under its `client_ref`, with the time it was taken; the slip prints. The
-  invoice number is issued by the server at sync, so two tills never issue
-  the same one; until then the slip says so and carries a **till reference**
-  (`TR-` and eight hex digits of the `client_ref`) as text and as a barcode.
-  Scanned back while the sale is still on the till, the box says so; once
-  the sale is in, the scan opens the numbered invoice (0095).
+  under its `client_ref`, with the time it was taken; the slip prints, **with
+  its invoice number**. The till holds a block of numbers it reserved while
+  the line was up (`pos_reserve_doc_numbers`, 0096; `src/lib/docNumbers.ts`)
+  and gives each sale the next one itself, online or off — so one till's
+  numbers run in the order its sales were made, and two tills interleave
+  their blocks. The server keeps the number the till gave, having checked it
+  is that till's and unspent. A number is spent only once the sale is
+  accepted or queued; a refusal hands it back. If the block runs out with the
+  line still down (twenty-five sales), the slip falls back to a **till
+  reference** (`TR-` and eight hex digits of the `client_ref`) as text and as
+  a barcode, and `pos_sale_by_number` finds the invoice by it once the sale
+  is in (0095). A block a till never uses — unpaired, or the remainder of an
+  outage — is a gap; `doc_reservations` says which till held it and when.
+- **Arranging a delivery**: the shop's delivery line is kept on the device,
+  the note is queued with the sale, numbered from the till's DEL- block, shown
+  on the Deliveries tab as "Arranged · will sync", and filed against the sale
+  once the sale is in.
 - **Parking a sale**, on this till, until the line returns.
 - **Marking a delivery off on a phone** (0094): the list it last saw stands,
   the tap queues, the row says "will sync", and the server keeps the time the

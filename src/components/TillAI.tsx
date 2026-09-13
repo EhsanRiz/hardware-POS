@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { cacheGet, cacheSet } from "../lib/localCache";
 import { useOnline } from "../lib/offline";
 import { plainText } from "../lib/plaintext";
 import { askTillAI, type TillAITurn } from "../lib/tillai";
 import InnovaMark from "./InnovaMark";
 import PinPad from "./PinPad";
+
+type Pos = { x: number; y: number };
+const POS_KEY = "tillai.pos";
+const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 /**
  * The rights that open Manage's reports, costs and cash-up. Somebody with
@@ -122,12 +127,76 @@ export default function TillAI({
     }
   };
 
+  // The bubble can be moved, like the calculator: it sat over the corner of
+  // the left column, and whatever a shop keeps there (a parked-sales button,
+  // the last line of a long basket) was under it. Dragged anywhere on the
+  // screen, kept there across reloads, and the sheet opens beside it — above
+  // when it is in the lower half, below when it is in the upper. A short
+  // press is still a tap: only a real move counts as a drag.
+  const [pos, setPos] = useState<Pos | null>(() => cacheGet<Pos | null>(POS_KEY, null));
+  // Told to the page (sell.css): while the bubble is in its corner the
+  // action row starts to the right of it; moved away, the row has the corner.
+  useEffect(() => {
+    document.body.toggleAttribute("data-tillai-moved", !!pos);
+    return () => document.body.removeAttribute("data-tillai-moved");
+  }, [pos]);
+  const bubble = useRef<HTMLButtonElement>(null);
+  const grip = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  const dragged = useRef(false);
+  const startDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const r = bubble.current?.getBoundingClientRect();
+    if (!r) return;
+    grip.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const g = grip.current;
+    const r = bubble.current?.getBoundingClientRect();
+    if (!g || !r) return;
+    const x = e.clientX - g.dx, y = e.clientY - g.dy;
+    if (!g.moved && Math.abs(x - r.left) < 5 && Math.abs(y - r.top) < 5) return;
+    g.moved = true;
+    const next = {
+      x: clamp(x, 0, window.innerWidth - r.width),
+      y: clamp(y, 0, window.innerHeight - r.height),
+    };
+    setPos(next);
+    cacheSet(POS_KEY, next);
+  };
+  const endDrag = () => {
+    dragged.current = !!grip.current?.moved;
+    grip.current = null;
+  };
+  const sheetStyle = (): React.CSSProperties | undefined => {
+    if (!pos || phone) return undefined;
+    const r = bubble.current?.getBoundingClientRect();
+    const h = r?.height ?? 44;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const left = clamp(pos.x, 18, Math.max(18, vw - 420 - 18));
+    return pos.y > vh / 2
+      ? { left, bottom: vh - pos.y + 10, top: "auto", maxHeight: Math.max(200, pos.y - 20) }
+      : { left, top: pos.y + h + 10, bottom: "auto", maxHeight: Math.max(200, vh - pos.y - h - 30) };
+  };
+
   return (
     <>
       <button
+        ref={bubble}
         type="button"
-        className={`tillai-bubble${open ? " is-open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
+        className={`tillai-bubble${open ? " is-open" : ""}${pos ? " is-moved" : ""}`}
+        style={pos ? { left: pos.x, top: pos.y, bottom: "auto" } : undefined}
+        onPointerDown={startDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onClick={() => {
+          // The click after a drag is the drag letting go, not a tap.
+          if (dragged.current) {
+            dragged.current = false;
+            return;
+          }
+          setOpen((o) => !o);
+        }}
         aria-label="TillAI"
         aria-expanded={open}
         title="TillAI (F4)"
@@ -137,7 +206,12 @@ export default function TillAI({
       </button>
 
       {open && (
-        <section className={`tillai${phone ? " is-phone" : ""}`} role="dialog" aria-label="TillAI">
+        <section
+          className={`tillai${phone ? " is-phone" : ""}`}
+          style={sheetStyle()}
+          role="dialog"
+          aria-label="TillAI"
+        >
           <header className="tillai-head">
             {phone && (
               <button type="button" className="tillai-back" onClick={close} aria-label="Back">

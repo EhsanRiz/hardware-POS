@@ -5570,4 +5570,99 @@ begin
     'and the invoice number still finds it');
 end $$;
 
+-- 0096: a till numbers its own invoices, from a block it reserved ----------
+
+do $$
+declare v_tok text; v_tok_b text; v_emp uuid; v_prod uuid; v_price numeric;
+        v_sale public.sales; v_del public.deliveries; v_r record; v_next bigint; v_n int;
+        v_items jsonb; v_pay jsonb;
+begin
+  select token into v_tok from till;
+  select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
+  v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
+
+  -- One signature each: the old ones are gone.
+  select count(*) into v_n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_create_sale';
+  perform assert_eq(v_n, 1, 'one signature for pos_create_sale');
+  select count(*) into v_n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_create_delivery';
+  perform assert_eq(v_n, 1, 'one signature for pos_create_delivery');
+
+  -- A block: twenty-five numbers from where the sequence stood, and the
+  -- sequence moved past them, so the next server-numbered sale is after.
+  select next_number into v_next from public.doc_sequences
+   where org_id = (select org_id from fixture) and doc_type = 'sale';
+  select * into v_r from public.pos_reserve_doc_numbers(v_tok, 'sale', 25);
+  perform assert_eq(v_r.from_number, v_next, 'the block starts where the sequence stood');
+  perform assert_eq(v_r.to_number, v_next + 24, 'and is twenty-five long');
+  perform assert_eq(v_r.prefix, 'INV-', 'with the invoice prefix');
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay);
+  perform assert_eq(v_sale.doc_number, 'INV-' || lpad((v_next + 25)::text, 6, '0'),
+    'a sale the server numbers lands after the block');
+
+  -- A sale with a number from the block keeps it.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay,
+    p_doc_number => 'INV-' || lpad(v_r.from_number::text, 6, '0'));
+  perform assert_eq(v_sale.doc_number, 'INV-' || lpad(v_r.from_number::text, 6, '0'),
+    'a sale keeps the number the till gave it');
+
+  -- Not twice — refused by name, before the unique index would have had to.
+  -- (The index refuses it too, which is why assert_refuses alone proved
+  -- nothing here: the check was removed and the test stayed green.)
+  begin
+    perform public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+      p_items => v_items, p_payment_method => 'cash', p_payments => v_pay,
+      p_doc_number => 'INV-' || lpad(v_r.from_number::text, 6, '0'));
+    raise exception 'FAILED: the same number twice — it was allowed';
+  exception when others then
+    perform assert(sqlerrm like 'Number % has already been used',
+      'the same number twice is refused in the server''s words, got: ' || sqlerrm);
+  end;
+  -- Not outside the block, not somebody else's, not misspelt.
+  perform assert_refuses(format(
+    'select public.pos_create_sale(p_register_token => %L, p_cashier_id => %L, p_items => %L::jsonb, p_payment_method => %L, p_payments => %L::jsonb, p_doc_number => %L)',
+    v_tok, v_emp, v_items, 'cash', v_pay, 'INV-' || lpad((v_r.to_number + 1)::text, 6, '0')),
+    'a number past the block');
+  perform assert_refuses(format(
+    'select public.pos_create_sale(p_register_token => %L, p_cashier_id => %L, p_items => %L::jsonb, p_payment_method => %L, p_payments => %L::jsonb, p_doc_number => %L)',
+    v_tok, v_emp, v_items, 'cash', v_pay, 'INV-' || (v_r.from_number + 1)::text),
+    'a number not formatted as the sequence formats it');
+  -- A second till in the SAME shop, so the refusal is about the number and
+  -- not about the cashier being somebody else's.
+  select token into v_tok_b from public.pos_pair_register('+27820000001', '1234', 'Second till');
+  perform assert_refuses(format(
+    'select public.pos_create_sale(p_register_token => %L, p_cashier_id => %L, p_items => %L::jsonb, p_payment_method => %L, p_payments => %L::jsonb, p_doc_number => %L)',
+    v_tok_b, v_emp, v_items, 'cash', v_pay, 'INV-' || lpad((v_r.from_number + 1)::text, 6, '0')),
+    'another till''s number');
+
+  -- A sale the server parks has no number; the one the till gave is free.
+  perform assert(not exists (select 1 from public.sales s where s.doc_number = 'INV-' || lpad((v_r.from_number + 2)::text, 6, '0')),
+    'the number is not on any sale yet');
+
+  -- A delivery note, the same way.
+  select * into v_r from public.pos_reserve_doc_numbers(v_tok, 'delivery', 5);
+  perform assert_eq(v_r.prefix, 'DEL-', 'a delivery block carries the note prefix');
+  v_del := public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'T. Mokoena', '14 Mabille Rd', current_date,
+    p_doc_number => 'DEL-' || lpad(v_r.from_number::text, 6, '0'));
+  perform assert_eq(v_del.doc_number, 'DEL-' || lpad(v_r.from_number::text, 6, '0'),
+    'a delivery keeps the number the till gave it');
+
+  -- A till holding plenty is not given more: fifty a time at most, and none
+  -- while fifty are unspent.
+  select * into v_r from public.pos_reserve_doc_numbers(v_tok, 'sale', 500);
+  perform assert_eq(v_r.to_number - v_r.from_number + 1, 50::bigint, 'fifty at a time at most');
+  perform assert_refuses(format('select * from public.pos_reserve_doc_numbers(%L, %L, 25)', v_tok, 'sale'),
+    'no more while the till holds fifty unspent');
+  perform assert_refuses(format('select * from public.pos_reserve_doc_numbers(%L, %L, 25)', v_tok, 'quote'),
+    'a till does not number quotes');
+  perform assert(not has_function_privilege('anon', 'public.claim_doc_number(public.registers, text, text)', 'execute'),
+    'the check is the server''s own');
+end $$;
+
 select 'all database tests passed' as result;

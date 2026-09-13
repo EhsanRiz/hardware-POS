@@ -48,6 +48,16 @@ a thermal head cannot lay ink at the very edge of the roll and `margin: 0` shave
 the left column off. Playwright's print emulation has **no page box**, so a
 margin change leaves every test green. Check a real slip.
 
+**Invoice numbers are the till's to give (0096).** A till reserves a block
+of twenty-five and numbers its own sales, online or off; the server checks
+and keeps them. Consequences worth knowing before somebody asks: two tills'
+numbers interleave, so the shop's run is not in time order across tills; a
+sale the server parks for approval at sync leaves its printed number as a
+gap; unpairing a till abandons whatever it held (the queued sales it still
+carries are re-numbered by the server at replay, so their slips will not
+match — rare, and said in `sync.ts`). `doc_reservations` is the record of
+who held what.
+
 ## Open, in the order I would do them
 
 1. **Email.** Designed, not built. One Supabase Edge Function + Resend/Postmark.

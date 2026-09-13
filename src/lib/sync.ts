@@ -6,13 +6,17 @@
 // client-generated UUID guarantees no duplicates even if a request committed
 // server-side but its response was lost on the way back.
 import { useEffect, useState } from "react";
-import { createSale, markDelivered } from "./api";
+import { createDelivery, createSale, markDelivered } from "./api";
+import {
+  commitDocNumber, dropDocNumbers, isDocNumberError, peekDocNumber, topUpDocNumbers,
+} from "./docNumbers";
 import { errorMessage } from "./errors";
 import { findByPinOffline } from "./auth";
 import { isNetworkError, isOnline, onNetworkChange } from "./offline";
 import { can } from "./permissions";
 import {
   actionCount,
+  attachSaleToDeliveries,
   bumpAttempt,
   enqueue,
   failAction,
@@ -142,9 +146,13 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
       ? await resolveApprover(p.approverPin)
       : null;
 
+  // The invoice number, from the block the till holds. Spent only once the
+  // sale is accepted with it or queued; a refusal hands it back.
+  const docNumber = peekDocNumber("sale");
+
   if (isOnline()) {
     try {
-      const sale = await createSale({
+      const sale = await createSaleNumbered({
         cashierId: p.cashierId,
         items: itemsPayload(p.lines),
         customerId: p.customerId,
@@ -162,7 +170,10 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
         clientRef: clientUuid,
         createdAt: null, // online: let the server stamp it
         note: p.note,
+        docNumber,
       });
+      if (sale.doc_number && sale.doc_number === docNumber) commitDocNumber("sale", docNumber);
+      void topUpDocNumbers("sale");
       return { sale, queued: false };
     } catch (e) {
       // A real server rejection (over credit limit, out of stock, not paired)
@@ -196,14 +207,19 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
     poNumber: p.poNumber ?? null,
     customerVatNumber: p.customerVatNumber ?? null,
     createdAt,
+    docNumber,
   });
+  // Spent now: the slip is about to print it. Should the server park this
+  // sale for approval when it syncs, the number is a gap — the till cannot
+  // know that here, and a slip with no number was the worse thing.
+  commitDocNumber("sale", docNumber);
 
   // Build the sale locally so the invoice prints immediately — RawBT is on the
   // tablet, so printing never depended on the network. There is no document
   // number yet: the server allocates that at sync, and the slip says so.
   const sale: Sale = {
     id: clientUuid,
-    doc_number: null,
+    doc_number: docNumber,
     cashier_id: p.cashierId,
     cashier_name: p.cashierName,
     customer_id: p.customerId,
@@ -236,6 +252,21 @@ export async function submitSale(p: SaleInput): Promise<SaleResult> {
   return { sale, queued: true };
 }
 
+/**
+ * createSale, with one retry without the number if the server says the
+ * number is not this till's — the till was unpaired and paired again, and
+ * the block it held died with the old token. The server numbers it then.
+ */
+async function createSaleNumbered(input: Parameters<typeof createSale>[0]): Promise<Sale> {
+  try {
+    return await createSale(input);
+  } catch (e) {
+    if (!input.docNumber || !isDocNumberError(e)) throw e;
+    dropDocNumbers("sale");
+    return createSale({ ...input, docNumber: null });
+  }
+}
+
 let syncing = false;
 
 /** Replay queued sales to the server (idempotent). Safe to call anytime. */
@@ -245,7 +276,7 @@ export async function syncNow(): Promise<void> {
   try {
     for (const item of listQueue()) {
       try {
-        await createSale({
+        const created = await createSaleNumbered({
           cashierId: item.cashierId,
           items: itemsPayload(item.lines),
           customerId: item.customerId,
@@ -264,7 +295,10 @@ export async function syncNow(): Promise<void> {
           // Offline sales keep the time they were actually taken.
           createdAt: item.createdAt,
           note: null,
+          docNumber: item.docNumber ?? null,
         });
+        // A delivery arranged with it can be filed now there is a sale.
+        attachSaleToDeliveries(item.clientUuid, created.id);
         removeFromQueue(item.clientUuid);
       } catch (e) {
         if (isNetworkError(e)) {
@@ -282,6 +316,27 @@ export async function syncNow(): Promise<void> {
     // off by somebody else in the meantime is done, not an error.
     for (const a of listActions()) {
       try {
+        if (a.kind === "create_delivery") {
+          // Waits for its sale; the sales loop above fills saleId in.
+          if (!a.saleId) continue;
+          try {
+            await createDelivery({
+              cashierId: a.cashierId, saleId: a.saleId, customerName: a.customerName,
+              address: a.address, deliverOn: a.deliverOn, deliverAt: a.deliverAt,
+              charge: a.charge, note: a.note, docNumber: a.docNumber,
+            });
+          } catch (e) {
+            if (!a.docNumber || !isDocNumberError(e)) throw e;
+            dropDocNumbers("delivery");
+            await createDelivery({
+              cashierId: a.cashierId, saleId: a.saleId, customerName: a.customerName,
+              address: a.address, deliverOn: a.deliverOn, deliverAt: a.deliverAt,
+              charge: a.charge, note: a.note, docNumber: null,
+            });
+          }
+          removeAction(a.id);
+          continue;
+        }
         await markDelivered(a.userId, a.deliveryId, null, a.at);
         removeAction(a.id);
       } catch (e) {
