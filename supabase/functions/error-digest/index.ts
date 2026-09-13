@@ -7,11 +7,10 @@
  * with the service role, and sends one email through Resend, the way the
  * landing page's request form does. A quiet night sends nothing.
  *
- * Whoever calls this cannot make it send twice: it keeps its own memory in
- * ops_digests and refuses to go out again within twenty hours of the last
- * one. That is the whole of the guard, and it is enough, because the only
- * harm a stranger with the public key could do is bring the nightly email
- * forward.
+ * Only the Worker's cron may call it, and it proves that with a shared
+ * DIGEST_SECRET; it also keeps its own memory in ops_digests and refuses to
+ * go out again within twenty hours of the last one, claiming the day before
+ * the work so two calls at once send one email.
  */
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { summarise } from "./digest.ts";

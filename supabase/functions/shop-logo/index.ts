@@ -68,7 +68,7 @@ Deno.serve(async (req: Request) => {
   if (!match) return json({ ok: false, message: "Unreadable image" }, 400);
   const [, mime, b64] = match;
   const ext = TYPES[mime];
-  if (!ext) return json({ ok: false, message: "Use a PNG, JPEG, WebP or SVG" }, 400);
+  if (!ext) return json({ ok: false, message: "Use a PNG, JPEG or WebP" }, 400);
 
   let bytes: Uint8Array;
   try {

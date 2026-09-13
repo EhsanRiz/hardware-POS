@@ -2708,14 +2708,15 @@ test("cash-up history is a month, a day at a time, opening on yesterday", async 
   await which.fill(iso(at(2, 8)));
   await expect(page.getByText(/No cash-up on /)).toBeVisible();
 
-  // And that day's close prints from here.
-  await which.fill(iso(at(3, 8)));
-  await page.getByRole("button", { name: /Print day close for/ }).click();
-  await expect(page.locator("#print-area")).toContainText("DAY CLOSE");
-
   // Back to yesterday with one tap.
   await page.getByRole("button", { name: "Yesterday" }).click();
   await expect(which).toHaveValue(iso(at(1, 8)));
+
+  // And any day's close prints from here. Last, because the slip sits over
+  // the screen until it is closed.
+  await which.fill(iso(at(3, 8)));
+  await page.getByRole("button", { name: /Print day close for/ }).click();
+  await expect(page.locator("#print-area")).toContainText("DAY CLOSE");
 });
 
 test("a drawer left open since yesterday is flagged at sign-in, and closing it clears the flag", async ({ page }) => {
