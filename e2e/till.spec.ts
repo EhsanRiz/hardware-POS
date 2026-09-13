@@ -1831,32 +1831,42 @@ test("a parked sale can be released from the Sales screen", async ({ page }) => 
   expect(be.sales[0].approved_by).toBe(USERS.manager.row.id);
 });
 
-test("a manager issues a code, and it releases a discount over the phone", async ({ page }) => {
+test("a manager issues a code, and it releases a discount over the phone", async ({ page, browser }) => {
   // What actually happens when the manager is at the bank: the cashier phones,
   // the manager reads out six digits. Before this the only digits that worked
   // were their PIN — which opens the back office, the staff list and the
   // cash-up on every till, and cannot be taken back once said aloud.
-  await pairAndSignIn(page, USERS.manager.pin);
-  await openManage(page);
-  await page.getByRole("button", { name: /^Approvals$/ }).click();
-  await page.getByLabel("Code ceiling").fill("100");
-  await page.getByLabel("Code reason").fill("Mr Molefe, cement");
-  await page.getByRole("button", { name: /Give me a code/i }).click();
+  //
+  // TWO DEVICES, because that is the whole situation. The manager is not at
+  // the counter — if they were, they would type their PIN into the discount
+  // dialog and no code would exist — so Approvals lives on their phone and the
+  // counter half happens on the till. It used to be one page doing both, which
+  // could only ever have tested a manager standing at the till they were
+  // approving for.
+  const phoneContext = await browser.newContext();
+  const phone = await phoneContext.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be, USERS.manager.pin);
 
-  await expect(page.getByText(/Read this to the counter/i)).toBeVisible();
+  await phone.getByRole("button", { name: /Approve a discount/i }).click();
+  // The tile is a doorway, not a grant: the PIN is asked here exactly as it is
+  // on the till, held in memory only and re-checked by every call behind it.
+  const gate = phone.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await phone.getByLabel("Code ceiling").fill("100");
+  await phone.getByLabel("Code reason").fill("Mr Molefe, cement");
+  await phone.getByRole("button", { name: /Give me a code/i }).click();
+
+  await expect(phone.getByText(/Read this to the counter/i)).toBeVisible();
   const code = be.approvalCodes[0].code;
-  await expect(page.getByText(code)).toBeVisible();
+  await expect(phone.getByText(code)).toBeVisible();
   // Shown once and listed as live, so the manager can see what is outstanding.
-  await expect(page.getByText(/^live$/)).toBeVisible();
+  await expect(phone.getByText(/^live$/)).toBeVisible();
 
   // The counter, later. Sam has no standing authority at all.
-  await page.getByRole("button", { name: /Back to till/i }).click();
-  await page.getByRole("button", { name: /Sign out/i }).click();
-  await page.getByRole("button", { name: /^Sam\b/ }).click();
-  for (const d of USERS.employee.pin.split("")) {
-    await page.locator(`button:text-is("${d}")`).first().click();
-  }
-  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  await pairAndSignIn(page, USERS.employee.pin);
 
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
@@ -7765,6 +7775,115 @@ test("a saved quote comes down named for the customer it is for", async ({ page 
   );
 });
 
+test("a report comes out on the shop's own letterhead", async ({ page }) => {
+  // The day close printed as a 48-column till slip and every other report
+  // printed as nothing at all, so "the bank wants to see it" meant a
+  // screenshot. They come out on the SAME sheet the quotations do.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: "Reports", exact: true }).click();
+  await page.getByRole("tab", { name: "Departments" }).click();
+  await page.getByRole("button", { name: /Print or save as PDF/ }).click();
+
+  // The letterhead, which is the whole point: the same mark, name and address
+  // a customer sees on a quotation.
+  const sheet = page.locator("#doc-sheet .doc-a4");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator(".doc-shop")).toHaveText("Ladybrand Hardware");
+  await expect(sheet.locator(".doc-title")).toHaveText("Sales by department");
+
+  // What it covers and when it was run — a report is true of a moment, and
+  // somebody will find this page in a drawer next March.
+  await expect(sheet.locator(".doc-meta")).toContainText("Period");
+  await expect(sheet.locator(".doc-meta")).toContainText("Printed");
+
+  // The figures, and a total that is the sum of the rows above it.
+  await expect(sheet.locator(".doc-lines tbody")).toContainText("R 115.00");
+  await expect(sheet.locator(".doc-lines tfoot")).toContainText("R 115.00");
+
+  // And it prints through the same path the A4 documents do, so Chrome's own
+  // "Save as PDF" is the file — no second renderer to disagree with this one.
+  await page.emulateMedia({ media: "print" });
+  const shown = await page.evaluate(() => {
+    const a4 = document.querySelector("#doc-sheet .doc-a4") as HTMLElement;
+    const till = document.querySelector(".acc-table") as HTMLElement | null;
+    return {
+      sheet: getComputedStyle(a4).visibility,
+      screenTable: till ? getComputedStyle(till).visibility : "absent",
+    };
+  });
+  await page.emulateMedia({ media: "screen" });
+  expect(shown.sheet, "the sheet on paper").toBe("visible");
+});
+
+test("the till does not offer Approvals, because the code is for when you are not at it", async ({ page }) => {
+  // Issuing a code is what a manager does with a phone to their ear and the
+  // till a mile away. Standing at the counter they type their PIN into the
+  // discount dialog and no code exists — so the till was offering a screen
+  // whose entire reason for existing is the till not being there.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  const nav = page.locator("header:has(h1:text-is('Manage')) nav");
+  await expect(nav.getByRole("button", { name: "Approvals", exact: true })).toHaveCount(0);
+  // The manager still has the right; it is the PLACE that changed.
+  await expect(nav.getByRole("button", { name: "Cash-up", exact: true })).toBeVisible();
+});
+
+test("Manage's sections and the way out share one row at the counter", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+
+  const m = await page.evaluate(() => {
+    const head = document.querySelector("header:has(h1)") as HTMLElement;
+    const all = [...head.querySelectorAll<HTMLElement>("button")].filter(
+      (b) => b.offsetParent !== null
+    );
+    // Counted by the middle of each button, not its top: the way out is a
+    // pixel taller than a tab because it carries a border, and comparing tops
+    // called one row two.
+    const mids = all
+      .map((b) => {
+        const r = b.getBoundingClientRect();
+        return r.top + r.height / 2;
+      })
+      .sort((a, z) => a - z);
+    let rows = 1;
+    for (let i = 1; i < mids.length; i++) if (mids[i] - mids[i - 1] > 8) rows++;
+    const out = all.find((b) => /Back to till/.test(b.textContent ?? ""))!;
+    const tabs = [...head.querySelectorAll<HTMLElement>("nav button")];
+    const here = tabs.find((t) => t.getAttribute("aria-selected") !== "false") ?? tabs[0];
+    return {
+      buttons: all.length,
+      rows,
+      outBg: getComputedStyle(out).backgroundColor,
+      // Compared against the SELECTED section, not just any: an outlined gold
+      // button — the first attempt — read as "you are here", because the
+      // selected section is gold too.
+      hereBg: getComputedStyle(here).backgroundColor,
+      hereColour: getComputedStyle(here).color,
+      outColour: getComputedStyle(out).color,
+    };
+  });
+
+  expect(m.buttons, "controls on the Manage bar").toBeGreaterThanOrEqual(10);
+  expect(m.rows, "rows they occupy at 1024").toBe(1);
+  // The way OUT is the one control here that is not a section, and it was a
+  // twelfth grey word of the same weight as the eleven it is not like. It has
+  // to be unmistakable against the SELECTED section as well as the rest —
+  // being gold on gold would say "you are here", not "this is the door".
+  expect(m.outBg, "the way out's own fill").not.toBe("rgba(0, 0, 0, 0)");
+  expect(m.outBg, "the way out against the section you are on").not.toBe(m.hereBg);
+  expect(m.outColour, "the way out's ink against the section you are on")
+    .not.toBe(m.hereColour);
+});
+
 test("a counter machine with no camera is not offered the camera's work", async ({ page }) => {
   // The shop's till is a PinnPOS all-in-one with no lens in it, and it was
   // being offered four screens that can only be done by pointing one at
@@ -7838,14 +7957,16 @@ test("Manage shows every section without a scrollbar across the top", async ({ p
   expect(wide.offRight, "sections off the right-hand edge at 1024").toBe(0);
 
   // AND at a width where a single row cannot hold them, which is the case the
-  // arrangement actually has to answer. At 1024 the header's own wrap hands the
-  // strip a full row of its own and twelve tabs very nearly fit it — so 1024
-  // alone passes whether these wrap or scroll, and did. Here they must wrap.
-  await page.setViewportSize({ width: 820, height: 768 });
+  // arrangement actually has to answer. At 1024 the strip fits one row on
+  // purpose now — eleven sections, tightened under 1280 — so 1024 alone passes
+  // whether these wrap or scroll, and once did. 820 used to be the width that
+  // forced a wrap; losing Approvals and the tighter padding made them fit
+  // there too, so the case moved down to 700.
+  await page.setViewportSize({ width: 700, height: 768 });
   const narrow = await measure();
-  expect(narrow.rows, "rows the sections occupy at 820").toBeGreaterThanOrEqual(2);
-  expect(narrow.overflow, "sideways overflow at 820").toBeLessThanOrEqual(0);
-  expect(narrow.offRight, "sections off the right-hand edge at 820").toBe(0);
+  expect(narrow.rows, "rows the sections occupy at 700").toBeGreaterThanOrEqual(2);
+  expect(narrow.overflow, "sideways overflow at 700").toBeLessThanOrEqual(0);
+  expect(narrow.offRight, "sections off the right-hand edge at 700").toBe(0);
 
   // And the far ones are reachable, which is what the scroll strip cost.
   await page.getByRole("button", { name: "Shop", exact: true }).click();

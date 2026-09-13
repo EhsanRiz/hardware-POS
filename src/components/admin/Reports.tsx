@@ -34,6 +34,14 @@ import {
   type VatMonth,
 } from "../../lib/reports";
 import { rangeBounds, type RangeKey } from "../../lib/sales";
+import { shopSettings } from "../../lib/settings";
+import ReportSheet from "./ReportSheet";
+import {
+  dayCloseSheet, debtorsSheet, deliveriesSheet, departmentsSheet, itemsSheet,
+  lossesSheet, peopleSheet, refundsSheet, reportPeriod, stockSheet, suppliersSheet,
+  vatSheet,
+  type ReportSheetData,
+} from "../../lib/reportSheet";
 import { buildCashUpText } from "../../lib/receipt";
 import { Figures } from "./CashUp";
 import type { DayCloseSession } from "../../lib/reports";
@@ -115,6 +123,8 @@ export default function Reports({
   const [losses, setLosses] = useState<Shrinkage | null>(null);
   const [debtors, setDebtors] = useState<DebtorsAgeing | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierSpendRow[] | null>(null);
+  /** The report being looked at on paper, if any. */
+  const [paper, setPaper] = useState<ReportSheetData | null>(null);
 
   const bounds = rangeBounds(range, from, to);
 
@@ -165,6 +175,31 @@ export default function Reports({
     }
   }
 
+  /**
+   * This section's figures as a sheet of paper, or null where there is no
+   * paper to make.
+   *
+   * Built from the SAME rows the tables above render — there is no second
+   * query and no second sum anywhere, so the page and the screen cannot
+   * disagree about a number. Export is left out: it is already a file.
+   */
+  const period = NO_RANGE.includes(section)
+    ? "As it stands now"
+    : reportPeriod(bounds.from, bounds.to);
+  const sheet: ReportSheetData | null =
+    section === "day" && day ? dayCloseSheet(day, period)
+    : section === "departments" && depts ? departmentsSheet(depts, period)
+    : section === "items" && items ? itemsSheet(items, period)
+    : section === "people" && people ? peopleSheet(people, period)
+    : section === "refunds" && back ? refundsSheet(back, period)
+    : section === "deliveries" && deliv ? deliveriesSheet(deliv, period)
+    : section === "stock" && stock ? stockSheet(stock)
+    : section === "losses" && losses ? lossesSheet(losses, period)
+    : section === "debtors" && debtors ? debtorsSheet(debtors)
+    : section === "suppliers" && suppliers ? suppliersSheet(suppliers, period)
+    : section === "vat" && vat ? vatSheet(vat)
+    : null;
+
   const chip = (on: boolean) =>
     `px-3 py-1.5 rounded-full text-sm border ${
       on ? "bg-colophon text-paper border-colophon" : "bg-white text-stone-600 border-stone-300"
@@ -203,6 +238,18 @@ export default function Reports({
                   className="rounded-lg border border-stone-300 px-2 py-1 text-sm" aria-label="To date" />
               </>
             )}
+          </div>
+        )}
+
+        {/* On paper, on the shop's own letterhead. The day close printed as a
+            till slip and nothing else printed at all, so "the bank wants to
+            see it" meant a screenshot. Only where there is something to put on
+            a page: Export is already a spreadsheet. */}
+        {sheet && (
+          <div>
+            <button className={chip(false)} onClick={() => setPaper(sheet)}>
+              🖨️ Print or save as PDF
+            </button>
           </div>
         )}
 
@@ -268,6 +315,14 @@ export default function Reports({
         )}
         {busy && <p className="text-sm text-stone-500">Loading…</p>}
       </div>
+
+      {paper && (
+        <ReportSheet
+          sheet={paper}
+          shop={shopSettings()}
+          onClose={() => setPaper(null)}
+        />
+      )}
     </div>
   );
 }

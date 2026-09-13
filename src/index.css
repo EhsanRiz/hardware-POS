@@ -294,6 +294,34 @@ button {
 .doc-statement .doc-brought td { font-weight: 600; }
 .doc-ageing th { padding-right: 8mm; }
 
+/* ---- A report on the same sheet ---------------------------------------- */
+/*
+ * A report is a quotation's table with different words in it, so it wears the
+ * quotation's letterhead and the quotation's table. Only three things are its
+ * own: the emphasised last line, the caveat under it, and what an empty
+ * period looks like.
+ */
+.doc-lines tfoot .doc-total-row td {
+  font-weight: 700;
+  border-top: 0.8pt solid var(--color-colophon, #0e3a2d);
+  border-bottom: 0;
+  padding-top: 2.5mm;
+}
+/* The caveat the figures come with — an uncosted margin, a VAT total that is
+   not a return. Small, but on the page: this is exactly the sort of thing
+   that becomes a fact somebody quotes back at you once it is printed. */
+.doc-report-note {
+  margin-top: 4mm;
+  font-size: 8.5pt;
+  font-style: italic;
+  color: var(--color-neutral-700, #55625b);
+}
+.doc-empty {
+  padding: 6mm 0;
+  text-align: center;
+  color: var(--color-neutral-700, #55625b);
+}
+
 .doc-foot { display: flex; gap: 12mm; margin-top: 6mm; align-items: flex-start; }
 .doc-foot-left { flex: 1; min-width: 0; font-size: 9pt; color: var(--color-neutral-800, #3d4b44); }
 .doc-note { margin-bottom: 3mm; }

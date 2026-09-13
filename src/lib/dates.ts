@@ -7,7 +7,13 @@
 // whether the 4th is "4" or "04" — and a slip has to print the same on every
 // device in the shop.
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/**
+ * The app's month names, exported because a report's date range needs exactly
+ * these. Not toLocaleDateString: en-ZA renders September as "Sept", four
+ * letters among eleven threes, so a page reading "28 Aug – 3 Sept" disagrees
+ * with every other date the till prints.
+ */
+export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function asDate(d: Date | string): Date | null {
   const x = d instanceof Date ? d : new Date(d);

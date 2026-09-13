@@ -111,10 +111,15 @@ export default function Admin({
     // Suppliers: filing a supplier's paperwork and deciding what to buy are
     // done by the same person at completely different moments.
     if (can(user, "manage_purchasing")) t.push({ key: "buying", label: "Buying" });
-    // Its own tab rather than a corner of Settings: issuing a code is something
-    // a manager does standing in a bank queue with a phone to their ear, not
-    // something they configure.
-    if (can(user, "approve_discount")) t.push({ key: "approvals", label: "Approvals" });
+    // ON THE PHONE ONLY, and the clue was always in the description: issuing a
+    // code is something a manager does standing in a bank queue with a phone to
+    // their ear. The whole point of the code is that they are NOT at the till —
+    // a manager standing at the counter types their PIN into the discount
+    // dialog and no code exists. So a till was offering a screen whose reason
+    // for existing is the till not being there.
+    if (deviceKind() === "personal" && can(user, "approve_discount")) {
+      t.push({ key: "approvals", label: "Approvals" });
+    }
     if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
     if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
     if (can(user, "view_reports")) t.push({ key: "tillai", label: "TillAI" });
@@ -324,7 +329,10 @@ export default function Admin({
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`px-3 py-1.5 rounded-lg text-sm shrink-0 whitespace-nowrap ${
+              // Tighter under 1280 so eleven sections, the word Manage and the
+              // way out all hold ONE row on the counter's 1024 screen. At 1280
+              // and up there is room to breathe and they take it back.
+              className={`px-2 xl:px-3 py-1.5 rounded-lg text-[13px] xl:text-sm shrink-0 whitespace-nowrap ${
                 tab === t.key ? "bg-white/10 text-gold-400 font-medium" : "text-white/70"
               }`}
             >
@@ -335,9 +343,19 @@ export default function Admin({
         {/* Never inside the menu: the way out must not need finding. And it
             says where it goes — on a phone there is no till behind this, so
             "Back to till" would be pointing at a screen that does not exist. */}
+        {/* SOLID, not another grey word on a green bar. This is the way OUT,
+            the one control on this header that is not a section, and a cashier
+            looking for it was reading twelve labels of the same weight to find
+            the one that is not like the others.
+
+            Filled rather than outlined in gold, which was the first attempt:
+            the SELECTED section is already gold text, so an outlined gold
+            button read as "you are here" — the exact opposite of what it is.
+            Solid gold is what the till's own Manage button wears, so this is
+            the same word the app already uses for "the way through". */}
         <button
           onClick={onClose}
-          className="ml-auto shrink-0 text-white/70 px-2 py-1.5 text-sm whitespace-nowrap"
+          className="ml-auto shrink-0 px-3 py-1.5 rounded-lg text-[13px] xl:text-sm whitespace-nowrap bg-gold-400 text-colophon font-semibold hover:bg-gold"
         >
           {deviceKind() === "personal" ? "Back" : "Back to till"}
         </button>
