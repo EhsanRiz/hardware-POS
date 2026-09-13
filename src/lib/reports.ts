@@ -125,11 +125,20 @@ export async function exportSales(pin: string, from: Date, to: Date): Promise<Ex
   return (data as ExportRow[]) ?? [];
 }
 
-/** RFC 4180 enough for Excel: quoted fields, doubled quotes, CRLF lines. */
+/**
+ * RFC 4180 enough for Excel: quoted fields, doubled quotes, CRLF lines.
+ *
+ * And no formulas. A cell that begins with =, +, -, @ or a tab is a formula
+ * to Excel, and the cashier, customer and item columns are free text — a
+ * product named =HYPERLINK(...) would run when the owner opened the export,
+ * which is the whole point of the export. Such a cell is led with an
+ * apostrophe, which Excel reads as "this is text" and does not show.
+ */
 export function toCsv(rows: Record<string, unknown>[], columns: string[]): string {
   const cell = (v: unknown) => {
     if (v == null) return "";
-    const s = typeof v === "number" ? String(v) : String(v);
+    let s = typeof v === "number" ? String(v) : String(v);
+    if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [columns.join(",")];

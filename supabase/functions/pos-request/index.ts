@@ -42,8 +42,10 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, message: "Bad request" }, 400);
   }
 
-  const orgName = (b.org_name ?? "").trim().slice(0, 200);
-  const contact = (b.contact_name ?? "").trim().slice(0, 200);
+  // One line each: these reach an email's subject and its headers.
+  const oneLine = (v: unknown) => String(v ?? "").replace(/[\r\n\t]+/g, " ").trim();
+  const orgName = oneLine(b.org_name).slice(0, 200);
+  const contact = oneLine(b.contact_name).slice(0, 200);
   const email = (b.email ?? "").trim().slice(0, 200);
   const phone = (b.phone ?? "").trim().slice(0, 40);
   const country = (b.country ?? "").trim().slice(0, 60);

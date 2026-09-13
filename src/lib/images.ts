@@ -27,7 +27,9 @@ export function imageSrc(pathOrUrl: string | null | undefined): string | null {
   // app itself — supplier catalogue photographs live there, so they need no
   // storage round-trip at all. Only a bare storage path needs the origin and
   // bucket bolted on.
-  if (/^[a-z][a-z0-9+.-]*:/i.test(pathOrUrl)) return pathOrUrl;
+  if (/^(https?|data|blob):/i.test(pathOrUrl)) return pathOrUrl;
+  // Any other scheme — javascript:, vbscript: — is not a picture of anything.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(pathOrUrl)) return "";
   if (pathOrUrl.startsWith("/")) return pathOrUrl;
   return `${API_BASE}/storage/v1/object/public/${BUCKET}/${pathOrUrl}`;
 }

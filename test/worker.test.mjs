@@ -13,7 +13,7 @@ const src = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8")
 const js = ts.transpileModule(src, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { redirectFor, TILL_HOST, digestRequest } = await import(
+const { redirectFor, TILL_HOST, digestRequest, withSecurityHeaders } = await import(
   "data:text/javascript;base64," + Buffer.from(js).toString("base64")
 );
 
@@ -55,6 +55,24 @@ check("it calls the digest function", dr.url, "https://x.supabase.co/functions/v
 check("as a POST", dr.method, "POST");
 check("with the public key", dr.headers.get("apikey"), "anon-key");
 check("as a bearer too, the way the gateway wants it", dr.headers.get("authorization"), "Bearer anon-key");
+
+console.log("--- what a page on this origin may do ---");
+const app = withSecurityHeaders(new Response("<html>", { headers: { "content-type": "text/html" } }), "app");
+const csp = app.headers.get("content-security-policy") ?? "";
+check("only its own scripts", /(^|; )script-src 'self'(;|$)/.test(csp), true);
+check("no inline script", !/script-src[^;]*unsafe-inline/.test(csp), true);
+check("never framed", csp.includes("frame-ancestors 'none'"), true);
+check("no plugins", csp.includes("object-src 'none'"), true);
+check("its own API only", /(^|; )connect-src 'self'(;|$)/.test(csp), true);
+check("no sniffing", app.headers.get("x-content-type-options"), "nosniff");
+check("the camera stays for the shelf", app.headers.get("permissions-policy")?.includes("camera=(self)"), true);
+check("the body is untouched", await app.text(), "<html>");
+const stored = withSecurityHeaders(new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } }), "storage");
+check("a stored file runs nothing here", stored.headers.get("content-security-policy")?.startsWith("sandbox"), true);
+check("and is not sniffed into something else", stored.headers.get("x-content-type-options"), "nosniff");
+const apiRes = withSecurityHeaders(new Response("{}", { status: 201 }), "api");
+check("an API reply keeps its status", apiRes.status, 201);
+check("and gets no page policy", apiRes.headers.get("content-security-policy"), null);
 
 console.log(`\n${failures} failure(s)`);
 process.exit(failures ? 1 : 0);

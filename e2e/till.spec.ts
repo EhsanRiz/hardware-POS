@@ -2952,6 +2952,37 @@ test("departments report what sold and at what margin, VAT by month nets the cre
   expect(lines[1]).toContain("115");
 });
 
+test("a name that is a spreadsheet formula is exported as text", async ({ page }) => {
+  // The export exists to be opened in Excel, and Excel runs a cell that
+  // begins with = or + or -. A buyer or product named that way — typed at the
+  // counter, pasted from a CSV — used to reach the owner's spreadsheet as a
+  // formula. It is led with an apostrophe now, which Excel reads as text.
+  be.customers.push({
+    id: "k8", code: null, name: '=HYPERLINK("http://evil.test","total")',
+    phone: "0835550178", is_trade: false, credit_limit: 0, balance: 0, available: 0,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Walk-in customer/i }).click();
+  await page.getByRole("dialog", { name: /Choose a customer/i }).locator(".modal-row", { hasText: "HYPERLINK" }).click();
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+  await page.getByLabel("Close").click();
+
+  await openManage(page);
+  await page.getByRole("button", { name: /^Reports$/ }).click();
+  await page.getByRole("tab", { name: "Export" }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: /Download CSV/i }).click(),
+  ]);
+  const text = await (await import("node:fs/promises")).readFile((await download.path())!, "utf8");
+  expect(text).toContain("'=HYPERLINK(");
+  expect(text).not.toMatch(/(^|,)"?=HYPERLINK/m);
+});
+
 test("a slip carries its number as a barcode, and the shelf decoder reads it back", async ({ page }) => {
   // The tablet's printer draws the bars itself from ESC/POS; the preview
   // draws them from the same encoder. This hands the preview's bars to the

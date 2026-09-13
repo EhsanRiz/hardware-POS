@@ -105,7 +105,7 @@ export default {
     if (moved) return moved;
 
     if (!url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
+      return withSecurityHeaders(await env.ASSETS.fetch(request), "app");
     }
 
     const path = url.pathname.slice("/api".length);
@@ -130,10 +130,55 @@ export default {
     const headers = new Headers(res.headers);
     headers.delete("content-encoding");
     headers.delete("content-length");
-    return new Response(res.body, {
+    return withSecurityHeaders(new Response(res.body, {
       status: res.status,
       statusText: res.statusText,
       headers,
-    });
+    }), path.startsWith("/storage/") ? "storage" : "api");
   },
 };
+
+/**
+ * The headers that decide what a page on this origin may do.
+ *
+ * The till loads nothing from anywhere else: one script bundle, its own
+ * CSS and fonts, images from its own storage proxy or a catalogue's own
+ * site. So the policy is short and strict, and it is what stands between a
+ * string that reached innerHTML and a script on the till's origin, where
+ * the register token lives. Inline styles stay allowed — React writes them
+ * — and inline scripts do not exist, so they are not.
+ *
+ * A file from the storage bucket is served under this origin too. Whatever
+ * it is, it runs nothing here: sandboxed, sniffing off, and never framed.
+ */
+export function withSecurityHeaders(res: Response, kind: "app" | "storage" | "api"): Response {
+  const out = new Response(res.body, res);
+  const h = out.headers;
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  if (kind === "app") {
+    h.set("Content-Security-Policy", [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "worker-src 'self'",
+      "manifest-src 'self'",
+      "media-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; "));
+    h.set("X-Frame-Options", "DENY");
+    // The shelf screen uses the camera; nothing here uses the rest.
+    h.set("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+  } else if (kind === "storage") {
+    h.set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'");
+    h.set("X-Frame-Options", "DENY");
+  }
+  return out;
+}
