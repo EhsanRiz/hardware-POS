@@ -5457,4 +5457,52 @@ begin
   drop function public.zz_ungranted_probe();
 end $$;
 
+-- 0093: costs are behind their own permission --------------------------------
+
+do $$
+declare v_tok text; v_sup uuid; v_rows jsonb; v_n int; v_prod uuid;
+begin
+  select token into v_tok from till;
+  -- A counter supervisor: reports and the stock room as extras, no costs.
+  select id into v_sup from public.pos_admin_invite_user(
+    v_tok, '1234', 'Supervisor 93', '+27820000098', 'employee'::user_role,
+    array['view_reports', 'manage_inventory']);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9898', gen_salt('bf')) where id = v_sup;
+  -- Something to report on with a cost, and something to reorder.
+  select id into v_prod from public.products
+   where org_id = (select org_id from fixture) and active and cost is not null limit 1;
+  update public.products set reorder_level = coalesce(stock_qty, 0) + 1 where id = v_prod;
+
+  -- Mixed reports: the row comes back, the cost keys are null.
+  v_rows := public.pos_sales_by_department(v_tok, '9898', now() - interval '1 year', now() + interval '1 day');
+  perform assert(jsonb_array_length(v_rows) > 0, 'a supervisor still gets the departments');
+  select count(*) into v_n from jsonb_array_elements(v_rows) r where r->'cost' <> 'null'::jsonb or r->'margin' <> 'null'::jsonb;
+  perform assert_eq(v_n, 0, 'without a cost or a margin on any of them');
+  v_rows := public.pos_sales_by_department(v_tok, '1234', now() - interval '1 year', now() + interval '1 day');
+  select count(*) into v_n from jsonb_array_elements(v_rows) r where r->'cost' <> 'null'::jsonb;
+  perform assert(v_n > 0, 'while the manager sees the cost');
+
+  v_rows := public.pos_item_movement(v_tok, '9898', now() - interval '1 year', now() + interval '1 day', 100);
+  select count(*) into v_n from jsonb_array_elements(v_rows) r where r->'cost' <> 'null'::jsonb or r->'margin' <> 'null'::jsonb;
+  perform assert_eq(v_n, 0, 'items move without their cost for a supervisor');
+  perform assert(jsonb_array_length(v_rows) > 0 and (v_rows->0->'sales') is not null, 'and the sales figure is still there');
+
+  v_rows := public.pos_reorder_list(v_tok, '9898');
+  perform assert(jsonb_array_length(v_rows) > 0, 'a supervisor can see what to order');
+  select count(*) into v_n from jsonb_array_elements(v_rows) r where r->'cost' <> 'null'::jsonb;
+  perform assert_eq(v_n, 0, 'but not what it costs');
+  v_rows := public.pos_reorder_list(v_tok, '1234');
+  select count(*) into v_n from jsonb_array_elements(v_rows) r where r->'cost' <> 'null'::jsonb;
+  perform assert(v_n > 0, 'the manager sees what it costs');
+
+  -- Reports that are the cost are refused outright.
+  perform assert_refuses(format('select public.pos_stock_value(%L, %L)', v_tok, '9898'), 'stock at cost, for a supervisor');
+  perform assert_refuses(format('select public.pos_margin_slipped(%L, %L, 15)', v_tok, '9898'), 'margin slipped, for a supervisor');
+  perform assert(public.pos_stock_value(v_tok, '1234') is not null, 'and open to the manager');
+
+  update public.products set reorder_level = null where id = v_prod;
+  delete from public.app_users where id = v_sup;
+end $$;
+
 select 'all database tests passed' as result;

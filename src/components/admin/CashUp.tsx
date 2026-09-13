@@ -12,8 +12,27 @@ import { errorMessage } from "../../lib/errors";
 import { money } from "../../lib/format";
 import { printReceipt } from "../../lib/print";
 import { queueCount } from "../../lib/queue";
-import { buildCashUpText } from "../../lib/receipt";
+import { buildCashUpText, buildDayCloseText } from "../../lib/receipt";
+import { dayClose } from "../../lib/reports";
 import { fmtDate, fmtTime } from "../../lib/dates";
+
+/** A calendar day as the date input writes it, in the shop's own time. */
+function isoDay(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function daysAgo(n: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
+}
+/** Midnight to midnight, local, for the day the input names. */
+function dayBounds(iso: string): { from: Date; to: Date } {
+  const [y, m, d] = iso.split("-").map(Number);
+  const from = new Date(y, m - 1, d);
+  const to = new Date(y, m - 1, d + 1);
+  return { from, to };
+}
 
 /**
  * Cashing up.
@@ -45,6 +64,10 @@ export default function CashUp({ pin }: { pin: string }) {
   const [banked, setBanked] = useState("");
   const [note, setNote] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
+  // Which earlier day is being looked at. Yesterday to begin with — the
+  // question a manager brings to this screen in the morning — and any day
+  // of the past month after that.
+  const [day, setDay] = useState(() => isoDay(daysAgo(1)));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -326,11 +349,57 @@ export default function CashUp({ pin }: { pin: string }) {
         </div>
       )}
 
-      {past.length > 0 && (
-        <div className="max-w-2xl mt-6">
-          <h2 className="font-medium mb-2">Earlier days</h2>
+      {/* A month of cash-ups, one day at a time. The list used to be the last
+          thirty closes flat, which was fine for "yesterday" and useless for
+          "the Tuesday before last": the manager scrolled and counted. A day
+          is chosen, its cash-ups are what is shown, and the day close for
+          that day prints from here rather than from Reports. */}
+      <div className="max-w-2xl mt-6">
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <h2 className="font-medium">Earlier days</h2>
+          <label className="flex items-center gap-2 text-sm text-stone-600">
+            Day
+            <input
+              type="date"
+              aria-label="Which day"
+              className="border border-stone-300 rounded-lg px-2 py-1 text-sm"
+              value={day}
+              min={isoDay(daysAgo(31))}
+              max={isoDay(new Date())}
+              onChange={(e) => e.target.value && setDay(e.target.value)}
+            />
+          </label>
+          <button
+            className="text-sm text-stone-600 underline underline-offset-2"
+            onClick={() => setDay(isoDay(daysAgo(1)))}
+          >
+            Yesterday
+          </button>
+          <button
+            className="ml-auto text-sm text-stone-600 underline underline-offset-2"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const { from, to } = dayBounds(day);
+                printReceipt(buildDayCloseText(await dayClose(pin, from, to), from, to), "Day close");
+              } catch (e) {
+                setError(errorMessage(e, "Could not build that day's close"));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Print day close for {fmtDate(dayBounds(day).from)}
+          </button>
+        </div>
+        {past.filter((s) => isoDay(new Date(s.opened_at)) === day).length === 0 ? (
+          <p className="text-sm text-stone-500 px-1">
+            No cash-up on {fmtDate(dayBounds(day).from)}.
+          </p>
+        ) : (
           <ul className="divide-y divide-stone-200 bg-white rounded-xl border border-stone-200">
-            {past.map((s) => (
+            {past.filter((s) => isoDay(new Date(s.opened_at)) === day).map((s) => (
               <li key={s.id} className="px-4 py-3 flex items-center gap-3 even:bg-stone-50/70">
                 <span className="flex-1">
                   <span className="block text-sm">
@@ -360,8 +429,8 @@ export default function CashUp({ pin }: { pin: string }) {
               </li>
             ))}
           </ul>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

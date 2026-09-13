@@ -155,12 +155,16 @@ export async function suggestedFloat(pin: string): Promise<number | null> {
   return data == null ? null : Number(data);
 }
 
-/** Closed sessions, newest first, so yesterday's can be reprinted. */
+/**
+ * Closed sessions, newest first, so any day's can be found and reprinted.
+ * Two hundred is the server's ceiling and covers a month of two tills
+ * closing twice a day; the screen picks a day out of them.
+ */
 export async function pastSessions(pin: string): Promise<CashSession[]> {
   const { data, error } = await supabase.rpc("pos_cash_sessions", {
     p_register_token: requireToken(),
     p_pin: pin,
-    p_limit: 30,
+    p_limit: 200,
   });
   if (error) throw error;
   return (data as CashSession[]) ?? [];

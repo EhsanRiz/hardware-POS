@@ -2664,6 +2664,60 @@ test("a day is opened on a float, cashed up, and the variance is what prints", a
   expect(be.closedSessions[0].variance).toBe(-5);
 });
 
+test("cash-up history is a month, a day at a time, opening on yesterday", async ({ page }) => {
+  // The list used to be the last thirty closes flat: fine for yesterday,
+  // useless for the Tuesday before last. A day is chosen — yesterday to
+  // begin with — and its cash-ups are what is shown, with that day's close
+  // printable from the same place.
+  const iso = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const at = (daysAgo: number, hour: number) => {
+    const d = new Date(); d.setDate(d.getDate() - daysAgo); d.setHours(hour, 0, 0, 0); return d;
+  };
+  const session = (id: string, daysAgo: number, closedBy: string, variance: number) => ({
+    id, register_name: "Front Counter", opened_at: at(daysAgo, 8).toISOString(),
+    opened_by_name: "Manager", opening_float: 500, closed_at: at(daysAgo, 17).toISOString(),
+    closed_by_name: closedBy, counted_cash: 1500 + variance, expected_cash: 1500, variance,
+    card_counted: null, card_variance: null, eft_counted: null, eft_variance: null,
+    banked: null, float_kept: null, note: null,
+    figures: { sales_count: 7, cash_sales: 1000, card_sales: 0, eft_sales: 0, account_sales: 0,
+               pay_ins: 0, pay_outs: 0, cash_refunds: 0, expected_cash: 1500, card_expected: 0, eft_expected: 0 },
+    movements: [],
+  });
+  be.closedSessions.push(session("cs-y", 1, "Manager", 0), session("cs-old", 3, "Nomsa", -20));
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Cash-up$/ }).click();
+
+  const which = page.getByLabel("Which day");
+  await expect(which).toHaveValue(iso(at(1, 8)));
+  const list = page.locator("ul", { hasText: "closed by" });
+  await expect(list).toContainText("closed by Manager");
+  await expect(list).not.toContainText("closed by Nomsa");
+
+  // Any day of the month: the older close, with its shortfall.
+  await which.fill(iso(at(3, 8)));
+  await expect(list).toContainText("closed by Nomsa");
+  await expect(list).toContainText("Short");
+  await expect(list).not.toContainText("closed by Manager");
+
+  // A day with nothing says so rather than showing the wrong day's.
+  await which.fill(iso(at(2, 8)));
+  await expect(page.getByText(/No cash-up on /)).toBeVisible();
+
+  // And that day's close prints from here.
+  await which.fill(iso(at(3, 8)));
+  await page.getByRole("button", { name: /Print day close for/ }).click();
+  await expect(page.locator("#print-area")).toContainText("DAY CLOSE");
+
+  // Back to yesterday with one tap.
+  await page.getByRole("button", { name: "Yesterday" }).click();
+  await expect(which).toHaveValue(iso(at(1, 8)));
+});
+
 test("a drawer left open since yesterday is flagged at sign-in, and closing it clears the flag", async ({ page }) => {
   // Nothing used to say so, and a session left open swallows several days'
   // sales into one window. The live shop had two of these.
