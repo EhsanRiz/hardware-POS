@@ -5239,4 +5239,63 @@ begin
   delete from public.app_users where id = v_invited;
 end $$;
 
+-- 0090: you cannot grant what you do not hold ------------------------------
+
+do $$
+declare v_tok text; v_lerato uuid; v_sam uuid; v_row record; v_perms text[];
+begin
+  select token into v_tok from till;
+  -- A manager delegated the staff screen, and a cashier to practise on.
+  select id into v_lerato from public.pos_admin_invite_user(
+    v_tok, '1234', 'Lerato', '+27820000092', 'manager'::user_role, array['manage_staff']);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9292', gen_salt('bf')) where id = v_lerato;
+  select id into v_sam from public.pos_admin_invite_user(
+    v_tok, '1234', 'Sam 90', '+27820000093', 'employee'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9393', gen_salt('bf')) where id = v_sam;
+
+  -- Not their own rights, not a right they do not hold — by edit or by invite.
+  perform assert_refuses(
+    format('select public.pos_admin_update_user(%L, %L, %L, p_permissions => %L::text[])',
+           v_tok, '9292', v_lerato, array['manage_staff', 'manage_settings']::text),
+    'a manager adding manage_settings to themselves');
+  perform assert_refuses(
+    format('select public.pos_admin_update_user(%L, %L, %L, p_permissions => %L::text[])',
+           v_tok, '9292', v_sam, array['manage_settings']::text),
+    'a manager giving a cashier manage_settings');
+  perform assert_refuses(
+    format('select public.pos_admin_invite_user(%L, %L, %L, %L, %L::user_role, %L::text[])',
+           v_tok, '9292', 'New hire', '+27820000094', 'employee', array['manage_settings']::text),
+    'a manager inviting somebody with manage_settings');
+  select u.permissions into v_perms from public.app_users u where u.id = v_sam;
+  perform assert_eq(v_perms, array[]::text[], 'and nothing landed on the cashier');
+
+  -- But a right they do hold may be given, and their own set re-saved
+  -- unchanged in any order, which is what the screen does on every save.
+  perform public.pos_admin_update_user(v_tok, '9292', v_sam, p_permissions => array['cash_management']);
+  select u.permissions into v_perms from public.app_users u where u.id = v_sam;
+  perform assert(('cash_management' = any(v_perms)), 'a manager gives a cashier the drawer');
+  update public.app_users set permissions = array['manage_staff', 'cash_management'] where id = v_lerato;
+  perform public.pos_admin_update_user(v_tok, '9292', v_lerato,
+    p_name => 'Lerato M', p_permissions => array['cash_management', 'manage_staff']);
+  select u.name into v_row from public.app_users u where u.id = v_lerato;
+  perform assert_eq(v_row.name, 'Lerato M', 'a manager renames themselves with their own set sent back');
+
+  -- The rule about your own permissions binds an admin too.
+  perform assert_refuses(
+    format('select public.pos_admin_update_user(%L, %L, %L, p_permissions => %L::text[])',
+           v_tok, '1234', (select manager_id from fixture), array['manage_staff']::text),
+    'an admin editing their own permissions');
+  -- An admin holds everything, and may give everything.
+  perform public.pos_admin_update_user(v_tok, '1234', v_sam, p_permissions => array['manage_settings']);
+  select u.permissions into v_perms from public.app_users u where u.id = v_sam;
+  perform assert(('manage_settings' = any(v_perms)), 'an admin gives a cashier manage_settings');
+  perform public.pos_admin_invite_user(
+    v_tok, '1234', 'New hire', '+27820000094', 'employee'::user_role, array['manage_settings']);
+
+  delete from public.app_users where id in (v_lerato, v_sam)
+     or phone_e164 = '+27820000094';
+end $$;
+
 select 'all database tests passed' as result;
