@@ -5298,4 +5298,22 @@ begin
      or phone_e164 = '+27820000094';
 end $$;
 
+-- 0091: a guess is counted once, a read is counted ---------------------------
+
+do $$
+declare v_id uuid; v_n int;
+begin
+  insert into public.auth_otps (phone_e164, purpose, code_hash, expires_at)
+  values ('+27820000091', 'enrol', 'x', now() + interval '10 minutes') returning id into v_id;
+  select public.auth_otp_attempt(v_id) into v_n;
+  perform assert_eq(v_n, 1, 'the first guess is the first');
+  select public.auth_otp_attempt(v_id) into v_n;
+  perform assert_eq(v_n, 2, 'and the second the second — counted in one statement');
+  perform assert(not has_function_privilege('anon', 'public.auth_otp_attempt(uuid)', 'execute'),
+    'the anon key cannot count guesses');
+  perform assert(not has_table_privilege('anon', 'public.document_reads', 'select'),
+    'nor read what was read');
+  delete from public.auth_otps where id = v_id;
+end $$;
+
 select 'all database tests passed' as result;

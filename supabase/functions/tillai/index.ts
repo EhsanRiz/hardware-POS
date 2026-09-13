@@ -57,9 +57,11 @@ interface Content { role: "user" | "model"; parts: Part[] }
 async function generate(body: unknown): Promise<{ res: Response; model: string }> {
   let model = MODEL;
   const call = (m: string) =>
-    fetch(`${ENDPOINT(m)}?key=${API_KEY}`, {
+    // The key goes in a header, as the document reader sends it — not the
+    // query string, where it sits in every access log and error body.
+    fetch(ENDPOINT(m), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": API_KEY },
       body: JSON.stringify(body),
     });
   let res = await call(model);

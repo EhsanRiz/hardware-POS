@@ -33,12 +33,29 @@ const json = (data: unknown, status = 200) =>
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ ok: false }, 405);
 
+  // Only the Worker's cron calls this, and it says so with a secret the two
+  // share (DIGEST_SECRET on both sides). The public key was all it took
+  // before, and the reply carried platform-wide counts to whoever asked.
+  // Fails closed: with no secret configured nothing is sent, and the log
+  // says why.
+  const secret = Deno.env.get("DIGEST_SECRET");
+  if (!secret) {
+    console.error("DIGEST_SECRET is not set; the digest will not send until it is");
+    return json({ ok: false }, 503);
+  }
+  if (req.headers.get("x-digest-secret") !== secret) return json({ ok: false }, 403);
+
   const { data: last } = await supabase
     .from("ops_digests").select("sent_at").eq("kind", "nightly")
     .order("sent_at", { ascending: false }).limit(1).maybeSingle();
   if (last && Date.now() - Date.parse(last.sent_at) < MIN_GAP_MS) {
-    return json({ ok: true, sent: false, reason: "already sent today" });
+    return json({ ok: true, sent: false });
   }
+  // Claim the day before the work, so two calls at once send one email; the
+  // claim is taken back if the mail is refused, so a refusal can be retried.
+  const { data: claim } = await supabase
+    .from("ops_digests").insert({ kind: "nightly", detail: { claimed: true } }).select("id").single();
+  const unclaim = () => claim ? supabase.from("ops_digests").delete().eq("id", claim.id) : Promise.resolve();
 
   const since = new Date(Date.now() - WINDOW_MS);
   const [{ data: errors }, { data: questions }] = await Promise.all([
@@ -55,15 +72,18 @@ Deno.serve(async (req: Request) => {
   ]);
 
   const digest = summarise(errors ?? [], questions ?? [], orgs ?? [], regs ?? [], since);
-  const record = (detail: unknown) => supabase.from("ops_digests").insert({ kind: "nightly", detail });
+  const record = (detail: unknown) =>
+    claim ? supabase.from("ops_digests").update({ detail }).eq("id", claim.id)
+          : supabase.from("ops_digests").insert({ kind: "nightly", detail });
   if (!digest) {
     await record({ errors: 0, questions: 0, sent: false });
-    return json({ ok: true, sent: false, reason: "quiet" });
+    return json({ ok: true, sent: false });
   }
 
   const key = Deno.env.get("RESEND_API_KEY");
   if (!key) {
     console.error("RESEND_API_KEY missing; digest built but not sent");
+    await unclaim();
     return json({ ok: false, message: "No mail key" }, 500);
   }
   const res = await fetch("https://api.resend.com/emails", {
@@ -73,8 +93,10 @@ Deno.serve(async (req: Request) => {
   });
   if (!res.ok) {
     console.error("Resend", res.status, await res.text());
+    await unclaim();
     return json({ ok: false, message: "Mail refused" }, 502);
   }
   await record({ errors: digest.errors, questions: digest.questions, sent: true });
-  return json({ ok: true, sent: true, errors: digest.errors, questions: digest.questions });
+  // What was in it is for the inbox, not the caller.
+  return json({ ok: true, sent: true });
 });

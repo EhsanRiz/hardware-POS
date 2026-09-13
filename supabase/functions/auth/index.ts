@@ -118,7 +118,7 @@ async function requestCode(phone: string, purpose: string) {
     return UNIFORM;
   }
 
-  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+  const code = randomCode();
   const { data: otp } = await supabase
     .from("auth_otps")
     .insert({
@@ -129,21 +129,53 @@ async function requestCode(phone: string, purpose: string) {
     })
     .select("id")
     .single();
-  const out = await sendSms(
-    phone,
-    `InnovaPOS code: ${code}. Valid ${OTP_TTL_MIN} minutes. Never share it.`,
-  );
-  // The outcome lands on the attempt itself, where pos_admin_list_users can
-  // find it and put it on the staff screen. The reply below stays uniform
-  // either way: the caller may not learn whether the number is registered,
-  // but the shop's manager is owed the truth, and this is how it reaches them.
-  if (otp) {
-    await supabase
-      .from("auth_otps")
-      .update(out.sent ? { sent_at: new Date().toISOString() } : { send_error: out.reason })
-      .eq("id", otp.id);
-  }
+  // The send happens AFTER the reply, not before it. The body of the reply
+  // is uniform, but a registered number used to wait on a round trip to
+  // BulkSMS that an unregistered one never made, and that gap — hundreds of
+  // milliseconds — was the directory the uniform body exists to deny. The
+  // work is handed to the runtime to finish after the response goes out;
+  // where that is not available it is awaited, and the floor below still
+  // hides most of it.
+  const work = (async () => {
+    const out = await sendSms(
+      phone,
+      `InnovaPOS code: ${code}. Valid ${OTP_TTL_MIN} minutes. Never share it.`,
+    );
+    // The outcome lands on the attempt itself, where pos_admin_list_users can
+    // find it and put it on the staff screen. The reply stays uniform either
+    // way: the caller may not learn whether the number is registered, but
+    // the shop's manager is owed the truth, and this is how it reaches them.
+    if (otp) {
+      await supabase
+        .from("auth_otps")
+        .update(out.sent ? { sent_at: new Date().toISOString() } : { send_error: out.reason })
+        .eq("id", otp.id);
+    }
+  })();
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(work);
+  else await work;
   return UNIFORM;
+}
+
+/**
+ * Six digits, uniformly drawn. 2^32 is not a multiple of 10^6, so taking a
+ * 32-bit word modulo a million favours the low codes very slightly; a draw
+ * that falls in the uneven tail is thrown away and taken again.
+ */
+function randomCode(): string {
+  const limit = Math.floor(0x1_0000_0000 / 1_000_000) * 1_000_000;
+  let n: number;
+  do {
+    n = crypto.getRandomValues(new Uint32Array(1))[0];
+  } while (n >= limit);
+  return String(n % 1_000_000).padStart(6, "0");
+}
+
+/** Hold a reply until at least `ms` after `started`: every branch of a uniform answer takes the same time. */
+async function floor(started: number, ms: number): Promise<void> {
+  const left = started + ms - Date.now();
+  if (left > 0) await new Promise((r) => setTimeout(r, left));
 }
 
 async function verifyCode(phone: string, code: string) {
@@ -165,8 +197,13 @@ async function verifyCode(phone: string, code: string) {
   const fail = { ok: false, message: "That code didn't work. Check it, or request a new one." };
   if (!otp || otp.attempts >= MAX_VERIFY_ATTEMPTS) return fail;
 
-  // Count the attempt before comparing, so guesses burn tries even on races.
-  await supabase.from("auth_otps").update({ attempts: otp.attempts + 1 }).eq("id", otp.id);
+  // Count the attempt before comparing, and count it in the database in one
+  // statement (0091): read here, compared here and written back as a number,
+  // twenty guesses fired together all read zero, all passed the cap, and the
+  // last write left it at one. The refusal is on what the count came back
+  // as, so a parallel run through the space burns its five like a serial one.
+  const { data: attempts, error: countErr } = await supabase.rpc("auth_otp_attempt", { p_otp_id: otp.id });
+  if (countErr || typeof attempts !== "number" || attempts > MAX_VERIFY_ATTEMPTS) return fail;
   if ((await sha256(code)) !== otp.code_hash) return fail;
 
   await supabase.from("auth_otps").update({ used: true }).eq("id", otp.id);
@@ -257,10 +294,13 @@ Deno.serve(async (req: Request) => {
   try {
     switch (body.action) {
       case "request_code": {
+        // Uniform in body AND in time: junk input, an unknown number and a
+        // registered one all answer after the same floor.
+        const started = Date.now();
         const phone = normalizePhone(body.phone ?? "");
-        // Uniform even for junk input: no probe learns anything here.
-        if (!phone) return json(UNIFORM);
-        return json(await requestCode(phone, body.purpose ?? "enrol"));
+        const reply = phone ? await requestCode(phone, body.purpose ?? "enrol") : UNIFORM;
+        await floor(started, 600);
+        return json(reply);
       }
       case "verify_code": {
         const phone = normalizePhone(body.phone ?? "");

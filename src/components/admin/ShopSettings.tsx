@@ -123,13 +123,15 @@ export default function ShopSettings({ pin }: { pin: string }) {
     setLogoBusy(true);
     setError(null);
     try {
-      // SVG is already small and scaling it through a canvas would rasterise
-      // it. Everything else is shrunk: a logo is printed a few centimetres
-      // wide and a 4 MB photograph of one helps nobody.
-      const data =
-        file.type === "image/svg+xml"
-          ? await readAsDataUrl(file)
-          : await downscaleImage(file, 800, 0.92);
+      // A logo is printed a few centimetres wide, so it is shrunk: a 4 MB
+      // photograph of one helps nobody. SVG is not taken — the bucket is
+      // public and served under the till's own origin, and an SVG is a
+      // document that can carry script, so one uploaded by anybody with the
+      // settings right would have run on every till in the shop.
+      if (file.type === "image/svg+xml") {
+        throw new Error("Use a PNG, JPEG or WebP for the logo, not an SVG.");
+      }
+      const data = await downscaleImage(file, 800, 0.92);
       const path = await uploadShopLogo(pin, data);
       setF((prev) => ({ ...prev, logo_url: path }));
       await refreshSettings();
@@ -380,7 +382,7 @@ export default function ShopSettings({ pin }: { pin: string }) {
           <input
             ref={logoRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            accept="image/png,image/jpeg,image/webp"
             className="hidden"
             aria-label="Upload a logo"
             onChange={(e) => void pickLogo(e.target.files?.[0])}
@@ -558,13 +560,4 @@ function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
     logo_url: s.logo_url ?? "",
     quote_show_line_prices: s.quote_show_line_prices !== false,
   };
-}
-
-function readAsDataUrl(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error ?? new Error("read failed"));
-    r.readAsDataURL(file);
-  });
 }

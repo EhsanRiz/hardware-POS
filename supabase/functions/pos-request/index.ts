@@ -65,6 +65,15 @@ Deno.serve(async (req: Request) => {
   if ((count ?? 0) >= 3) {
     return json({ ok: true, message: "Thank you — we already have your enquiry and will be in touch." });
   }
+  // And a wall for a script that varies the address: the inbox this feeds
+  // is one person's, and thirty real enquiries an hour would be a good week.
+  const { count: total } = await supabase
+    .from("pos_requests")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", hourAgo);
+  if ((total ?? 0) >= 30) {
+    return json({ ok: true, message: "Thank you — we will be in touch." });
+  }
 
   const { data: saved, error } = await supabase.from("pos_requests").insert({
     org_name: orgName, contact_name: contact, email, phone, country, vertical, message,

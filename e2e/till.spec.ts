@@ -5987,6 +5987,22 @@ test("a cash sale's A4 invoice says how it was paid, and does not print the bank
   await expect(doc).not.toContainText("62012345678");
 });
 
+test("an SVG is refused as a logo, in words", async ({ page }) => {
+  // The logo bucket is public and served under the till's own origin, and an
+  // SVG is a document that can carry script: one uploaded by anybody with
+  // the settings right would have run on every till in the shop. Refused on
+  // the screen, before anything is read, and by the function behind it.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await page.getByLabel("Upload a logo").setInputFiles([
+    { name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>document.title="pwned"</script></svg>') },
+  ]);
+  await expect(page.getByText("Use a PNG, JPEG or WebP for the logo, not an SVG.")).toBeVisible();
+  expect(be.uploadedLogos).toHaveLength(0);
+  await expect(page.getByText(/No logo yet/)).toBeVisible();
+});
+
 test("a logo uploaded in settings turns up on the documents", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);

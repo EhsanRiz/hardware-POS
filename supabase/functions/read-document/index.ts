@@ -29,6 +29,7 @@ const ENDPOINT = (m: string) =>
 /** Eight pages of a delivery note is a long delivery note. */
 const MAX_PAGES = 12;
 const MAX_BYTES_PER_PAGE = 10 * 1024 * 1024;
+const DAILY_PAGE_CAP = 60;
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 
 const CORS = {
@@ -146,6 +147,17 @@ Deno.serve(async (req: Request) => {
   if (permError || !orgId) {
     return json({ ok: false, message: permError?.message ?? "Not permitted" }, 403);
   }
+  // Pages are the bill, so the cap is on pages per shop per day, counted
+  // from the record this function keeps (0091). Sixty pages a day is a
+  // busy buying desk; a loop is not a buying desk.
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+  const { data: reads } = await supabase
+    .from("document_reads").select("pages").eq("org_id", orgId).gte("at", dayAgo);
+  const pagesToday = (reads ?? []).reduce((t: number, r: { pages: number }) => t + r.pages, 0);
+  if (pagesToday + pages.length > DAILY_PAGE_CAP) {
+    return json({ ok: false, message: "The document reader has read a lot today. It will be back tomorrow." }, 429);
+  }
+  await supabase.from("document_reads").insert({ org_id: orgId, pages: pages.length });
 
   const body = {
     contents: [{

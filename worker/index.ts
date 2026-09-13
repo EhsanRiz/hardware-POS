@@ -29,6 +29,8 @@ interface Env {
   ASSETS: Fetcher;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
+  /** Shared with the error-digest function; a Worker secret, not a var. */
+  DIGEST_SECRET?: string;
 }
 
 /** Supabase's public API surfaces. Anything else under /api/ is refused. */
@@ -71,16 +73,19 @@ export function redirectFor(url: URL, headers: Headers): Response | null {
 /**
  * The nightly line. Once a day (wrangler.toml, [triggers]) this Worker asks
  * the error-digest function to send InnovaEarth what the tills reported and
- * asked in the last day. The public key is all it needs: the function keeps
- * its own once-a-day memory, so an extra call cannot send an extra email.
+ * asked in the last day. It carries the public key for the gateway and the
+ * shared DIGEST_SECRET for the function, which answers nothing without it.
  */
-export function digestRequest(env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string }): Request {
+export function digestRequest(env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; DIGEST_SECRET?: string }): Request {
   return new Request(`${env.SUPABASE_URL}/functions/v1/error-digest`, {
     method: "POST",
     headers: {
       apikey: env.SUPABASE_ANON_KEY,
       Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
+      // The function refuses without it: the public key alone let anybody
+      // trigger the digest and read platform-wide counts off the reply.
+      "x-digest-secret": env.DIGEST_SECRET ?? "",
     },
     body: "{}",
   });

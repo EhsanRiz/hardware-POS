@@ -49,7 +49,8 @@ check("a navigation on till. is served, not bounced", at(`https://${TILL_HOST}/`
 check("and so is any other host this Worker might be given", at("https://hardware-pos.workers.dev/", nav), null);
 
 console.log("--- the nightly line is asked for with the public key, and nothing else ---");
-const dr = digestRequest({ SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "anon-key" });
+const dr = digestRequest({ SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "anon-key", DIGEST_SECRET: "s3cret" });
+check("and the shared secret the function insists on", dr.headers.get("x-digest-secret"), "s3cret");
 check("it calls the digest function", dr.url, "https://x.supabase.co/functions/v1/error-digest");
 check("as a POST", dr.method, "POST");
 check("with the public key", dr.headers.get("apikey"), "anon-key");
