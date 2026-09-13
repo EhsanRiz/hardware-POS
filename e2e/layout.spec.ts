@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installBackend, pairAndSignIn, USERS } from "./fake-backend";
+import { installBackend, pairAndSignIn, PRODUCTS, USERS } from "./fake-backend";
 
 /**
  * The till fits the hardware it is deployed on.
@@ -477,6 +477,63 @@ test.describe("the shop's own till", () => {
       expect(m.meta, "height of the metadata under a line").toBeLessThanOrEqual(20);
       // And the point of all of it: more of the basket on the screen at once.
       expect(m.fits, "lines visible without scrolling").toBeGreaterThanOrEqual(4);
+    });
+
+    test("every line's columns stand under their own heading", async ({ page }) => {
+      await signedIn(page);
+      // Four different products, because the bug was that each row sized its
+      // own columns from its OWN name — one line, or four of the same thing,
+      // cannot show it.
+      for (const p of PRODUCTS.slice(1, 5)) {
+        await page.getByPlaceholder(/Scan barcode/i).fill(p.barcode ?? p.sku);
+        await page.keyboard.press("Enter");
+      }
+
+      // Each row is its own grid, and `1fr` is minmax(AUTO, 1fr) — so a track
+      // refuses to go narrower than the content in it and every row worked out
+      // its own column positions from its own product name. The heading put Qty
+      // at 231px and the rows under it put theirs at 289, 306, 328 and 345:
+      // four money columns in four places down one screen, with the far end of
+      // the row hanging off the right and a scrollbar to reach it.
+      const m = await page.evaluate(() => {
+        const lefts = (el: Element) =>
+          [...el.children].map((c) => Math.round(c.getBoundingClientRect().left));
+        const head = document.querySelector(".lines-head")!;
+        const rows = [...document.querySelectorAll(".line-row")];
+        const scroll = document.querySelector(".lines-scroll") as HTMLElement;
+        const qty = rows[0].querySelector(".line-qty") as HTMLElement;
+        return {
+          rows: rows.length,
+          // The money columns only: # and Item are left-aligned and the last
+          // cell is a 44px hit target that deliberately overhangs its track.
+          head: lefts(head).slice(2, 5),
+          each: rows.map((r) => lefts(r).slice(2, 5)),
+          overflowX: scroll.scrollWidth - scroll.clientWidth,
+          headAlign: getComputedStyle(head.children[4]).textAlign,
+          qtyColour: getComputedStyle(qty).color,
+          // Compared against the NAME on the same line, resolved the same way.
+          // Comparing a computed rgb() against the raw --color-owing custom
+          // property is comparing "rgb(27, 42, 36)" with " #b03a2b": never
+          // equal, whatever the colour actually is, and the assertion passed
+          // with the bug put back.
+          nameColour: getComputedStyle(rows[0].querySelector(".line-desc")!).color,
+        };
+      });
+
+      expect(m.rows, "lines on the sale").toBeGreaterThanOrEqual(3);
+      for (const row of m.each) {
+        expect(row, "a line's money columns against the heading").toEqual(m.head);
+      }
+      // Which is also what was hanging off the right-hand edge.
+      expect(m.overflowX, "the sale scrolling sideways").toBeLessThanOrEqual(0);
+      // A column of figures is read up its right edge, and the label belongs at
+      // the top of that edge rather than a column's width away from it.
+      expect(m.headAlign, "alignment of the Amount heading").toBe("right");
+      // And the quantity is written in the same ink as the name beside it. It
+      // was not: a stray comment parked in the middle of a selector had swept
+      // Qty and Unit into the discount's rule, so every quantity on the till
+      // was printed in the colour this app reserves for money owed.
+      expect(m.qtyColour, "colour of the quantity").toBe(m.nameColour);
     });
 
     test("the second rule of the total stays off the figure", async ({ page }) => {

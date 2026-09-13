@@ -39,8 +39,18 @@
      portrait, so a hard minimum guarantees the one thing a counter cannot
      use — a screen that scrolls sideways while someone is being served. */
   /* Narrower money columns now the type in them is 13.5px, which hands the
-     difference to the name — the column that was wrapping. */
-  --line-cols: 38px 1fr 108px 104px 118px 38px 40px;
+     difference to the name — the column that was wrapping.
+
+     minmax(0, 1fr), NOT 1fr. A bare 1fr is minmax(auto, 1fr), so the track
+     refuses to go narrower than its own content — and since every row is its
+     own grid, every row then decided its own column positions. The header put
+     Qty at 231px and the five rows under it put theirs at 289, 306, 328 and
+     345: five money columns in five different places down one screen, and 90px
+     of the row hanging off the right with a scrollbar under it to reach it.
+     A zero minimum makes the track a share of the row rather than a
+     consequence of what is in it, so the grid is the same grid on every line.
+     The cells that must then shrink carry min-width: 0 of their own. */
+  --line-cols: 38px minmax(0, 1fr) 108px 104px 118px 38px 40px;
   --line-gap: 16px;
   --sell-pad: 26px;
   --pay-w: 420px;
@@ -378,13 +388,17 @@
   padding: 1px 6px;
   margin-right: 6px;
 }
-.line-qty, .line-unit, /* Money off one line, said under the line it came off. */
+/* Money off one line, said under the line it came off. */
 .line-disc {
   display: block;
   font-size: 12px;
   color: var(--color-owing);
   margin-top: 2px;
 }
+/* Qty and Unit used to be in that selector, swept in by the comment parked in
+   the middle of it — which is how the quantity on every line came to be
+   printed in the colour this app reserves for money owed. */
+.line-qty, .line-unit { display: block; margin-top: 2px; }
 /* Why the money came off. It sits in the amount column, which is the narrowest
    one on the row, so it is allowed one line and then cut — the words are on the
    sale and on the slip, and this is a reminder rather than the record. */
@@ -419,7 +433,16 @@
   background: var(--color-neutral-100);
 }
 
-.line-amt { text-align: right; }
+/* Every figure column is right-aligned, HEADING INCLUDED. The headings were
+   left-aligned over right-aligned numbers, so "QTY" sat a column's width away
+   from the quantity it named. A column of money is read up its right edge;
+   the label belongs at the top of that edge. */
+.line-amt,
+.line-unit,
+.line-qty,
+.lines-head .line-amt,
+.lines-head .line-unit,
+.lines-head .line-qty { text-align: right; }
 .line-unit { font-size: 13.5px; color: var(--color-neutral-700); }
 /* The amount stays a touch larger than the name and stays bold: it is the
    column the eye runs down when a customer asks "what's that one?". */
@@ -1765,8 +1788,13 @@
    1360px frame. Every tablet in landscape lands here. */
 @media (max-width: 1359px) {
   .sell {
-    --line-cols: 34px 1fr 96px 96px 112px 38px 40px;
-    --line-gap: 12px;
+    /* The money columns were sized for 15px figures and now carry 13.5px
+       ones: "1 450.00" wants ~62px, not 112. What they give back goes to the
+       name column, which at 1024 had shrunk to 155px — narrow enough that the
+       line's small print truncated to "C… stock 120 → 119", and the SKU, which
+       is how you find the thing on the shelf, was the half that went. */
+    --line-cols: 32px minmax(0, 1fr) 74px 78px 96px 36px 38px;
+    --line-gap: 10px;
     --sell-pad: 18px;
     --pay-w: 344px;
   }
@@ -1785,7 +1813,7 @@
   .sell {
     /* The unit price leaves the table here and moves under the description:
        of the two numbers, the cashier is reading the amount. */
-    --line-cols: 30px 1fr 84px 108px 36px 38px;
+    --line-cols: 30px minmax(0, 1fr) 84px 108px 36px 38px;
     --sell-pad: 14px;
   }
   .line-unit { display: none; }
