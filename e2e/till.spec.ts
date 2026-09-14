@@ -2566,6 +2566,14 @@ test("a phone scans the barcode into a new product", async ({ page }) => {
   await expect(page.getByLabel(/^Barcode/)).toHaveValue("6009876543210");
 });
 
+/**
+ * Pick a report by name. Twelve chips became two grouped choosers, because
+ * four rows of identical pills ahead of any figures is a wall on a phone.
+ */
+async function report(page: import("@playwright/test").Page, name: string) {
+  await page.getByLabel("Report", { exact: true }).selectOption({ label: name });
+}
+
 /** Open Manage and get past the PIN, which every back-office test needs first. */
 /**
  * "Save as quote" with nobody picked asks who it is for (0052). These tests
@@ -2942,7 +2950,7 @@ test("the day closes for the whole shop: every till, the card machine, the banki
   if (await close.count()) await close.first().click();
 
   await page.getByRole("button", { name: /^Reports$/ }).click();
-  await expect(page.getByRole("tab", { name: "Day close" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Report", { exact: true })).toHaveValue("day");
 
   // The shop's day: two sales, R204, by tender; and the tills underneath.
   const panel = page.getByRole("region", { name: "Day close" });
@@ -2991,20 +2999,20 @@ test("departments report what sold and at what margin, VAT by month nets the cre
   await page.getByRole("button", { name: /^Reports$/ }).click();
 
   // Departments: R115 of cement is R100 ex VAT on a R50 cost — 50% margin.
-  await page.getByRole("tab", { name: "Departments" }).click();
+  await report(page, "Departments");
   const building = page.locator("tbody tr", { hasText: "Building" });
   await expect(building).toContainText("115.00");
   await expect(building).toContainText("50%");
 
   // VAT: this month is listed with its output VAT.
-  await page.getByRole("tab", { name: "VAT" }).click();
+  await report(page, "VAT");
   const thisMonth = new Date().toLocaleDateString("en-ZA", { month: "long", year: "numeric" });
   const monthRow = page.locator("tbody tr", { hasText: thisMonth });
   await expect(monthRow).toContainText("115.00");
   await expect(monthRow).toContainText("15.00");
 
   // Export: a real file, one row per line, that a spreadsheet can open.
-  await page.getByRole("tab", { name: "Export" }).click();
+  await report(page, "Export");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByRole("button", { name: /Download CSV/i }).click(),
@@ -3042,7 +3050,7 @@ test("a name that is a spreadsheet formula is exported as text", async ({ page }
 
   await openManage(page);
   await page.getByRole("button", { name: /^Reports$/ }).click();
-  await page.getByRole("tab", { name: "Export" }).click();
+  await report(page, "Export");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByRole("button", { name: /Download CSV/i }).click(),
@@ -6676,12 +6684,12 @@ test("a delivery shows up in the reports as its own department and its own tab",
   // DEPARTMENTS. The carriage was always in the takings and the VAT; what it
   // was not was visible. It landed under "—" with whatever else nobody had
   // filed, at a hundred percent margin.
-  await page.getByRole("tab", { name: "Departments" }).click();
+  await report(page, "Departments");
   const depts = page.getByRole("region", { name: "Departments" });
   await expect(depts).toContainText("Delivery");
 
   // ITS OWN TAB. Money is half of it; the other half is whether the load went.
-  await page.getByRole("tab", { name: "Deliveries" }).click();
+  await report(page, "Deliveries");
   const del = page.getByRole("region", { name: "Deliveries" });
   await expect(del).toContainText("Arranged");
   await expect(del).toContainText("DEL-000001");
@@ -6713,33 +6721,33 @@ test("the reports answer who sold it, what came back, and what the shelves are w
   await page.getByRole("button", { name: /^Reports$/ }).click();
 
   // WHO. The day close balances a drawer; two people work one till.
-  await page.getByRole("tab", { name: "People" }).click();
+  await report(page, "People");
   const people = page.getByRole("region", { name: "People" });
   await expect(people).toContainText(USERS.manager.row.name);
   await expect(people).toContainText("115.00");
 
   // WHAT MOVED, line by line rather than by department.
-  await page.getByRole("tab", { name: "Items" }).click();
+  await report(page, "Items");
   const items = page.getByRole("region", { name: "Items" });
   await expect(items).toContainText("Cement 42.5N 50kg");
   await expect(items).toContainText("CEM-425-50");
 
   // WHAT THE SHELVES ARE WORTH, and what is no longer earning on them.
-  await page.getByRole("tab", { name: "Stock" }).click();
+  await report(page, "Stock");
   const stock = page.getByRole("region", { name: "Stock" });
   await expect(stock).toContainText("At cost");
   await expect(stock).toContainText("At retail");
   await expect(stock).toContainText("Where the margin went");
 
   // WHO OWES. The sale above went on account, so the shop is owed for it.
-  await page.getByRole("tab", { name: "Debtors" }).click();
+  await report(page, "Debtors");
   const debtors = page.getByRole("region", { name: "Debtors" });
   await expect(debtors).toContainText("Mokoena Building Contractors");
   await expect(debtors).toContainText("115.00");
 
   // WHAT IT BOUGHT. Nothing yet, and it says so rather than showing an empty
   // table with no explanation.
-  await page.getByRole("tab", { name: "Suppliers" }).click();
+  await report(page, "Suppliers");
   await expect(page.getByRole("region", { name: "Suppliers" }))
     .toContainText("No supplier paperwork in this range");
 });
@@ -6757,7 +6765,7 @@ test("a supplier on the spend report opens its page", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Reports$/ }).click();
-  await page.getByRole("tab", { name: "Suppliers" }).click();
+  await report(page, "Suppliers");
   const region = page.getByRole("region", { name: "Suppliers" });
   await expect(region).toContainText("7 782.74");
 
@@ -6811,7 +6819,7 @@ test("a delivery costs the shop, and a free one costs it just the same", async (
 
   await openManage(page);
   await page.getByRole("button", { name: /^Reports$/ }).click();
-  await page.getByRole("tab", { name: "Deliveries" }).click();
+  await report(page, "Deliveries");
   const del = page.getByRole("region", { name: "Deliveries" });
   await expect(del).toContainText("Cost of the trips");
   // R60 out, nothing in: delivering cost the shop sixty rand today.
@@ -7425,7 +7433,7 @@ test("what walked out of the door without being sold is a number the owner can s
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Reports$/ }).click();
-  await page.getByRole("tab", { name: "Losses" }).click();
+  await report(page, "Losses");
 
   const view = page.getByRole("region", { name: "Losses" });
   await expect(view).toBeVisible();
@@ -8278,7 +8286,7 @@ test("a report comes out on the shop's own letterhead", async ({ page }) => {
 
   await openManage(page);
   await page.getByRole("button", { name: "Reports", exact: true }).click();
-  await page.getByRole("tab", { name: "Departments" }).click();
+  await report(page, "Departments");
   await page.getByRole("button", { name: /Print or save as PDF/ }).click();
 
   // The letterhead, which is the whole point: the same mark, name and address
@@ -9843,4 +9851,51 @@ test("an item found on the phone opens, picture, bin and all", async ({ page }) 
   // Back to the list that was searched, not out of Look it up altogether.
   await page.getByRole("button", { name: "Back" }).click();
   await expect(page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" })).toBeVisible();
+});
+
+/**
+ * Twelve reports, chosen without a wall of chips.
+ *
+ * They were twelve identical pills in a row that wrapped to four lines on a
+ * phone, in an order with no logic to it — Losses beside Debtors, Refunds
+ * beside Deliveries — so every visit meant reading all twelve to find one, and
+ * on a phone they stood between the screen and any figure at all.
+ */
+test("the reports are chosen from a grouped list, not four rows of chips", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  // At this width the sections are behind the burger, the same menu a phone
+  // gets.
+  await phoneMenu(page, "Reports");
+
+  const pick = page.getByLabel("Report", { exact: true });
+  const period = page.getByLabel("Period", { exact: true });
+
+  // Every one of them is still reachable, and each sits under the question it
+  // answers rather than in a queue.
+  await expect(pick.locator("option")).toHaveCount(12);
+  await expect(pick.locator("optgroup")).toHaveCount(5);
+  await expect(pick.locator("optgroup[label='The shelves'] option"))
+    .toHaveText(["Stock", "Losses"]);
+
+  // Both choosers on one line, which is the whole point on a phone.
+  const a = (await pick.boundingBox())!;
+  const b = (await period.boundingBox())!;
+  expect(Math.abs(a.y - b.y), "the report and the period share a line")
+    .toBeLessThanOrEqual(4);
+
+  // A report about how things stand now has no period — said, rather than the
+  // control quietly disappearing.
+  await report(page, "Stock");
+  await expect(period).toHaveCount(0);
+  await expect(page.getByText("As it stands now")).toBeVisible();
+
+  // And a window of somebody's own choosing still asks for its two dates.
+  await report(page, "Departments");
+  await period.selectOption({ label: "Choose dates" });
+  await expect(page.getByLabel("From date")).toBeVisible();
+  await expect(page.getByLabel("To date")).toBeVisible();
+  // The page never runs off the side of the phone.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

@@ -61,25 +61,27 @@ type Section =
   | "day" | "departments" | "items" | "people" | "refunds" | "deliveries"
   | "stock" | "losses" | "debtors" | "suppliers" | "vat" | "export";
 
+const LABEL: Record<Section, string> = {
+  day: "Day close", departments: "Departments", items: "Items", people: "People",
+  refunds: "Refunds", deliveries: "Deliveries", stock: "Stock", losses: "Losses",
+  debtors: "Debtors", suppliers: "Suppliers", vat: "VAT", export: "Export",
+};
+
 /**
- * The tabs, in the order an owner works through them: how did today go, what
- * sold, who sold it, what came back, what is still to go out, what is on the
- * shelves, who owes us, who we owe, what the VAT return says, and give the
- * accountant the lot.
+ * The reports, grouped by the question being asked.
+ *
+ * Twelve of them as a row of identical chips is a wall: nothing tells you that
+ * Losses is about the shelves and Refunds is about the till, so every visit
+ * means reading all twelve. Grouped, the question comes first and the report
+ * second — and on a phone the whole chooser is one line instead of four rows
+ * of chips standing between the screen and any figure.
  */
-const TABS: [Section, string][] = [
-  ["day", "Day close"],
-  ["departments", "Departments"],
-  ["items", "Items"],
-  ["people", "People"],
-  ["refunds", "Refunds"],
-  ["deliveries", "Deliveries"],
-  ["stock", "Stock"],
-  ["losses", "Losses"],
-  ["debtors", "Debtors"],
-  ["suppliers", "Suppliers"],
-  ["vat", "VAT"],
-  ["export", "Export"],
+const GROUPS: { title: string; sections: Section[] }[] = [
+  { title: "The day's money", sections: ["day", "refunds"] },
+  { title: "What sold", sections: ["departments", "items", "people", "deliveries"] },
+  { title: "The shelves", sections: ["stock", "losses"] },
+  { title: "Who owes what", sections: ["debtors", "suppliers"] },
+  { title: "For the books", sections: ["vat", "export"] },
 ];
 
 /** Reports that describe how things stand now, not what happened in a window. */
@@ -200,6 +202,11 @@ export default function Reports({
     : section === "vat" && vat ? vatSheet(vat)
     : null;
 
+  /** The two choosers: wide enough for the longest name in each list. */
+  const pickCls =
+    "rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold " +
+    "text-stone-800 min-w-[9.5rem]";
+
   const chip = (on: boolean) =>
     `px-3 py-1.5 rounded-full text-sm border ${
       on ? "bg-colophon text-paper border-colophon" : "bg-white text-stone-600 border-stone-300"
@@ -208,48 +215,66 @@ export default function Reports({
   return (
     <div className="flex-1 overflow-auto p-4">
       <div className="max-w-4xl space-y-4">
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Report">
-          {TABS.map(([key, label]) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={section === key}
-              onClick={() => setSection(key)}
-              className={chip(section === key)}
+        {/* Which report, and over what — two questions, two controls, one
+            line. On paper, on the shop's own letterhead, sits with them
+            because it is about the report showing rather than about the
+            screen. */}
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-stone-500">Report</span>
+            <select
+              aria-label="Report"
+              value={section}
+              onChange={(e) => setSection(e.target.value as Section)}
+              className={pickCls}
             >
-              {label}
-            </button>
-          ))}
-        </div>
+              {GROUPS.map((g) => (
+                <optgroup key={g.title} label={g.title}>
+                  {g.sections.map((key) => (
+                    <option key={key} value={key}>{LABEL[key]}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
 
-        {!NO_RANGE.includes(section) && (
-          <div className="flex flex-wrap items-center gap-2">
-            {RANGES.map((r) => (
-              <button key={r.key} onClick={() => setRange(r.key)} className={chip(range === r.key)}>
-                {r.label}
-              </button>
-            ))}
-            {range === "custom" && (
-              <>
-                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-                  className="rounded-lg border border-stone-300 px-2 py-1 text-sm" aria-label="From date" />
-                <span className="text-stone-400">to</span>
-                <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-                  className="rounded-lg border border-stone-300 px-2 py-1 text-sm" aria-label="To date" />
-              </>
-            )}
-          </div>
-        )}
+          {!NO_RANGE.includes(section) ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-stone-500">Period</span>
+              <select
+                aria-label="Period"
+                value={range}
+                onChange={(e) => setRange(e.target.value as RangeKey)}
+                className={pickCls}
+              >
+                {RANGES.map((r) => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            /* Said, rather than the period silently disappearing: these
+               reports describe how things stand now, not a window. */
+            <p className="text-xs text-stone-500 pb-2.5">As it stands now</p>
+          )}
 
-        {/* On paper, on the shop's own letterhead. The day close printed as a
-            till slip and nothing else printed at all, so "the bank wants to
-            see it" meant a screenshot. Only where there is something to put on
-            a page: Export is already a spreadsheet. */}
-        {sheet && (
-          <div>
-            <button className={chip(false)} onClick={() => setPaper(sheet)}>
+          {/* The day close printed as a till slip and nothing else printed at
+              all, so "the bank wants to see it" meant a screenshot. Only where
+              there is something to put on a page: Export is already a file. */}
+          {sheet && (
+            <button className={`${chip(false)} ml-auto`} onClick={() => setPaper(sheet)}>
               🖨️ Print or save as PDF
             </button>
+          )}
+        </div>
+
+        {!NO_RANGE.includes(section) && range === "custom" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+              className="rounded-lg border border-stone-300 px-2 py-1 text-sm" aria-label="From date" />
+            <span className="text-stone-400">to</span>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+              className="rounded-lg border border-stone-300 px-2 py-1 text-sm" aria-label="To date" />
           </div>
         )}
 
