@@ -31,6 +31,10 @@ export default function PhoneLookup({
   onBack: () => void;
 }) {
   const [term, setTerm] = useState("");
+  // The item being read properly. A hit row is a summary — a phone can only
+  // give a name so many pixels — and the answer to "what IS this" is a
+  // picture, a bin and a price big enough to read at arm's length.
+  const [reading, setReading] = useState<Product | null>(null);
   const box = useRef<HTMLInputElement>(null);
 
   // Nothing typed shows nothing: a phone listing 1,400 products is a scroll,
@@ -39,6 +43,12 @@ export default function PhoneLookup({
     () => (term.trim() ? searchProductsLocal(products, term, 40) : []),
     [products, term]
   );
+
+  // Read on its own screen rather than in a sheet over the list: a phone has
+  // no room for both, and Back is the gesture this device already means it by.
+  if (reading) {
+    return <ItemCard product={reading} online={online} onBack={() => setReading(null)} />;
+  }
 
   return (
     <div className="phone-screen">
@@ -84,49 +94,135 @@ export default function PhoneLookup({
           {hits.map((p) => {
             const src = imageSrc(p.image_url);
             return (
-              <li key={p.id} className="phone-hit">
-                {/* No mat when there is no photograph. A grey square on
-                    every row of a catalogue that has few pictures reads as an
-                    image that failed to load, and steals the width the name
-                    needs on a phone. */}
-                {src && <img className="phone-hit-img" src={src} alt="" />}
-                <div className="phone-hit-what">
-                  <span className="phone-hit-name">{p.name}</span>
-                  <span className="phone-hit-sub">
-                    {p.sku}
-                    {p.barcode ? ` · ${p.barcode}` : ""}
-                  </span>
-                  {/* Where it physically is. The reason somebody standing in
-                      the aisle opened this at all. */}
-                  <span className="phone-hit-bin">
-                    {p.bin ? `Bin ${p.bin}` : "No bin recorded"}
-                  </span>
-                </div>
-                <div className="phone-hit-figures">
-                  <span className="phone-hit-price tabular">{money(p.price_retail)}</span>
-                  {p.price_trade != null && (
-                    <span className="phone-hit-trade tabular">
-                      Trade {money(p.price_trade)}
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className="phone-hit"
+                  onClick={() => setReading(p)}
+                  aria-label={`Open ${p.name}`}
+                >
+                  {/* No mat when there is no photograph. A grey square on
+                      every row of a catalogue that has few pictures reads as an
+                      image that failed to load, and steals the width the name
+                      needs on a phone. */}
+                  {src && <img className="phone-hit-img" src={src} alt="" />}
+                  <div className="phone-hit-what">
+                    <span className="phone-hit-name">{p.name}</span>
+                    <span className="phone-hit-sub">
+                      {p.sku}
+                      {p.barcode ? ` · ${p.barcode}` : ""}
                     </span>
-                  )}
-                  {/* Stock that is not tracked says so, rather than showing a
-                      zero somebody would read as "we are out". */}
-                  <span
-                    className={
-                      "phone-hit-stock tabular" +
-                      (p.stock_qty != null && p.stock_qty <= 0 ? " is-bad" : "")
-                    }
-                  >
-                    {p.stock_qty == null
-                      ? "Not counted"
-                      : `${fmtQty(p.stock_qty)} ${p.unit_code} on hand`}
-                  </span>
-                </div>
+                    {/* Where it physically is. The reason somebody standing in
+                        the aisle opened this at all. */}
+                    <span className="phone-hit-bin">
+                      {p.bin ? `Bin ${p.bin}` : "No bin recorded"}
+                    </span>
+                  </div>
+                  <div className="phone-hit-figures">
+                    <span className="phone-hit-price tabular">{money(p.price_retail)}</span>
+                    {p.price_trade != null && (
+                      <span className="phone-hit-trade tabular">
+                        Trade {money(p.price_trade)}
+                      </span>
+                    )}
+                    {/* Stock that is not tracked says so, rather than showing a
+                        zero somebody would read as "we are out". */}
+                    <span
+                      className={
+                        "phone-hit-stock tabular" +
+                        (p.stock_qty != null && p.stock_qty <= 0 ? " is-bad" : "")
+                      }
+                    >
+                      {p.stock_qty == null
+                        ? "Not counted"
+                        : `${fmtQty(p.stock_qty)} ${p.unit_code} on hand`}
+                    </span>
+                  </div>
+                </button>
               </li>
             );
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * One item, read properly.
+ *
+ * Everything here comes out of the cached catalogue, so it answers in the same
+ * dead spot the list does. What it adds over the row is room: the photograph
+ * at a size you can compare against the thing in your hand, the bin where
+ * somebody looking for it will look first, and the price in figures that carry
+ * across a yard.
+ */
+function ItemCard({
+  product: p, online, onBack,
+}: {
+  product: Product;
+  online: boolean;
+  onBack: () => void;
+}) {
+  const src = imageSrc(p.image_url);
+  return (
+    <div className="phone-screen">
+      <header className="phone-screen-head">
+        <button className="btn-line quiet" onClick={onBack}>Back</button>
+        <h1>Look it up</h1>
+      </header>
+
+      <div className="phone-item">
+        {src && <img className="phone-item-img" src={src} alt={p.name} />}
+        <h2 className="phone-item-name">{p.name}</h2>
+
+        <p className="phone-item-price tabular">{money(p.price_retail)}</p>
+        {p.price_trade != null && (
+          <p className="phone-item-trade tabular">Trade {money(p.price_trade)}</p>
+        )}
+
+        <dl className="phone-item-facts">
+          <dt>Bin</dt>
+          <dd className="phone-item-bin">{p.bin ?? "Not recorded"}</dd>
+
+          <dt>On hand</dt>
+          <dd className={p.stock_qty != null && p.stock_qty <= 0 ? "is-bad" : undefined}>
+            {p.stock_qty == null
+              ? "Never counted"
+              : `${fmtQty(p.stock_qty)} ${p.unit_code}`}
+          </dd>
+
+          {p.reorder_level != null && (
+            <>
+              <dt>Reorder at</dt>
+              <dd>{fmtQty(p.reorder_level)}</dd>
+            </>
+          )}
+
+          <dt>Sold by</dt>
+          <dd>{p.unit_name ?? p.unit_code}</dd>
+
+          <dt>Department</dt>
+          <dd>{p.category_name ?? "—"}</dd>
+
+          <dt>Code</dt>
+          <dd className="tabular">{p.sku}</dd>
+
+          {p.barcode && (
+            <>
+              <dt>Barcode</dt>
+              <dd className="tabular">{p.barcode}</dd>
+            </>
+          )}
+        </dl>
+
+        {!online && (
+          <p className="acc-note">
+            No line — this is what the phone last saw, not what the till holds
+            this minute.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

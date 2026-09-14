@@ -1880,12 +1880,10 @@ test("a manager issues a code, and it releases a discount over the phone", async
   await enrolPhoneAndSignIn(phone, be, USERS.manager.pin);
 
   await phoneMenu(phone, "Approvals");
-  // The menu is a doorway, not a grant: the PIN is asked here exactly as it is
-  // on the till, held in memory only and re-checked by every call behind it.
-  const gate = phone.getByRole("dialog", { name: "Manage" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN asked: the owner of this phone proved it at sign-in a moment ago,
+  // and it is held in memory only and re-checked server-side by every call
+  // behind it. The menu is still a doorway and not a grant — what a phone
+  // may do is decided by the server, on each call.
   await phone.getByLabel("Code ceiling").fill("100");
   await phone.getByLabel("Code reason").fill("Mr Molefe, cement");
   await phone.getByRole("button", { name: /Give me a code/i }).click();
@@ -2584,9 +2582,17 @@ async function openManage(
   pin: string = USERS.manager.pin
 ) {
   await page.getByRole("button", { name: /^Manage$/ }).click();
-  const dialog = page.getByRole("dialog", { name: "Manage" });
-  for (const d of pin.split("")) {
-    await dialog.locator(`button:text-is("${d}")`).first().click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  const screen = page.locator(".admin-screen");
+  // The door asks once and then holds the PIN for a while (lib/unlock), so
+  // coming back to Manage inside one test finds it already open. Waited for
+  // as "one of these two", never sampled: asking "is the gate up yet" the
+  // instant after a click is a race, and this suite has lost that one before.
+  await expect(gate.or(screen).first()).toBeVisible();
+  if (await gate.isVisible()) {
+    for (const d of pin.split("")) {
+      await gate.locator(`button:text-is("${d}")`).first().click();
+    }
   }
 }
 
@@ -4223,8 +4229,12 @@ test("a delivery is booked in against a reference and the shelves update", async
 
   await expect(page.getByRole("button", { name: /Running low/ })).toBeVisible();
 
-  // Cement is at 240; a pallet of 100 arrives on GRN A-1042.
+  // Cement is at 240; a pallet of 100 arrives on GRN A-1042. The screen opens
+  // on the delivery, which is empty, so the cement is found by name first —
+  // what a gun does with one beep, fingers do with the find box.
   await page.getByRole("button", { name: /Receive a delivery/ }).click();
+  await expect(page.getByText(/Nothing on this delivery yet/)).toBeVisible();
+  await page.getByLabel("Scan or find an item").fill("Cement 42.5");
   await page.getByPlaceholder(/Supplier invoice/).fill("GRN A-1042");
   await page.getByLabel("Quantity received of Cement 42.5N 50kg").fill("100");
   await page.getByRole("button", { name: /Book in 1 line/ }).click();
@@ -7514,18 +7524,16 @@ test("from the phone, a delivery is marked off and the page never scrolls sidewa
   await expect(page.locator(".phone-home")).toBeVisible();
 });
 
-test("from the phone, the stock room asks the PIN once and then opens", async ({ page }) => {
+test("from the phone, the stock room opens on the PIN its owner signed in with", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enrolPhoneAndSignIn(page, be);
   await phoneMenu(page, "Stock");
-  // The same gate the till has, proved against the server by the cheapest
-  // inventory call; a counter hand's PIN is refused there, not hidden here.
+  // A phone belongs to one person and locks itself when it is put away, and
+  // the PIN they signed in with was proved against the server by the sign-in.
+  // Asking for the same six digits again, seconds later, proves nothing.
   const gate = page.getByRole("dialog", { name: "Stock" });
-  await expect(gate).toBeVisible();
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
   await expect(page.getByRole("heading", { name: "Stock" })).toBeVisible();
+  await expect(gate).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
   const width = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(width, "the page's scroll width").toBeLessThanOrEqual(390);
@@ -7765,17 +7773,14 @@ test("a manager issues a code for somebody's phone from the staff list", async (
   await expect(page.getByRole("link", { name: /enrol/i })).toHaveCount(0);
 });
 
-test("the menu opens the back office on its own screen, behind the PIN", async ({ page }) => {
+test("the menu opens the back office on its own screen, on the section picked", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
   await phoneMenu(page, "Buying");
 
-  // The PIN is asked for on a phone exactly as it is at the counter: held in
-  // memory only, re-checked server-side by every call behind it.
-  const dialog = page.getByRole("dialog", { name: "Manage" });
-  await expect(dialog).toBeVisible();
-  for (const d of USERS.manager.pin.split("")) {
-    await dialog.locator(`button:text-is("${d}")`).first().click();
-  }
+  // Straight in: a phone's owner proved this PIN at sign-in, against the same
+  // server check the door would make. It is held in memory only, and every
+  // call behind it is re-checked server-side.
+  await expect(page.getByRole("dialog", { name: "Manage" })).toHaveCount(0);
 
   // Straight onto Buying, not onto the first tab of a nav the phone never
   // showed. Closing it comes back to the errands.
@@ -9188,8 +9193,13 @@ async function openManageOnPhone(
 ) {
   await phoneMenu(page, section);
   const gate = page.getByRole("dialog", { name: "Manage" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
+  // A phone's owner proved this PIN at sign-in, so the door is usually
+  // already open; it still asks when the PIN was never proved on this load.
+  await expect(gate.or(page.locator(".admin-screen")).first()).toBeVisible();
+  if (await gate.isVisible()) {
+    for (const d of USERS.manager.pin.split("")) {
+      await gate.locator(`button:text-is("${d}")`).first().click();
+    }
   }
   // The gate's own title is a heading called "Manage" as well, so the back
   // office is waited for by its screen and not by its name.
@@ -9706,4 +9716,131 @@ test("Look it up is scanned when the thing is already in your hand", async ({ pa
   const hit = page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" });
   await expect(hit).toBeVisible();
   await expect(hit.locator(".phone-hit-price")).toHaveText(/R\s?115\.00/);
+});
+
+/**
+ * The delivery screen is the delivery.
+ *
+ * It listed every line in the catalogue, each with its own empty quantity box,
+ * with the ones just scanned somewhere among them — so a delivery booked in
+ * looked as though it had never gone away, and a barcode scanned by mistake
+ * had no way off except hunting down its row and emptying a box, which is not
+ * a thing anybody would guess.
+ */
+test("the delivery screen shows the delivery, and a line scanned by mistake comes off", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: /Receive a delivery/ }).click();
+
+  // Nothing scanned, nothing listed — not the whole shop.
+  await expect(page.getByText(/Nothing on this delivery yet/)).toBeVisible();
+  await expect(page.locator(".acc-table tbody tr")).toHaveCount(1);
+
+  const scan = page.getByLabel("Scan or find an item");
+  await scan.fill("6001234000015");
+  await scan.press("Enter");
+  await scan.fill("6001234000060");
+  await scan.press("Enter");
+  // Two lines, and only the two.
+  await expect(page.locator(".acc-table tbody tr")).toHaveCount(2);
+  await expect(page.getByLabel("Quantity received of Cement 42.5N 50kg")).toHaveValue("1");
+
+  // Clearing the box does NOT drop the line: that is somebody about to type a
+  // different number, and the row disappearing under them is how a delivery
+  // gets booked in short.
+  await page.getByLabel("Quantity received of Padlock 50mm Brass").fill("");
+  await expect(page.locator(".acc-table tbody tr")).toHaveCount(2);
+
+  // The padlock was the wrong beep. Off it comes.
+  await page.getByRole("button", { name: "Take Padlock 50mm Brass off the delivery" }).click();
+  await expect(page.locator(".acc-table tbody tr")).toHaveCount(1);
+  await expect(page.getByLabel("Quantity received of Padlock 50mm Brass")).toHaveCount(0);
+
+  // An item with no barcode is still reachable — by name, and only while
+  // something is being looked for. Two of them match here on purpose: a
+  // quantity typed into the second must leave it where it is, because a row
+  // that sorts itself to the top on the first keystroke takes the keyboard
+  // with it.
+  await scan.fill("nail");
+  const rows = page.locator(".acc-table tbody tr");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(1)).toContainText("Nail Concrete 2.5 x 50mm");
+  await page.getByLabel("Quantity received of Nail Concrete 2.5 x 50mm").fill("4");
+  await expect(rows.nth(1), "the row stays under the finger typing in it")
+    .toContainText("Nail Concrete 2.5 x 50mm");
+
+  // Off again, and with the box cleared the screen is the delivery once more.
+  await page.getByRole("button", { name: "Take Nail Concrete 2.5 x 50mm off the delivery" }).click();
+  await scan.fill("");
+  await expect(page.locator(".acc-table tbody tr")).toHaveCount(1);
+
+  await page.getByPlaceholder(/Supplier invoice/).fill("GRN-900");
+  await page.getByRole("button", { name: /Book in 1 line/ }).click();
+  await expect(page.getByText(/1 line booked in against GRN-900/)).toBeVisible();
+  expect(be.stockMoves).toEqual([
+    { product_id: "p1", qty_delta: 1, reason: "receipt", note: "GRN-900" },
+  ]);
+});
+
+/**
+ * A PIN proved is a PIN proved, for a while.
+ *
+ * Every door forgot it the moment its screen closed: the catalogue, then a
+ * delivery, then the approvals meant six digits three times in a minute, for
+ * the same person on the same device. Nothing was kept out by that — every
+ * call behind the door re-checks the PIN server-side — so all it did was
+ * punish the person doing the work.
+ */
+test("the back office asks for the PIN once, not once per screen", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await expect(page.getByRole("button", { name: "Catalogue" })).toBeVisible();
+
+  // Out of the back office altogether, and back in.
+  await page.getByRole("button", { name: "Back to till" }).click();
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toBeVisible();
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+
+  await expect(page.getByRole("button", { name: "Catalogue" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Manage" })).toHaveCount(0);
+});
+
+test("a phone's owner is not asked for the PIN they signed in with a moment ago", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await phoneMenu(page, "Approvals");
+  await expect(page.locator(".admin-screen")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Manage" })).toHaveCount(0);
+});
+
+/**
+ * A hit is a summary; the item is what was asked for.
+ *
+ * Look it up answers "have we got it" in a row a phone can only give so many
+ * pixels to. The picture — the thing somebody standing in the aisle compares
+ * against what is in their hand — needs the screen.
+ */
+test("an item found on the phone opens, picture, bin and all", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await phoneMenu(page, "Look it up");
+  await page.getByPlaceholder(/Scan a barcode/i).fill("cement");
+
+  await page.getByRole("button", { name: "Open Cement 42.5N 50kg" }).click();
+  const card = page.locator(".phone-item");
+  await expect(card.getByRole("heading", { name: "Cement 42.5N 50kg" })).toBeVisible();
+  await expect(card.locator(".phone-item-price")).toHaveText(/R\s?115\.00/);
+  await expect(card.locator(".phone-item-bin")).toHaveText("A1");
+  await expect(card).toContainText("240 bag");
+  await expect(card).toContainText("6001234000015");
+  // And the page does not run off the side of the phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  // Back to the list that was searched, not out of Look it up altogether.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" })).toBeVisible();
 });

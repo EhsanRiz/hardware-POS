@@ -95,25 +95,39 @@ export default function Stock({ pin }: { pin: string }) {
     [tracked]
   );
 
+  /** Does this line answer what was typed into the find box? */
+  const hits = useCallback((p: Product, q: string) =>
+    p.name.toLowerCase().includes(q) ||
+    p.sku.toLowerCase().includes(q) ||
+    (p.barcode ?? "").includes(q) ||
+    (p.bin ?? "").toLowerCase().includes(q), []);
+
+  // What is ON the delivery, in the order it was put there — which is the
+  // order it came off the pallet.
+  const chosen = useMemo(
+    () =>
+      [...delivery.keys()]
+        .map((id) => products.find((p) => p.id === id))
+        .filter((p): p is Product => !!p),
+    [delivery, products]
+  );
+
   const shown = useMemo(() => {
-    // A delivery can bring ANYTHING the shop sells, including a line nobody
-    // has ever counted — an item photographed onto the shelf from the aisle
-    // starts life with no stock figure, and its first delivery is where the
-    // counting starts. Listing only tracked lines here is what made the till
-    // answer "no item in the catalogue has that barcode" for an item sitting
-    // in the catalogue. The other tabs are about stock levels, so there they
-    // stay lines that have one.
-    const base = tab === "low" ? low : tab === "receive" ? products : tracked;
     const q = term.trim().toLowerCase();
+    if (tab === "receive") {
+      // Nothing being looked for: the delivery, and only the delivery. A list
+      // of every item in the shop underneath it, each with its own empty box,
+      // is what made a finished delivery look as though it had never gone
+      // away. Looking something up puts the catalogue back — the whole of it,
+      // because a delivery can bring anything the shop sells, a line nobody
+      // has ever counted included. Those rows carry their own quantities, so
+      // nothing sorts itself out from under a finger typing one in.
+      return q ? products.filter((p) => hits(p, q)) : chosen;
+    }
+    const base = tab === "low" ? low : tracked;
     if (!q) return base;
-    return base.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q) ||
-        (p.barcode ?? "").includes(q) ||
-        (p.bin ?? "").toLowerCase().includes(q)
-    );
-  }, [tab, low, tracked, products, term]);
+    return base.filter((p) => hits(p, q));
+  }, [tab, low, tracked, chosen, products, term, hits]);
 
   const deliveryLines = useMemo(
     () =>
@@ -267,37 +281,6 @@ export default function Stock({ pin }: { pin: string }) {
         </p>
       )}
 
-      {tab === "receive" && (
-        <div className="stock-receive-bar">
-          <input
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="Supplier invoice / GRN number…"
-            className="modal-input"
-            style={{ marginBottom: 0, maxWidth: 320 }}
-            disabled={busy}
-          />
-          <button
-            className="btn-fill"
-            onClick={() => void bookIn()}
-            disabled={busy || !online || deliveryLines.length === 0}
-          >
-            {busy
-              ? "Booking in…"
-              : `Book in ${deliveryLines.length || "the"} line${
-                  deliveryLines.length === 1 ? "" : "s"
-                }`}
-          </button>
-          {starting.length > 0 && (
-            <p className="acc-note stock-starting">
-              {starting.length === 1
-                ? `${starting[0].name} has never been counted — booking in starts counting it at what arrives.`
-                : `${starting.length} of these lines have never been counted — booking in starts counting them at what arrives.`}
-            </p>
-          )}
-        </div>
-      )}
-
       {tab !== "moves" && tab !== "count" && (
         <div className="stock-receive-bar">
           <input
@@ -369,7 +352,9 @@ export default function Stock({ pin }: { pin: string }) {
                     {tab === "low"
                       ? "Nothing is below its reorder level."
                       : tab === "receive"
-                      ? "Nothing in the catalogue matches."
+                      ? term.trim()
+                        ? `Nothing in the catalogue matches “${term.trim()}”.`
+                        : "Nothing on this delivery yet. Scan a barcode, or find an item by name."
                       : "No tracked items match."}
                   </td>
                 </tr>
@@ -403,20 +388,43 @@ export default function Stock({ pin }: { pin: string }) {
                     </td>
                     {tab === "receive" ? (
                       <td className="num" data-label="Received">
-                        <input
-                          inputMode="decimal"
-                          value={delivery.get(p.id) ?? ""}
-                          onChange={(e) => {
-                            const next = new Map(delivery);
-                            if (e.target.value.trim() === "") next.delete(p.id);
-                            else next.set(p.id, e.target.value);
-                            setDelivery(next);
-                          }}
-                          placeholder="0"
-                          className="stock-qty-input"
-                          disabled={busy}
-                          aria-label={`Quantity received of ${p.name}`}
-                        />
+                        <span className="stock-recv">
+                          <input
+                            inputMode="decimal"
+                            value={delivery.get(p.id) ?? ""}
+                            onChange={(e) => {
+                              // Emptying the box used to take the line off the
+                              // delivery, so clearing 1 to type 12 made the row
+                              // vanish mid-keystroke. A line goes when somebody
+                              // says it goes.
+                              const next = new Map(delivery);
+                              next.set(p.id, e.target.value);
+                              setDelivery(next);
+                            }}
+                            placeholder="0"
+                            className="stock-qty-input"
+                            disabled={busy}
+                            aria-label={`Quantity received of ${p.name}`}
+                          />
+                          {/* A wrong scan has to have a way off the delivery,
+                              and emptying the box is not one — it reads as a
+                              line waiting for a number. */}
+                          {delivery.has(p.id) && (
+                            <button
+                              type="button"
+                              className="btn-line quiet stock-drop"
+                              onClick={() => {
+                                const next = new Map(delivery);
+                                next.delete(p.id);
+                                setDelivery(next);
+                              }}
+                              disabled={busy}
+                              aria-label={`Take ${p.name} off the delivery`}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </span>
                       </td>
                     ) : (
                       <td className="num">
@@ -475,6 +483,40 @@ export default function Stock({ pin }: { pin: string }) {
           </table>
         )}
       </div>
+
+      {/* Under the lines, not above them: a delivery is built at the top of
+          this screen and finished at the bottom of it, and a Book in button
+          above a list of scanned lines is one you have to scroll back up to. */}
+      {tab === "receive" && (
+        <div className="stock-receive-bar stock-finish">
+          <input
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            placeholder="Supplier invoice / GRN number…"
+            className="modal-input"
+            style={{ marginBottom: 0, maxWidth: 320 }}
+            disabled={busy}
+          />
+          <button
+            className="btn-fill"
+            onClick={() => void bookIn()}
+            disabled={busy || !online || deliveryLines.length === 0}
+          >
+            {busy
+              ? "Booking in…"
+              : `Book in ${deliveryLines.length || "the"} line${
+                  deliveryLines.length === 1 ? "" : "s"
+                }`}
+          </button>
+          {starting.length > 0 && (
+            <p className="acc-note stock-starting">
+              {starting.length === 1
+                ? `${starting[0].name} has never been counted — booking in starts counting it at what arrives.`
+                : `${starting.length} of these lines have never been counted — booking in starts counting them at what arrives.`}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

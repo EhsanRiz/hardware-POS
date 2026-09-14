@@ -83,6 +83,7 @@ import FailedSales from "../components/FailedSales";
 import TillAI from "../components/TillAI";
 import PairRegister from "../components/PairRegister";
 import ManagerPinModal from "../components/ManagerPinModal";
+import { BACK_OFFICE, forgetPins, ownerProved, recall, remember } from "../lib/unlock";
 import CustomerPicker from "../components/sell/CustomerPicker";
 import LineItems from "../components/sell/LineItems";
 import PaymentColumn from "../components/sell/PaymentColumn";
@@ -123,7 +124,7 @@ const LIVE_KEY = "sell.live";
  * styles live in src/styles/sell.css.
  */
 export default function POS() {
-  const { user, logout, setSessionPin } = useAuth();
+  const { user, logout, sessionPin, setSessionPin } = useAuth();
   const online = useOnline();
   const { pending, failed } = usePendingSync();
 
@@ -348,6 +349,16 @@ export default function POS() {
   // A phone that has been put away asks for its owner's PIN again. The
   // till does not: it is watched, shared, and takes money all day.
   const [locked, unlock] = useAwayLock(kind === "personal");
+
+  // A phone belongs to one person, and the PIN they signed in with was proved
+  // against the server by the sign-in itself. Asking for the same six digits
+  // again at the back office door, ten seconds later, proves nothing. The till
+  // is the other case — shared, watched, and nobody's — so it asks at its own
+  // door and then holds it for a while like everything else.
+  useEffect(() => {
+    if (kind !== "personal" || !user || !sessionPin) return;
+    ownerProved(user, sessionPin);
+  }, [kind, user, sessionPin]);
 
   // The dividers over the two footers meet (sell.css, --sell-foot): the
   // left footer is made at least as tall as the right one. Never the other
@@ -1157,6 +1168,37 @@ export default function POS() {
     }
   }
 
+  /**
+   * The back office and the stock room, opened.
+   *
+   * Each asks for a PIN only if nothing proved recently is still good (see
+   * lib/unlock): the door is about a device left lying about, which is a
+   * question of time, and every call behind it re-checks the PIN server-side
+   * anyway. Switching between screens is not a reason to ask again.
+   */
+  function openAdmin() {
+    const kept = recall("admin");
+    if (kept) setAdminPin(kept);
+    else setAskAdminPin(true);
+  }
+
+  function openStock(where: "phone" | "till") {
+    const kept = recall("stock");
+    if (!kept) {
+      setAskStockPin(true);
+      return;
+    }
+    setStockPin(kept);
+    if (where === "phone") setPhoneScreen("stock");
+    else setSection("stock");
+  }
+
+  /** Somebody leaving takes every proved PIN with them. */
+  function signOut() {
+    forgetPins();
+    logout();
+  }
+
   if (!paired) return <PairRegister onPaired={() => setPaired(true)} />;
 
   const header = (
@@ -1171,15 +1213,15 @@ export default function POS() {
       canQuotes={can(user, "take_payments")}
       canStock={can(user, "manage_inventory")}
       onSection={(s) => {
-        if (s === "stock" && !stockPin) {
-          setAskStockPin(true);
+        if (s === "stock") {
+          openStock("till");
           return;
         }
         setSection(s);
       }}
       onShowFailed={() => setShowFailed(true)}
-      onManage={() => setAskAdminPin(true)}
-      onSignOut={logout}
+      onManage={() => openAdmin()}
+      onSignOut={signOut}
       onCalculator={() => setShowCalc((v) => !v)}
     />
   );
@@ -1205,6 +1247,7 @@ export default function POS() {
             // loudly on a wrong PIN or a missing permission.
             await stockMovements(entered, 1);
             setStockPin(entered);
+            remember("stock", entered);
             setAskStockPin(false);
             // On a phone the stock room is a screen of its own, not a
             // section of the till.
@@ -1235,9 +1278,7 @@ export default function POS() {
             // server still checks the PIN on every call once the line is back.
             if (!isOnline()) {
               const who = await findByPinOffline(entered);
-              if (!who || !canAny(who, ["manage_catalogue", "manage_inventory", "shelf_capture",
-                "manage_purchasing", "approve_discount", "view_reports", "manage_staff",
-                "manage_settings", "cash_management"])) {
+              if (!who || !canAny(who, [...BACK_OFFICE])) {
                 throw new Error("That PIN is not known on this device, or opens nothing in the back office.");
               }
             } else if (can(user, "manage_catalogue")) await adminListProducts(entered);
@@ -1245,6 +1286,7 @@ export default function POS() {
             else if (can(user, "manage_purchasing")) await purchasingSuppliers(entered);
             else await approvalCodes(entered);
             setAdminPin(entered);
+            remember("admin", entered);
             setAskAdminPin(false);
           }}
           onCancel={() => setAskAdminPin(false)}
@@ -1261,7 +1303,7 @@ export default function POS() {
           onLeave={(key) => {
             setAdminPin(null);
             setAdminTab(undefined);
-            if (key === "stock" && !stockPin) setAskStockPin(true);
+            if (key === "stock") openStock("phone");
             else setPhoneScreen(key as "lookup" | "deliveries" | "stock");
           }}
           onClose={() => {
@@ -1308,9 +1350,15 @@ export default function POS() {
         <PhoneLock
           user={user}
           online={online}
-          onUnlock={(pin) => { setSessionPin(pin); unlock(); }}
+          onUnlock={(pin) => {
+            setSessionPin(pin);
+            // Proved against the server a moment ago, by the same check the
+            // back office's own door makes.
+            ownerProved(user, pin);
+            unlock();
+          }}
           onLookup={() => setLockedPeek(true)}
-          onSignOut={logout}
+          onSignOut={signOut}
         />
       );
     }
@@ -1354,7 +1402,7 @@ export default function POS() {
           user={user}
           online={online}
           deviceName={registerName()}
-          onSignOut={logout}
+          onSignOut={signOut}
           onPick={(key) => {
             if (key === "lookup") {
               setPhoneScreen("lookup");
@@ -1365,8 +1413,7 @@ export default function POS() {
               return;
             }
             if (key === "stock") {
-              if (stockPin) setPhoneScreen("stock");
-              else setAskStockPin(true);
+              openStock("phone");
               return;
             }
 
@@ -1376,7 +1423,7 @@ export default function POS() {
             // the till — held in memory only, re-checked server-side by every
             // call behind it.
             setAdminTab(key as TabKey);
-            setAskAdminPin(true);
+            openAdmin();
           }}
         />
         {overlays}

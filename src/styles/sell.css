@@ -2249,6 +2249,17 @@ tr.is-void td:last-child { text-decoration: none; }
 /* What booking in will do to a line nobody has ever counted: its own line
    under the reference and the button, not squeezed in beside them. */
 .stock-starting { flex-basis: 100%; margin: 0; }
+/* The finishing line, under the delivery rather than over it. */
+.stock-finish { border-top: 1px solid var(--divider); padding-top: 10px; margin-top: 2px; }
+/* The quantity, and the way a line comes off again. */
+.stock-recv {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.stock-drop { padding: 0 10px; min-height: 36px; font-size: 13px; }
 /* The row a scan just landed on, lit briefly so the eye finds it in a long list. */
 .sell tbody tr.stock-row-hit > td,
 .acc tbody tr.stock-row-hit > td { background: var(--color-accent-100, #fdf3d8); transition: background 0.2s; }
@@ -3171,7 +3182,19 @@ tr.is-void td:last-child { text-decoration: none; }
   align-items: center;
   padding: 11px 16px;
   border-bottom: 1px solid var(--divider-row);
+  /* A row is the way into the item, so it is a button — and a button needs
+     telling that it is still a row. */
+  width: 100%;
+  text-align: left;
+  background: none;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
+.phone-hit:active { background: var(--color-surface); }
 .phone-hit-img {
   width: 46px;
   height: 46px;
@@ -3207,6 +3230,33 @@ tr.is-void td:last-child { text-decoration: none; }
      and the bin are what was asked for. */
   .phone-hit-img { display: none; }
 }
+
+/* ---- One item, read properly ------------------------------------------ */
+.phone-item { padding: 16px 16px 32px; overflow-y: auto; }
+.phone-item-img {
+  width: 100%;
+  max-height: 42vh;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--divider);
+  background: var(--color-surface);
+  margin-bottom: 12px;
+}
+.phone-item-name { font-size: 21px; font-weight: 700; line-height: 1.2; margin: 0; }
+.phone-item-price { font-size: 30px; font-weight: 700; margin: 6px 0 0; }
+.phone-item-trade { font-size: 13px; color: var(--color-neutral-700); margin: 2px 0 0; }
+/* Label and value as a pair per line, the value's own column so a column of
+   them reads down the page. */
+.phone-item-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) 1fr;
+  gap: 6px 12px;
+  margin: 16px 0 0;
+  font-size: 15px;
+}
+.phone-item-facts dt { color: var(--color-neutral-700); font-size: 13px; align-self: center; }
+.phone-item-facts dd { margin: 0; font-weight: 600; }
+.phone-item-bin { font-size: 17px; color: var(--color-accent-700); }
 
 /* ---- A phone put away asks again -------------------------------------- */
 /*
