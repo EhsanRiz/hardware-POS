@@ -139,3 +139,19 @@ export function CalcIcon({ size = 18 }: { size?: number }) {
     </svg>
   );
 }
+
+/**
+ * The bell, for what needs somebody.
+ *
+ * Drawn in the same idiom as the rest so it takes the colour of whatever bar
+ * it sits on. The emoji it replaced was a yellow picture that could not be
+ * told otherwise, and it sat on the dark green header looking like a sticker.
+ */
+export function BellIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg {...base} width={size} height={size}>
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}

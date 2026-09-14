@@ -34,7 +34,8 @@ import type { User } from "../lib/types";
  * quietly stale is worse than no figure at all.
  */
 export default function PhoneHome({
-  user, online, deviceName, notices = [], onNotice, onPick, onSignOut,
+  user, online, deviceName, notices = [], onNotice, onReadNotices,
+  onPick, onSignOut,
 }: {
   user: User;
   online: boolean;
@@ -42,6 +43,8 @@ export default function PhoneHome({
   /** What needs somebody, for the bell beside the burger. */
   notices?: Notice[];
   onNotice?: (goes: Notice["goes"]) => void;
+  /** Opening the bell asks the shop again. */
+  onReadNotices?: () => void;
   onPick: (key: string) => void;
   onSignOut: () => void;
 }) {
@@ -107,7 +110,9 @@ export default function PhoneHome({
         <div className="flex items-center gap-2">
           {/* What needs somebody, in the corner the eye already checks. The
               figures below say how the day is going; this says what is stuck. */}
-          {onNotice && <NoticeBell notices={notices} onGo={onNotice} />}
+          {onNotice && (
+            <NoticeBell notices={notices} onGo={onNotice} onOpen={onReadNotices} canPush />
+          )}
           {updateReady && (
             <button
               className="head-update"

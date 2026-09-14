@@ -1,4 +1,5 @@
 import { requireToken } from "./api";
+import { cacheGet, cacheSet } from "./localCache";
 import { supabase } from "./supabase";
 
 /**
@@ -104,14 +105,67 @@ export function signature(notices: Notice[]): string {
   return notices.map((n) => `${n.kind}:${n.count}`).join(",");
 }
 
+const LATER_KEY = "notices.later";
+
+/** What was waved away, and at what size, keyed by kind. */
+export type PutAside = Record<string, { day: string; count: number }>;
+
+/** The day a date falls on, as the device reckons it. */
+export function dayOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * What is left after today's "not now"s.
+ *
+ * Kept pure and separate from the storage below so the rule can be held to
+ * directly. The rule: a kind put aside today is gone for today — but if it
+ * has GROWN since, it is news again. Three deliveries late is not the same
+ * fact as the two you waved away an hour ago.
+ */
+export function stillWaiting(
+  notices: Notice[], aside: PutAside, today: string
+): Notice[] {
+  return notices.filter((n) => {
+    const held = aside[n.kind];
+    if (!held || held.day !== today) return true;
+    return n.count > held.count;
+  });
+}
+
+/**
+ * Put a notice aside for the rest of the day.
+ *
+ * Deliberately not "dismiss". Half of these clear themselves the moment the
+ * thing is done — approve the sale, mark the load delivered, close the drawer
+ * — and the bell empties on its own. The other half are true for as long as
+ * they are true: a shop whose cement is below its reorder level has a bell
+ * that says so until the cement arrives, and a bell that says the same thing
+ * every day for a week is one nobody reads.
+ *
+ * So the shop can say "yes, I know, not today" and have it come back
+ * tomorrow rather than never. Nothing is written to the server: this is one
+ * person on one device deciding what they have already dealt with today, not
+ * a fact about the shop.
+ */
+export function notToday(kind: string, count: number, now: Date): void {
+  const held = cacheGet<PutAside>(LATER_KEY, {});
+  cacheSet(LATER_KEY, { ...held, [kind]: { day: dayOf(now), count } });
+}
+
+/** What this device has waved away, for stillWaiting to filter with. */
+export function putAside(): PutAside {
+  return cacheGet<PutAside>(LATER_KEY, {});
+}
+
 export async function fetchNotices(today: Date): Promise<NoticeCounts> {
   const { data, error } = await supabase.rpc("pos_notices", {
     p_register_token: requireToken(),
     // The shop's own date, not the server's: a delivery is late where the
     // shop is standing.
-    p_today: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
-      today.getDate()
-    ).padStart(2, "0")}`,
+    p_today: dayOf(today),
   });
   if (error) throw error;
   return data as NoticeCounts;

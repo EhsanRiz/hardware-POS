@@ -31,6 +31,8 @@ interface Env {
   SUPABASE_ANON_KEY: string;
   /** Shared with the error-digest function; a Worker secret, not a var. */
   DIGEST_SECRET?: string;
+  /** Shared with the push function; a Worker secret, not a var. */
+  PUSH_SECRET?: string;
 }
 
 /** Supabase's public API surfaces. Anything else under /api/ is refused. */
@@ -76,6 +78,9 @@ export function redirectFor(url: URL, headers: Headers): Response | null {
  * asked in the last day. It carries the public key for the gateway and the
  * shared DIGEST_SECRET for the function, which answers nothing without it.
  */
+/** The nightly one, as wrangler.toml spells it. */
+export const DIGEST_CRON = "0 4 * * *";
+
 export function digestRequest(env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; DIGEST_SECRET?: string }): Request {
   return new Request(`${env.SUPABASE_URL}/functions/v1/error-digest`, {
     method: "POST",
@@ -91,10 +96,39 @@ export function digestRequest(env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: st
   });
 }
 
+/**
+ * The other cron, every few minutes: ask the push function whether any phone
+ * needs telling. It decides — quiet hours, nothing new, nobody subscribed —
+ * and answers how many it sent. Same shape as the digest, same shared-secret
+ * rule, and the same refusal to do anything at all without one.
+ */
+export function pushRequest(env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; PUSH_SECRET?: string }): Request {
+  return new Request(`${env.SUPABASE_URL}/functions/v1/push`, {
+    method: "POST",
+    headers: {
+      apikey: env.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      "x-push-secret": env.PUSH_SECRET ?? "",
+    },
+    body: "{}",
+  });
+}
+
 export default {
-  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
-    ctx.waitUntil(fetch(digestRequest(env)).then((r) => {
-      if (!r.ok) console.error("error-digest", r.status);
+  async scheduled(event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    // Two crons on one Worker, told apart by which one fired. The nightly
+    // digest is the 04:00 one; everything else is the push sweep, so a
+    // schedule added later errs towards the harmless of the two.
+    const cron = (event as { cron?: string } | null)?.cron;
+    if (cron === DIGEST_CRON) {
+      ctx.waitUntil(fetch(digestRequest(env)).then((r) => {
+        if (!r.ok) console.error("error-digest", r.status);
+      }));
+      return;
+    }
+    ctx.waitUntil(fetch(pushRequest(env)).then((r) => {
+      if (!r.ok) console.error("push", r.status);
     }));
   },
 

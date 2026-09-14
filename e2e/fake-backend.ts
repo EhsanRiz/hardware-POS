@@ -270,6 +270,8 @@ export class Backend {
     discount: number; discount_reason: string | null; total: number;
   }[] = [];
   accountPayments: RecordedAccountPayment[] = [];
+  /** Phones that asked to be told with the app shut (0101). */
+  pushSubs: { endpoint: string; p256dh: string; auth: string; user: string }[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string;
     note: string | null; unit_cost?: number | null }[] = [];
   /** The staff roster the back office edits, seeded from the two sign-in users. */
@@ -2593,6 +2595,32 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           deliveries_today: out.filter((d) => d.deliver_on === today).length,
           deliveries_late: out.filter((d) => d.deliver_on < today).length,
         });
+      }
+      case "rpc/pos_push_subscribe": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // 0101: a till is a shared machine somebody is already standing at.
+        if (reg.kind !== "personal" || !reg.assigned_to) {
+          return fail("Only a personal device can be notified");
+        }
+        const endpoint = String(body.p_endpoint ?? "");
+        const p256dh = String(body.p_p256dh ?? "");
+        const auth = String(body.p_auth ?? "");
+        if (!endpoint.trim() || !p256dh.trim() || !auth.trim()) {
+          return fail("That is not a subscription");
+        }
+        // One row per endpoint: a browser hands out one subscription, and a
+        // second row would be two buzzes for one pocket.
+        const already = be.pushSubs.findIndex((x) => x.endpoint === endpoint);
+        const row = { endpoint, p256dh, auth, user: reg.assigned_to };
+        if (already >= 0) be.pushSubs[already] = row;
+        else be.pushSubs.push(row);
+        return json(null);
+      }
+      case "rpc/pos_push_forget": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const gone = String(body.p_endpoint ?? "");
+        be.pushSubs = be.pushSubs.filter((x) => x.endpoint !== gone);
+        return json(null);
       }
       case "rpc/pos_notices": {
         if (!tokenOk) return fail("Register not paired or revoked");

@@ -5983,4 +5983,98 @@ begin
     'one signature for pos_notices');
 end $$;
 
+-- 0101: the phones that asked to be told ------------------------------------
+do $$
+declare
+  v_tok text; v_mgr uuid; v_code text; v_phone text; v_narrow uuid;
+  v_counter_phone text; v_row record; v_n int; v_why text; v_id uuid;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_mgr);
+  select token into v_phone from public.pos_enrol_device(v_code, 'Buzzing phone');
+
+  perform public.pos_push_subscribe(v_phone, 'https://push.example/abc', 'key-1', 'auth-1');
+  select count(*)::int into v_n from public.push_subscriptions
+   where endpoint = 'https://push.example/abc';
+  perform assert_eq(v_n, 1, 'a phone that asked is on the list');
+
+  -- The same phone again is the same row: a browser hands out one
+  -- subscription, and a second row would mean two buzzes for one pocket.
+  perform public.pos_push_subscribe(v_phone, 'https://push.example/abc', 'key-2', 'auth-2');
+  select count(*)::int into v_n from public.push_subscriptions
+   where endpoint = 'https://push.example/abc';
+  perform assert_eq(v_n, 1, 'and asking twice does not make two');
+  perform assert(exists (select 1 from public.push_subscriptions
+    where endpoint = 'https://push.example/abc' and p256dh = 'key-2'),
+    'the keys are the new ones');
+
+  -- A till is a shared machine with a customer standing at it.
+  begin
+    perform public.pos_push_subscribe(v_tok, 'https://push.example/till', 'k', 'a');
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%personal device%', 'a till is not notified: ' || v_why);
+
+  -- What the sender sees: this phone, and what there is to tell it.
+  select * into v_row from public.push_due(current_date)
+   where endpoint = 'https://push.example/abc';
+  perform assert(v_row.approvals is not null, 'an owner is told about approvals');
+  perform assert(v_row.deliveries_late >= 1, 'and about a load that should have gone');
+  perform assert(v_row.last_sent is null, 'nothing has been said yet');
+
+  -- Said, and remembered, so the next sweep holds its tongue.
+  select id into v_id from public.push_subscriptions where endpoint = 'https://push.example/abc';
+  perform public.push_sent(v_id, 'a0d1');
+  select * into v_row from public.push_due(current_date)
+   where endpoint = 'https://push.example/abc';
+  perform assert_eq(v_row.last_sent, 'a0d1', 'and what was said is on the row');
+
+  -- A counter hand hears about loads and never about approvals, because the
+  -- permissions are read at send time from the person, not from the device.
+  select id into v_narrow from public.pos_admin_invite_user(
+    v_tok, '1234', 'Buzz Ned', '+27820000057', 'employee'::user_role,
+    array['take_payments']);
+  perform public.auth_set_pin('+27820000057', '975310');
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_narrow);
+  select token into v_counter_phone from public.pos_enrol_device(v_code, 'Ned buzzing phone');
+  perform public.pos_push_subscribe(v_counter_phone, 'https://push.example/ned', 'k', 'a');
+  select * into v_row from public.push_due(current_date)
+   where endpoint = 'https://push.example/ned';
+  perform assert_eq(v_row.approvals, 0, 'a counter hand is not called to approve');
+  perform assert(v_row.deliveries_late >= 1, 'but the loads are theirs');
+
+  -- A refusal that is not final costs a life, not the subscription.
+  perform public.push_sent(v_id, 'a0d1', true);
+  perform assert(exists (select 1 from public.push_subscriptions where id = v_id),
+    'one refusal is a bad minute, not a dead phone');
+  perform public.push_sent(v_id, 'a0d1', true);
+  perform public.push_sent(v_id, 'a0d1', true);
+  perform assert(not exists (select 1 from public.push_subscriptions where id = v_id),
+    'three and it is gone');
+
+  -- And "gone" from the push service is final at once.
+  perform public.pos_push_subscribe(v_phone, 'https://push.example/abc', 'k', 'a');
+  select id into v_id from public.push_subscriptions where endpoint = 'https://push.example/abc';
+  perform public.push_sent(v_id, 'a0d1', true, true);
+  perform assert(not exists (select 1 from public.push_subscriptions where id = v_id),
+    'a subscription the browser threw away goes with it');
+
+  -- Turning it off takes the row with it.
+  perform public.pos_push_forget(v_counter_phone, 'https://push.example/ned');
+  perform assert(not exists (select 1 from public.push_subscriptions
+    where endpoint = 'https://push.example/ned'), 'turned off is off');
+
+  -- Nobody but the sender may read the endpoints and keys of every phone in
+  -- the shop, and nobody at all may write what was sent.
+  set local role anon;
+  perform assert_refuses('select * from public.push_due(current_date)',
+    'the anonymous key cannot read the phones');
+  perform assert_refuses(
+    format('select public.push_sent(%L, %L)', gen_random_uuid(), 'a1d1'),
+    'nor say something was sent');
+  reset role;
+end $$;
+
 select 'all database tests passed' as result;

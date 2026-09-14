@@ -32,6 +32,7 @@ export default function SellHeader({
   onCalculator,
   notices = [],
   onNotice,
+  onReadNotices,
 }: {
   user: User | null;
   online: boolean;
@@ -54,6 +55,8 @@ export default function SellHeader({
   /** What needs somebody, for the bell. */
   notices?: Notice[];
   onNotice?: (goes: Notice["goes"]) => void;
+  /** Opening the bell asks the shop again. */
+  onReadNotices?: () => void;
   onSignOut: () => void;
   /** Open or close the floating calculator. */
   onCalculator?: () => void;
@@ -165,7 +168,9 @@ export default function SellHeader({
         {/* What needs somebody. Beside the sync chip because they answer the
             same kind of question — is anything wrong that I cannot see from
             here — and because the eye already goes to this corner. */}
-        {onNotice && <NoticeBell notices={notices} onGo={onNotice} />}
+        {onNotice && (
+          <NoticeBell notices={notices} onGo={onNotice} onOpen={onReadNotices} />
+        )}
 
         {/* Which till this is — and only that. It carried the shop name too,
             which at 0.11em tracking in capitals came to 315px of header and

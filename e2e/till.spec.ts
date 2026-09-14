@@ -9940,7 +9940,7 @@ test("the bell tells the counter what is waiting, and is the way to it", async (
   await expect(panel).not.toContainText("waiting to be priced");
 
   // A row is a way in, not a headline.
-  await panel.getByRole("button", { name: /should already have gone/ }).click();
+  await panel.locator(".bell-row", { hasText: /should already have gone/ }).click();
   await expect(panel).toHaveCount(0);
   await expect(page.getByPlaceholder(/Find a delivery/)).toBeVisible();
 });
@@ -9996,6 +9996,142 @@ test("a phone's bell carries the work only its owner can do", async ({ page }) =
   await expect(panel).toContainText("1 item is at or below its reorder level");
 
   // And it opens the stock room, which on a phone needs no PIN of its own.
-  await panel.getByRole("button", { name: /reorder level/ }).click();
+  await panel.locator(".bell-row", { hasText: /reorder level/ }).click();
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+});
+
+/**
+ * The bell, on a phone: it fits, and it can be emptied.
+ *
+ * The panel hung off the button's own right edge, and the bell is nowhere
+ * near the right edge of a phone — Sign out is beyond it — so a 22rem panel
+ * ending at the bell began about sixty pixels off the left of the screen and
+ * every line was cut in half. And nothing on the list could be put aside: the
+ * ones that clear themselves clear themselves, but "3 items are at or below
+ * reorder level" is true until the stock arrives, which is a bell that says
+ * the same thing every day until nobody reads it.
+ */
+test("on a phone the bell fits the screen, and a standing notice can be put aside", async ({ page }) => {
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  be.deliveries.push({
+    id: "b5", doc_number: "DEL-000045", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: yesterday, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  await page.locator("button.bell").click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toBeVisible();
+
+  // Every edge of it is on the screen, and the first word of a line is not
+  // somewhere off to the left of it.
+  const box = (await panel.boundingBox())!;
+  expect(box.x, "the panel's left edge").toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width, "the panel's right edge").toBeLessThanOrEqual(390);
+  const first = (await panel.locator(".bell-count").first().boundingBox())!;
+  expect(first.x, "the count on the first row").toBeGreaterThanOrEqual(0);
+
+  // What is low is true until the stock arrives, so it can be put aside for
+  // the day rather than argued with every time the bell is opened.
+  const low = panel.locator("li", { hasText: "reorder level" });
+  await expect(low).toBeVisible();
+  await low.getByRole("button", { name: /^Not today/ }).click();
+  await expect(panel.locator("li", { hasText: "reorder level" })).toHaveCount(0);
+  // The load that is late is somebody's work today and stays.
+  await expect(panel).toContainText("should already have gone");
+});
+
+test("a notice dealt with is gone the next time the bell is opened", async ({ page }) => {
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  be.deliveries.push({
+    id: "b6", doc_number: "DEL-000046", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: yesterday, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  const bell = page.locator("button.bell");
+  await bell.click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toContainText("1 delivery should already have gone");
+  await page.keyboard.press("Escape");
+
+  // Dealt with elsewhere — the load goes out. Opening the bell asks the shop
+  // again rather than showing what it was told two minutes ago.
+  be.deliveries.find((d) => d.id === "b6")!.status = "delivered";
+  await bell.click();
+  await expect(panel).not.toContainText("should already have gone");
+});
+
+/**
+ * A pocket that buzzes.
+ *
+ * The bell only speaks to somebody already looking at the app, and the whole
+ * point of a manager's phone is that it is in a pocket. Chromium here has no
+ * push service, so the browser's own half is stubbed at the PushManager — what
+ * this holds is everything on THIS side of it: that the offer appears on a
+ * phone and never on the till, that saying yes reaches the shop with the
+ * endpoint and both keys, and that saying no takes it off again.
+ */
+async function stubPush(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const sub = {
+      endpoint: "https://push.test/endpoint-1",
+      getKey: (name: string) =>
+        new TextEncoder().encode(name === "auth" ? "sixteen-byte-aut" : "a-fake-p256dh-key").buffer,
+      unsubscribe: async () => true,
+    };
+    let live: unknown = null;
+    // This suite blocks service workers on purpose (playwright.config: the
+    // worker's CacheFirst rule re-issues image GETs where page.route cannot
+    // see them), so there is no registration to hang a push subscription off
+    // and navigator.serviceWorker.ready never resolves. The registration is
+    // supplied here; everything above it is the app's own code.
+    const registration = {
+      pushManager: {
+        getSubscription: async () => live,
+        subscribe: async () => (live = sub),
+      },
+    };
+    const container = navigator.serviceWorker as unknown as Record<string, unknown>;
+    Object.defineProperty(container, "ready", { get: () => Promise.resolve(registration) });
+    container.getRegistration = async () => registration;
+    (window as unknown as { Notification: { requestPermission: () => Promise<string> } })
+      .Notification.requestPermission = async () => "granted";
+  });
+}
+
+test("a phone can ask to be told with the app shut, and to stop", async ({ page }) => {
+  await stubPush(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  await page.locator("button.bell").click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  const ask = panel.getByRole("button", { name: "Tell me when the app is shut" });
+  await expect(ask).toBeVisible();
+  await ask.click();
+
+  // The shop has somewhere to send to, and both keys that make it end to end.
+  await expect.poll(() => be.pushSubs.length).toBe(1);
+  expect(be.pushSubs[0].endpoint).toBe("https://push.test/endpoint-1");
+  expect(be.pushSubs[0].p256dh.length).toBeGreaterThan(10);
+  expect(be.pushSubs[0].auth.length).toBeGreaterThan(10);
+
+  // And it says so, offering the way back out.
+  const stop = panel.getByRole("button", { name: "Stop telling me when the app is shut" });
+  await expect(stop).toBeVisible();
+  await stop.click();
+  await expect.poll(() => be.pushSubs.length).toBe(0);
+});
+
+test("the till is never offered a notification a customer could read", async ({ page }) => {
+  await stubPush(page);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.locator("button.bell").click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Tell me when the app is shut/ })).toHaveCount(0);
 });

@@ -57,6 +57,12 @@ export default defineConfig({
       // cart in front of a customer. src/lib/appUpdate.ts asks instead.
       registerType: "prompt",
       workbox: {
+        // The push listeners, added to the generated worker rather than
+        // replacing it: the update prompt, the precache and the image caching
+        // are all generated and all working, and hand-writing the whole
+        // service worker to add two listeners would put every one of them at
+        // risk. See public/push-sw.js.
+        importScripts: ["push-sw.js"],
         // Fonts are part of the app shell: a till that loses the line before
         // they are cached would fall back to a system serif.
         // jpg is here for the one photograph on the sign-in screen (door.jpg,

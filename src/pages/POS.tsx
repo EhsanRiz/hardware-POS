@@ -361,21 +361,18 @@ export default function POS() {
    * while the shop's half honestly disappears rather than going stale.
    */
   const [noticeCounts, setNoticeCounts] = useState<NoticeCounts | null>(null);
+  const readNotices = useCallback(() => {
+    if (!isOnline()) return;
+    fetchNotices(new Date())
+      .then(setNoticeCounts)
+      .catch(() => undefined);
+  }, []);
   useEffect(() => {
     if (!online || !user) return;
-    let dead = false;
-    const load = () => {
-      fetchNotices(new Date())
-        .then((c) => !dead && setNoticeCounts(c))
-        .catch(() => undefined);
-    };
-    load();
-    const timer = setInterval(load, 120_000);
-    return () => {
-      dead = true;
-      clearInterval(timer);
-    };
-  }, [online, user]);
+    readNotices();
+    const timer = setInterval(readNotices, 120_000);
+    return () => clearInterval(timer);
+  }, [online, user, readNotices]);
 
   const notices = useMemo(
     () => buildNotices(online ? noticeCounts : null, { pending, failed }),
@@ -1280,6 +1277,7 @@ export default function POS() {
       onShowFailed={() => setShowFailed(true)}
       notices={notices}
       onNotice={goNotice}
+      onReadNotices={readNotices}
       onManage={() => openAdmin()}
       onSignOut={signOut}
       onCalculator={() => setShowCalc((v) => !v)}
@@ -1464,6 +1462,7 @@ export default function POS() {
           deviceName={registerName()}
           notices={notices}
           onNotice={goNotice}
+          onReadNotices={readNotices}
           onSignOut={signOut}
           onPick={(key) => {
             if (key === "lookup") {

@@ -13,7 +13,7 @@ const src = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8")
 const js = ts.transpileModule(src, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { redirectFor, TILL_HOST, digestRequest, withSecurityHeaders } = await import(
+const { redirectFor, TILL_HOST, digestRequest, pushRequest, DIGEST_CRON, default: worker, withSecurityHeaders } = await import(
   "data:text/javascript;base64," + Buffer.from(js).toString("base64")
 );
 
@@ -55,6 +55,30 @@ check("it calls the digest function", dr.url, "https://x.supabase.co/functions/v
 check("as a POST", dr.method, "POST");
 check("with the public key", dr.headers.get("apikey"), "anon-key");
 check("as a bearer too, the way the gateway wants it", dr.headers.get("authorization"), "Bearer anon-key");
+
+console.log("--- the phones are swept for, on the other cron ---");
+const pr = pushRequest({ SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "anon-key", PUSH_SECRET: "p-secret" });
+check("it calls the push function", pr.url, "https://x.supabase.co/functions/v1/push");
+check("with the secret that function insists on", pr.headers.get("x-push-secret"), "p-secret");
+check("and nothing at all without one",
+  pushRequest({ SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "k" }).headers.get("x-push-secret"), "");
+
+// Two crons on one Worker: the wrong one firing the wrong job would mean a
+// nightly digest every five minutes, or phones told once a day at four.
+const fired = [];
+globalThis.fetch = (req) => {
+  fired.push(new URL(req.url).pathname);
+  return Promise.resolve(new Response("{}", { status: 200 }));
+};
+const ctx = { waitUntil: (p) => p };
+const env = { SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "k", DIGEST_SECRET: "d", PUSH_SECRET: "p" };
+await worker.scheduled({ cron: DIGEST_CRON }, env, ctx);
+check("four in the morning is the digest", fired.pop(), "/functions/v1/error-digest");
+await worker.scheduled({ cron: "*/5 * * * *" }, env, ctx);
+check("every five minutes is the phones", fired.pop(), "/functions/v1/push");
+// A schedule somebody adds later must not start emailing InnovaEarth.
+await worker.scheduled({ cron: "0 0 1 1 *" }, env, ctx);
+check("and an unknown schedule does the harmless one", fired.pop(), "/functions/v1/push");
 
 console.log("--- what a page on this origin may do ---");
 const app = withSecurityHeaders(new Response("<html>", { headers: { "content-type": "text/html" } }), "app");

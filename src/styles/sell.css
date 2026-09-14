@@ -3232,40 +3232,49 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 
 /* ---- The bell: what needs somebody ------------------------------------ */
+/* The same treatment as the burger beside it: the chrome it sits on is dark
+   green, and a white box with a yellow emoji in it read as a sticker. */
 .bell-wrap { position: relative; display: inline-flex; }
 .bell {
   position: relative;
-  min-height: 38px;
-  min-width: 38px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  line-height: 1;
   border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--color-surface, #fff);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
   cursor: pointer;
 }
-.bell:active { transform: translateY(1px); }
+.sell-head .bell,
+.phone-home-head .bell {
+  border-color: rgba(245, 242, 234, 0.3);
+  color: var(--color-bg);
+}
+.sell-head .bell:hover,
+.phone-home-head .bell:hover { background: rgba(245, 242, 234, 0.08); }
 /* A dot, not a number: the only question asked in passing is whether there is
-   anything new since the last look. */
+   anything new since the last look. In the accent, because that is this app's
+   colour for "look here" on its dark chrome. */
 .bell-dot {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 4px;
+  right: 4px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--color-danger, #b3261e);
-  box-shadow: 0 0 0 2px var(--color-surface, #fff);
+  background: var(--color-accent-400);
+  box-shadow: 0 0 0 2px var(--color-colophon);
 }
+/* Fixed, and placed by measurement (NoticeBell): hung off the button's own
+   edge it ran off the left of a phone, because the bell is nowhere near the
+   screen's edge. */
 .bell-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   z-index: 60;
-  width: min(22rem, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   background: var(--color-surface, #fff);
   border: 1px solid var(--divider);
   border-radius: 12px;
@@ -3274,24 +3283,54 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 .bell-none { margin: 0; padding: 14px 16px; color: var(--color-neutral-700); font-size: 14px; }
 .bell-list { list-style: none; margin: 0; padding: 0; }
+.bell-item {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--divider-row);
+}
+.bell-list li:last-child .bell-item { border-bottom: 0; }
 .bell-row {
   display: flex;
   gap: 10px;
   align-items: baseline;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
-  padding: 11px 14px;
+  padding: 11px 6px 11px 14px;
   border: 0;
-  border-bottom: 1px solid var(--divider-row);
   background: none;
   font: inherit;
   color: inherit;
   cursor: pointer;
 }
-.bell-list li:last-child .bell-row { border-bottom: 0; }
 .bell-row:active { background: var(--color-surface-2, #f5f3ee); }
 .bell-count { font-weight: 700; font-size: 16px; min-width: 1.4rem; }
 .bell-line { font-size: 14px; line-height: 1.35; }
+/* Put it aside for today. Not "dismiss": the thing is still true, and it
+   comes back tomorrow. */
+.bell-later {
+  flex: none;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--divider-row);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-neutral-700);
+  cursor: pointer;
+}
+.bell-foot {
+  margin: 0;
+  padding: 9px 14px;
+  border-top: 1px solid var(--divider-row);
+  font-size: 12px;
+  color: var(--color-neutral-700);
+}
+/* Being told with the app shut: under the list, because it is about the bell
+   rather than about any one line on it. */
+.bell-push { padding: 8px 14px 12px; border-top: 1px solid var(--divider-row); }
+.bell-push .btn-line { width: 100%; font-size: 13px; }
+.bell-push .bell-foot { border-top: 0; padding: 0; }
 
 /* ---- One item, read properly ------------------------------------------ */
 .phone-item { padding: 16px 16px 32px; overflow-y: auto; }

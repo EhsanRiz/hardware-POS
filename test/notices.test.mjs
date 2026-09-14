@@ -16,7 +16,7 @@ const js = ts.transpileModule(src, {
 }).outputText;
 const exports_ = {};
 new Function("exports", "require", js)(exports_, () => ({}));
-const { buildNotices, signature } = exports_;
+const { buildNotices, signature, stillWaiting } = exports_;
 
 let failures = 0;
 const check = (label, got, want) => {
@@ -78,6 +78,30 @@ if (signature(buildNotices({ approvals: 1, low_stock: 1 }, none)) === before) {
   failures++;
   console.error("FAIL a new kind of notice must mark the bell as new");
 }
+
+// "Not today" puts a standing fact aside until tomorrow — and no further.
+const standing = buildNotices({ low_stock: 3, deliveries_late: 1 }, none);
+check("waved away today, it is off the list",
+  stillWaiting(standing, { low_stock: { day: "2026-09-14", count: 3 } }, "2026-09-14")
+    .map((n) => n.kind),
+  ["deliveries_late"]);
+check("tomorrow it is back",
+  stillWaiting(standing, { low_stock: { day: "2026-09-14", count: 3 } }, "2026-09-15")
+    .map((n) => n.kind),
+  ["deliveries_late", "low_stock"]);
+check("and if it grows it is news again the same day",
+  stillWaiting(buildNotices({ low_stock: 4 }, none),
+    { low_stock: { day: "2026-09-14", count: 3 } }, "2026-09-14").map((n) => n.kind),
+  ["low_stock"]);
+check("but the same size stays put aside",
+  stillWaiting(buildNotices({ low_stock: 3 }, none),
+    { low_stock: { day: "2026-09-14", count: 3 } }, "2026-09-14").map((n) => n.kind),
+  []);
+// Fewer of them is not news: two left of the three you knew about is progress.
+check("and fewer of them is not a reason to shout",
+  stillWaiting(buildNotices({ low_stock: 2 }, none),
+    { low_stock: { day: "2026-09-14", count: 3 } }, "2026-09-14").map((n) => n.kind),
+  []);
 
 if (failures) {
   console.error(`${failures} failure(s)`);

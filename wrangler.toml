@@ -38,7 +38,11 @@ SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 # The nightly line: 04:00 UTC is 06:00 in South Africa, before the first
 # shop opens. See worker/index.ts, scheduled().
 [triggers]
-crons = ["0 4 * * *"]
+# The nightly digest at 04:00, and the push sweep every five minutes. The
+# second one is cheap and almost always silent: the function decides whether
+# there is anything worth telling a phone (supabase/functions/push/rules.ts),
+# and outside shop hours the answer is always no.
+crons = ["0 4 * * *", "*/5 * * * *"]
 
 [assets]
 directory = "./dist"
