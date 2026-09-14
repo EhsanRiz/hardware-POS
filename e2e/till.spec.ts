@@ -10128,6 +10128,37 @@ test("a phone can ask to be told with the app shut, and to stop", async ({ page 
   const panel = page.getByRole("dialog", { name: "What needs you" });
   const ask = panel.getByRole("button", { name: "Tell me when the app is shut" });
   await expect(ask).toBeVisible();
+
+  // Readable, which is not the same as present. It borrowed the header's
+  // button styling at first — a pale colour meant for the dark green bar —
+  // and on the cream panel it was very nearly invisible. Measured against
+  // whatever is actually painted behind it.
+  const contrast = await ask.evaluate((el) => {
+    const channels = (c: string) => c.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    const luminance = ([r, g, b]: number[]) => {
+      const f = (v: number) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    // The nearest ancestor that actually paints something.
+    let behind: HTMLElement | null = el as HTMLElement;
+    let bg = "rgb(255, 255, 255)";
+    while (behind) {
+      const c = getComputedStyle(behind).backgroundColor;
+      if (c && !/rgba\(0, 0, 0, 0\)|transparent/.test(c)) {
+        bg = c;
+        break;
+      }
+      behind = behind.parentElement;
+    }
+    const a = luminance(channels(getComputedStyle(el).color));
+    const b = luminance(channels(bg));
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  });
+  expect(contrast, "the switch against what is behind it").toBeGreaterThan(4);
+
   await ask.click();
 
   // The shop has somewhere to send to, and both keys that make it end to end.

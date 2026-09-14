@@ -215,7 +215,11 @@ export default function NoticeBell({
               ) : (
                 <button
                   type="button"
-                  className="btn-line quiet"
+                  // Its own class, NOT btn-line: the header this panel hangs
+                  // from paints .btn-line.quiet for a dark green bar, and the
+                  // panel is cream — which came out pale on pale, and white
+                  // on hover.
+                  className="bell-switch"
                   disabled={pushBusy}
                   onClick={() => {
                     setPushBusy(true);

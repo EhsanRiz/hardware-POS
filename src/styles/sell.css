@@ -3274,6 +3274,9 @@ tr.is-void td:last-child { text-decoration: none; }
 .bell-panel {
   position: fixed;
   z-index: 60;
+  /* Said, not inherited: everything in here sits on cream, whatever bar the
+     bell itself happens to hang from. */
+  color: var(--color-text);
   max-width: calc(100vw - 24px);
   background: var(--color-surface, #fff);
   border: 1px solid var(--divider);
@@ -3329,7 +3332,26 @@ tr.is-void td:last-child { text-decoration: none; }
 /* Being told with the app shut: under the list, because it is about the bell
    rather than about any one line on it. */
 .bell-push { padding: 8px 14px 12px; border-top: 1px solid var(--divider-row); }
-.bell-push .btn-line { width: 100%; font-size: 13px; }
+/* Styled here rather than borrowed from .btn-line: this panel hangs off the
+   green header, whose own rule paints .btn-line.quiet in a pale colour meant
+   for dark chrome. On the cream panel that was very nearly invisible, and
+   white the moment it was touched. */
+.bell-switch {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bell-switch:hover:not(:disabled) { background: var(--color-surface); }
+.bell-switch:active:not(:disabled) { background: var(--color-surface-2, #eae6dc); }
+.bell-switch:disabled { opacity: 0.55; cursor: default; }
 .bell-push .bell-foot { border-top: 0; padding: 0; }
 
 /* ---- One item, read properly ------------------------------------------ */
