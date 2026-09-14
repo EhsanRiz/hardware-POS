@@ -9429,3 +9429,176 @@ test("the phone says whose shop it is at the foot", async ({ page }) => {
   await expect(foot).toContainText(`© ${new Date().getFullYear()}`);
   await expect(foot).toContainText("All rights reserved");
 });
+
+/** A supplier, one draft order and a line on it, as the orders tests need. */
+function seedOrder(be: Backend) {
+  be.suppliers.push({
+    id: "sup1", code: null, name: "Voltex", contact_name: null,
+    phone: "051 000 0000", email: "orders@voltex.co.za",
+    address: "1 Depot Rd, Bloemfontein", vat_number: "4000000000", notes: null,
+  } as (typeof be.suppliers)[number]);
+  const cable = PRODUCTS.find((p) => p.sku === "CBL-25-100")!;
+  be.purchaseOrders.push({
+    id: "po1", doc_number: "PO-000001", supplier_id: "sup1", status: "draft",
+    expected_on: null, note: null, created_at: "2026-09-10T08:00:00.000Z",
+    created_by_name: "Manager", sent_at: null,
+  });
+  be.poLines.push({
+    id: "pl1", po_id: "po1", product_id: cable.id, sku: cable.sku,
+    name: cable.name, unit_code: cable.unit_code, qty: 6, unit_cost: 50,
+    received_qty: 0,
+  });
+}
+
+/*
+ * The screens a phone actually holds.
+ *
+ * Five things a manager found with the app in their hand: a sale's popup
+ * carrying four counter actions across 390px as two rows of broken words,
+ * an A4 document in a sideways scroller with its labels off one edge, a
+ * quantity field that put the caret in front of the number, an order that
+ * could not be emailed from the screen it was open on, and a stock count
+ * whose reason field was squeezed to an invisible oval.
+ */
+test("on a phone a sale offers the invoice and none of the counter's work", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  const ctx = await page.context().browser()!.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const phone = await ctx.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be);
+  await openManageOnPhone(phone, "Sales");
+  await phone.locator("li.sale-row").first().click();
+
+  const popup = phone.getByRole("dialog", { name: /INV-000001/ });
+  await expect(popup).toBeVisible();
+  // Sending somebody their invoice is exactly what a phone is for.
+  await expect(popup.getByRole("button", { name: "A4 invoice" })).toBeVisible();
+  // The rest needs the counter: a printer, the goods, the drawer.
+  await expect(popup.getByRole("button", { name: "Reprint" })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Return" })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
+  expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await ctx.close();
+});
+
+test("the till's own sale popup keeps every one of them", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+  await openManage(page);
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await page.locator("li.sale-row").first().click();
+  const popup = page.getByRole("dialog", { name: /INV-000001/ });
+  for (const b of ["Reprint", "A4 invoice", "Return", "Cancel this sale"]) {
+    await expect(popup.getByRole("button", { name: b })).toBeVisible();
+  }
+});
+
+test("an A4 document is zoomed to fit a phone rather than scrolled sideways", async ({ page }) => {
+  // The sale is rung at the counter's own size — at 390 the till's payment
+  // column is a sheet and there is no Cash button to press — and the screen
+  // is narrowed afterwards, which is the manager picking up their phone.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openManage(page);
+  await phoneMenu(page, "Sales");
+  await page.locator("li.sale-row").first().click();
+  await page.getByRole("button", { name: "A4 invoice" }).click();
+
+  const box = page.locator(".doc-fit");
+  await expect(box).toBeVisible();
+  // The page is 210mm and the screen is 390px, so it is shrunk to fit.
+  const zoom = await box.evaluate((el) =>
+    Number(getComputedStyle(el).getPropertyValue("--doc-zoom")));
+  expect(zoom, "the sheet is zoomed down").toBeGreaterThan(0);
+  expect(zoom, "and not left at full size").toBeLessThan(1);
+  // The whole width of the paper is on the screen: nothing to scroll to.
+  const paper = (await page.locator(".doc-a4").first().boundingBox())!;
+  const room = (await box.boundingBox())!;
+  expect(paper.width).toBeLessThanOrEqual(room.width + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test("tapping a number selects it, so the next key replaces it", async ({ page }) => {
+  // The caret landed in front of the figure, so typing 5 over 54 gave 554
+  // and correcting it meant backspacing through the old number first. The
+  // order quantity is where it was found; the rule is every number field.
+  seedOrder(be);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+  await page.getByRole("button", { name: /^Orders$/ }).click();
+  await page.locator("tr.acc-row").filter({ hasText: "PO-000001" }).click();
+  const qty = page.locator('input[inputmode="decimal"]').first();
+  await expect(qty).toBeVisible();
+  await expect(qty).not.toHaveValue("");
+  await qty.click();
+  const picked = await qty.evaluate((el: HTMLInputElement) => ({
+    from: el.selectionStart, to: el.selectionEnd, len: el.value.length,
+  }));
+  expect(picked.from, "the whole figure is picked out").toBe(0);
+  expect(picked.to).toBe(picked.len);
+  // So one keystroke replaces it rather than joining it.
+  await page.keyboard.type("7");
+  await expect(qty).toHaveValue("7");
+});
+
+test("an order can be emailed from the order itself, not only from the list", async ({ page }) => {
+  seedOrder(be);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Buying$/ }).click();
+  await page.getByRole("button", { name: /^Orders$/ }).click();
+  await page.locator("tr.acc-row").filter({ hasText: "PO-000001" }).click();
+
+  // On the order, beside the two decisions: the supplier's own address, the
+  // document attached, and the order moves to "with the supplier" as the
+  // list's own Email does.
+  const email = page.getByRole("link", { name: "Email PO-000001" });
+  await expect(email).toBeVisible();
+  const href = (await email.getAttribute("href")) ?? "";
+  expect(href).toMatch(/^mailto:orders%40voltex\.co\.za/);
+  expect(decodeURIComponent(href)).toContain("Purchase Order PO-000001");
+  await Promise.all([page.waitForEvent("download"), email.click()]);
+  await expect.poll(() => be.purchaseOrders.find((o) => o.id === "po1")?.status).toBe("sent");
+});
+
+test("the stock count on a phone has room for the reason it is being counted", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await phoneMenu(page, "Catalogue");
+  // A line that HAS stock: the count block only exists where there is a
+  // number to count against.
+  await page.locator(".cat-table tbody tr").filter({ hasText: "Cement 42.5N 50kg" }).click();
+  // The editor is a full-screen overlay rather than a dialog role, so it is
+  // reached by something only it has.
+  await expect(page.getByRole("button", { name: "Save" }).last()).toBeVisible();
+  const editor = page;
+  const reason = editor.getByLabel("Reason for the count");
+  await expect(reason).toBeVisible();
+  // It was an oval a few pixels wide, squeezed between the count and Apply.
+  const box = (await reason.boundingBox())!;
+  expect(box.width, "the reason field is a field").toBeGreaterThan(180);
+  // The count and its button hold their own line above it.
+  const counted = (await editor.getByLabel("Counted quantity").boundingBox())!;
+  const apply = (await editor.getByRole("button", { name: "Apply" }).boundingBox())!;
+  expect(Math.abs(counted.y - apply.y), "the count and Apply are a pair").toBeLessThanOrEqual(4);
+  expect(box.y, "the reason has its own line").toBeGreaterThan(counted.y + 8);
+});

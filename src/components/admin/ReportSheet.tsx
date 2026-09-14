@@ -1,4 +1,5 @@
 import InnovaMark from "../InnovaMark";
+import { useDocFit } from "../../lib/docFit";
 import { imageSrc } from "../../lib/images";
 import { shopReach, shopWhere } from "../../lib/sheet";
 import type { ReportSheetData } from "../../lib/reportSheet";
@@ -26,6 +27,7 @@ export default function ReportSheet({
   shop: ShopSettings;
   onClose: () => void;
 }) {
+  const fit = useDocFit();
   const logo = imageSrc(shop.logo_url);
   const where = shopWhere(shop);
   const reach = shopReach(shop);
@@ -36,7 +38,7 @@ export default function ReportSheet({
   return (
     <div className="vv-fixed bg-black/50 flex items-center justify-center p-4 z-[60] animate-fade-in">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col animate-scale-in">
-        <div className="flex items-center justify-between px-4 h-14 border-b border-stone-100 shrink-0">
+        <div className="doc-head-bar flex items-center justify-between gap-2 px-4 h-14 border-b border-stone-100 shrink-0">
           <span className="font-semibold text-stone-800">{sheet.title}</span>
           <div className="flex gap-2">
             {/* Chrome's own dialog carries "Save as PDF", so one button is
@@ -57,7 +59,7 @@ export default function ReportSheet({
           </div>
         </div>
 
-        <div className="overflow-auto p-4 bg-stone-100">
+        <div className="doc-fit overflow-auto p-4 bg-stone-100" ref={fit}>
           <div id="doc-sheet">
             <div className="doc-a4">
               <header className="doc-head">

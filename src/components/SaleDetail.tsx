@@ -12,6 +12,7 @@ import ManagerPinModal from "./ManagerPinModal";
 import type { Sheet } from "../lib/sheet";
 import ReturnSheet from "./admin/ReturnSheet";
 import { fmtDate, fmtDateTime } from "../lib/dates";
+import { deviceKind } from "../lib/device";
 
 /**
  * One sale, opened. The same window whether the counter scanned the slip a
@@ -55,6 +56,8 @@ export default function SaleDetail({
   const [items, setItems] = useState<SaleItem[] | null>(null);
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A phone reads a sale back; the counter works on it.
+  const phone = deviceKind() === "personal";
   const [askPin, setAskPin] = useState(false);
   // The A4 tax invoice: what a customer's bookkeeper files.
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -205,14 +208,26 @@ export default function SaleDetail({
           <p className="text-xs text-stone-500">VAT within {money(sale.tax_amount)}</p>
         </div>
 
-        <div className="p-4 border-t border-stone-200 flex gap-2">
-          <button
-            className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700 disabled:opacity-40"
-            disabled={!items}
-            onClick={reprint}
-          >
-            Reprint
-          </button>
+        {/*
+          * Four buttons across a 390px phone came out as two rows of broken
+          * words. Three of them are counter work and do not belong on a
+          * phone at all: a reprint comes out of a printer this person is
+          * standing away from, and taking goods back or cancelling a sale
+          * needs them on the counter with the drawer open. What is left is
+          * the A4 invoice, which is exactly what a phone is for — sending
+          * somebody their invoice from wherever you are. The till keeps all
+          * four.
+          */}
+        <div className="p-4 border-t border-stone-200 flex gap-2 flex-wrap">
+          {!phone && (
+            <button
+              className="flex-1 py-2.5 rounded-xl bg-stone-100 text-stone-700 disabled:opacity-40"
+              disabled={!items}
+              onClick={reprint}
+            >
+              Reprint
+            </button>
+          )}
           {/* The A4 version, for somebody who has to file it. */}
           <button
             className="flex-1 py-2.5 rounded-xl border border-stone-300 disabled:opacity-40"
@@ -221,7 +236,7 @@ export default function SaleDetail({
           >
             A4 invoice
           </button>
-          {returnable && (
+          {!phone && returnable && (
             <button
               className="flex-1 py-2.5 rounded-xl bg-colophon text-paper"
               onClick={() => (pin ? setReturnPin(pin) : setAskPin(true))}
@@ -229,7 +244,7 @@ export default function SaleDetail({
               Return
             </button>
           )}
-          {returnable && (
+          {!phone && returnable && (
             <button
               className="py-2.5 px-4 rounded-xl border border-red-200 text-red-700"
               onClick={() => setCancelling(true)}

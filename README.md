@@ -392,6 +392,15 @@ two can never drift apart. It carries the three screens the phone owns (Look
 it up, Deliveries, Stock) alongside the sections of Manage; picking a screen
 from inside Manage leaves it.
 
+A4 documents (an invoice, a day close, a purchase order) are **zoomed to
+fit** rather than put in a sideways scroller: the page is 210mm because it
+prints, so reflowing it would stop it being a preview of the paper.
+`lib/docFit.ts` measures the room and sets the zoom.
+
+Every number field **selects its contents when tapped**
+(`lib/numberFields.ts`, installed once at boot), so the next key replaces
+the figure instead of joining it.
+
 Inside Manage, a phone gets its own shape (`.admin-screen.is-phone`):
 
 - **Sales** and the **Catalogue** are a card each rather than a wide table.
@@ -400,6 +409,8 @@ Inside Manage, a phone gets its own shape (`.admin-screen.is-phone`):
 - **Trade and cost** are off the catalogue card. They are on the editor, a tap
   away; three more figures at 390px made it a wall of numbers.
 - **Cash-up** is the history only. Counting a drawer needs the cash in hand.
+- **A sale's popup** offers the A4 invoice and nothing else. A reprint, a
+  return and a cancellation all need the counter.
 - **Bulk import** and **Shop** are not offered at all. A CSV file picker and
   the shop's VAT number are desk work.
 

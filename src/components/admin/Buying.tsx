@@ -364,6 +364,9 @@ function Orders({
         pin={pin}
         online={online}
         po={open}
+        // So the document this screen builds carries the supplier's address
+        // and email, exactly as the one the list builds does.
+        supplier={suppliers.find((x) => x.id === open.supplier_id)}
         products={products}
         onBack={() => { setOpenId(null); void load(); }}
         onChanged={async () => { onActed(); await load(); }}
@@ -494,6 +497,7 @@ function OrderSheet({
   pin,
   online,
   po,
+  supplier,
   products,
   onBack,
   onChanged,
@@ -501,6 +505,7 @@ function OrderSheet({
   pin: string;
   online: boolean;
   po: PurchaseOrder;
+  supplier?: Supplier;
   products: AdminProduct[];
   onBack: () => void;
   onChanged: () => Promise<void>;
@@ -514,6 +519,33 @@ function OrderSheet({
   // What is being booked in this time round, per line.
   const [arrived, setArrived] = useState<Map<string, string>>(new Map());
   const [atCost, setAtCost] = useState<Map<string, string>>(new Map());
+
+  /**
+   * This order as the document that goes to the supplier.
+   *
+   * The list had an Email button and this screen did not, so a manager who
+   * opened an order to check it before sending had to go back a screen to
+   * send it — and on a phone, where the share sheet hands the PDF straight
+   * to Mail, that is the whole errand.
+   */
+  const asSheet = (): Sheet | null => {
+    if (!lines || lines.length === 0) return null;
+    const s = shopSettings();
+    return orderSheet({
+      number: po.doc_number,
+      date: fmtDate(po.created_at),
+      supplier: {
+        name: po.supplier, address: supplier?.address, phone: supplier?.phone,
+        vatNumber: supplier?.vat_number, email: supplier?.email,
+      },
+      lines,
+      rate: vatRate(),
+      expectedOn: po.expected_on ? fmtDate(po.expected_on) : null,
+      note: po.note,
+      raisedBy: po.created_by_name,
+      deliverTo: shopWhere(s).join(", ") || null,
+    });
+  };
 
   const editable = po.status === "draft" || po.status === "sent";
   const receivable = po.status === "sent" || po.status === "part";
@@ -788,6 +820,25 @@ function OrderSheet({
           >
             Call it off
           </button>
+        )}
+        {/* Sending it IS the errand a phone is for: the share sheet hands
+            the PDF to Mail. Emailing a draft is as good as sending it, so
+            the order moves to "with the supplier" exactly as the list does. */}
+        {(po.status === "draft" || po.status === "sent") && asSheet() && (
+          <a
+            className="btn-line"
+            aria-label={`Email ${po.doc_number}`}
+            href={sheetMailto(asSheet()!, shopSettings())}
+            onClick={(e) => {
+              const done = emailSheet(asSheet()!, shopSettings(), () => {});
+              if (done.attached) e.preventDefault();
+              if (po.status === "draft") {
+                void poSend(pin, po.id).then(onChanged).catch(() => {});
+              }
+            }}
+          >
+            Email the supplier
+          </a>
         )}
         {po.status === "draft" && (
           <button

@@ -1,4 +1,5 @@
 import { money } from "../lib/money";
+import { useDocFit } from "../lib/docFit";
 import { fmtDate } from "../lib/dates";
 import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
@@ -31,6 +32,7 @@ export default function DocumentSheet({
   /** Opened by a Print button: go straight to the print dialog. */
   autoPrint?: boolean;
 }) {
+  const fit = useDocFit();
   const s = shopSettings();
   const logo = imageSrc(s.logo_url);
   const where = shopWhere(s);
@@ -78,7 +80,7 @@ export default function DocumentSheet({
         className="bg-white rounded-2xl w-full max-w-[900px] my-4 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 px-4 h-14 border-b border-stone-200 shrink-0">
+        <div className="doc-head-bar flex items-center gap-2 px-4 h-14 border-b border-stone-200 shrink-0">
           <span className="font-semibold">
             {SHEET_TITLE[sheet.kind]} {sheet.number}
           </span>
@@ -126,7 +128,7 @@ export default function DocumentSheet({
             left so the till slip can live off-screen until it prints, which
             made this sheet invisible on screen and visible only in the print
             dialog. The print stylesheet knows about both. */}
-        <div className="overflow-x-auto p-4 bg-stone-100">
+        <div className="doc-fit overflow-x-auto p-4 bg-stone-100" ref={fit}>
           <div id="doc-sheet">
             {copies.map((copy) => (
           <div key={copy ?? "one"} className="doc-a4">

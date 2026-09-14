@@ -407,28 +407,44 @@ export default function ProductEditor({
                 Stock count — currently {fmtQty(product!.stock_qty ?? 0)}{" "}
                 {f.unit_code}
               </div>
-              <div className="flex gap-2">
+              {/* Three controls on one line came to about 370px of content
+                  in a 340px row on a phone, and the one that gave way was
+                  the reason — squeezed to an empty oval nobody could see was
+                  a field. The count and its button hold one line, because
+                  they are the pair; the reason takes a line of its own until
+                  there is room for it beside them. */}
+              {/* Two rows, not three controls crammed into one. The count
+                  and the button that applies it are a pair and hold a line;
+                  the reason is a sentence and gets its own. It used to share
+                  the line and was squeezed to an oval a few pixels wide that
+                  nobody could see was a field at all. The width is set
+                  inline because inputCls leads with w-full, which no Tailwind
+                  width put after it in the class list reliably beats. */}
+              <div className="flex items-center gap-2">
                 <input
                   inputMode="decimal"
                   value={countTo}
                   onChange={(e) => setCountTo(e.target.value)}
                   placeholder="Counted"
-                  className={inputCls + " w-28"}
-                />
-                <input
-                  value={countNote}
-                  onChange={(e) => setCountNote(e.target.value)}
-                  placeholder="Reason (e.g. stocktake, breakage)"
-                  className={inputCls + " flex-1"}
+                  aria-label="Counted quantity"
+                  style={{ width: "6.5rem" }}
+                  className={inputCls + " flex-none"}
                 />
                 <button
                   onClick={recount}
                   disabled={busy || !countTo}
-                  className="px-4 rounded-xl bg-colophon text-paper text-sm disabled:opacity-40"
+                  className="flex-none px-4 py-2 rounded-xl bg-colophon text-paper text-sm disabled:opacity-40"
                 >
                   Apply
                 </button>
               </div>
+              <input
+                value={countNote}
+                onChange={(e) => setCountNote(e.target.value)}
+                placeholder="Reason (e.g. stocktake, breakage)"
+                aria-label="Reason for the count"
+                className={inputCls}
+              />
 
               {history && history.length > 0 && (
                 <ul className="text-xs text-stone-600 divide-y divide-stone-200 max-h-40 overflow-y-auto">

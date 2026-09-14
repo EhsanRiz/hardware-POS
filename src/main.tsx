@@ -8,6 +8,7 @@ import { installErrorReporting } from "./lib/errorReport";
 import "./index.css";
 import { startUpdateWatch } from "./lib/appUpdate";
 import { publishSlipMetrics } from "./lib/config";
+import { installNumberSelect } from "./lib/numberFields";
 // Catches the browser's install offer, which fires before React mounts.
 import "./lib/install";
 
@@ -28,6 +29,8 @@ async function boot() {
   // Errors go to the server from here on, the line permitting. Installed
   // before React mounts so a crash in the first render is heard too.
   installErrorReporting();
+  // Tapping a number field selects what is in it, everywhere.
+  installNumberSelect();
 
   if (import.meta.env.VITE_DEMO === "1") {
     const { installDemoBackend } = await import("./demo/backend");
