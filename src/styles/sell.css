@@ -2965,6 +2965,121 @@ tr.is-void td:last-child { text-decoration: none; }
   .phone-body .acc-empty { padding: 20px 0; }
 }
 
+/* ---- The back office on a phone --------------------------------------- */
+/*
+ * Manage is the tablet's back office, opened whole on a phone. Its screens
+ * are wide tables, and at 390px they were words broken across lines with
+ * half the screen empty beside them. The three a manager actually opens
+ * from away are rebuilt here as cards. Keyed on the DEVICE, not the window:
+ * a till in a narrow window still has the printer and the drawer, and still
+ * wants its table.
+ */
+
+/* A sale: its number and what it came to on one line, the rest under it. */
+.admin-screen.is-phone .sale-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 3px;
+  align-items: baseline;
+  padding: 12px 14px;
+}
+.admin-screen.is-phone .sale-main { display: contents; }
+.admin-screen.is-phone .sale-main > :first-child { grid-column: 1; grid-row: 1; font-weight: 600; }
+.admin-screen.is-phone .sale-main > :last-child { grid-column: 1 / -1; grid-row: 2; }
+.admin-screen.is-phone .sale-figs { grid-column: 2; grid-row: 1; justify-self: end; }
+.admin-screen.is-phone .sale-total { width: auto; font-size: 16px; font-weight: 600; }
+.admin-screen.is-phone .sale-actions { grid-column: 1 / -1; grid-row: 3; gap: 18px; }
+.admin-screen.is-phone .sale-actions:empty { display: none; }
+/* The discount breakdown, when it is opened, spans the card. */
+.admin-screen.is-phone .sale-row > div { grid-column: 1 / -1; }
+
+/* A product: the picture, the name and what it sells for, in that order. */
+.admin-screen.is-phone .cat-table thead { display: none; }
+.admin-screen.is-phone .cat-table tbody tr {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  padding: 10px 12px;
+}
+.admin-screen.is-phone .cat-table td { padding: 0; border: 0; }
+.admin-screen.is-phone .cat-photo { grid-column: 1; grid-row: 1 / span 2; }
+.admin-screen.is-phone .cat-name { grid-column: 2; grid-row: 1; font-size: 15px; }
+.admin-screen.is-phone .cat-sku { grid-column: 2; grid-row: 2; }
+.admin-screen.is-phone .cat-retail {
+  grid-column: 3;
+  grid-row: 1;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 600;
+}
+.admin-screen.is-phone .cat-stock { grid-column: 3; grid-row: 2; text-align: right; }
+.admin-screen.is-phone .cat-stock::after {
+  content: " on hand";
+  font-size: 11px;
+  color: var(--color-neutral-700);
+}
+/* Trade, cost and margin are a tap away in the editor. Three more figures on
+   a 390px card is what made it a wall of numbers rather than a product. */
+.admin-screen.is-phone .cat-trade,
+.admin-screen.is-phone .cat-cost,
+.admin-screen.is-phone .cat-dept,
+.admin-screen.is-phone .cat-unit { display: none; }
+/* Nothing to explain: there are no columns on a card. */
+.admin-screen.is-phone .cat-legend { display: none; }
+/* Five filters wrapped onto three rows and ate a third of the screen. Same
+   five, smaller, in two. */
+.admin-screen.is-phone .cat-filters { gap: 6px; }
+.admin-screen.is-phone .cat-filters button { padding: 4px 10px; font-size: 13px; }
+.admin-screen.is-phone .cat-filters select { margin-left: 0; font-size: 13px; }
+
+/*
+ * The day so far, over the tiles. The home was a launcher with no figures on
+ * it, so a manager opened a tile to find out whether it was worth opening.
+ * The takings take the full width because that is the question; the counts
+ * beside them are taps into the tile that answers them.
+ */
+.phone-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 16px 6px;
+}
+.phone-figure {
+  flex: 1 1 0;
+  min-width: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.phone-figure.is-big { flex: 1 1 100%; }
+.phone-figure.is-tap { cursor: pointer; }
+.phone-figure-label {
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-700);
+}
+.phone-figure-value {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.phone-figure.is-big .phone-figure-value { font-size: 30px; font-weight: 700; }
+.phone-figure-sub { font-size: 12px; color: var(--color-neutral-700); }
+
 .phone-hits { list-style: none; margin: 0; padding: 0 0 20px; }
 .phone-hit {
   display: flex;

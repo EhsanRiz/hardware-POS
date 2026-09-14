@@ -1030,6 +1030,30 @@ export async function createDelivery(args: {
   return data as DeliveryRow;
 }
 
+/** The figures a phone opens on. Null where this person may not see one. */
+export interface PhoneSummary {
+  sales_count: number | null;
+  taken: number | null;
+  low_stock: number | null;
+  deliveries_out: number | null;
+}
+
+/**
+ * The day so far, for the phone's home screen. Who is asking is settled by
+ * the phone's own token, which names its owner, so there is no PIN and no
+ * user id to send — and nothing comes back that this person may not open in
+ * full a tap later. See 0097.
+ */
+export async function phoneSummary(from: Date, to: Date): Promise<PhoneSummary> {
+  const { data, error } = await supabase.rpc("pos_phone_summary", {
+    p_register_token: requireToken(),
+    p_from: from.toISOString(),
+    p_to: to.toISOString(),
+  });
+  if (error) throw error;
+  return data as PhoneSummary;
+}
+
 /** Where the Deliveries screen keeps the last list the line gave. */
 export const DELIVERIES_CACHE_KEY = "deliveries.list";
 

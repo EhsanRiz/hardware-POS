@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { phoneSummary, type PhoneSummary } from "../lib/api";
+import { money } from "../lib/money";
+import { rangeBounds } from "../lib/sales";
 import InnovaMark from "./InnovaMark";
 import InstallButton from "./InstallButton";
 import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
@@ -142,6 +146,29 @@ export default function PhoneHome({
   // trusting it.
   const updateReady = useUpdateReady();
 
+  // The day so far, over the tiles. A launcher with no figures on it made a
+  // manager open a tile to learn whether it was worth opening. Only what
+  // this person may see comes back (0097); the line being down shows none of
+  // it rather than yesterday's, which would be worse than nothing.
+  const [figures, setFigures] = useState<PhoneSummary | null>(null);
+  useEffect(() => {
+    if (!online) return;
+    let dead = false;
+    const load = () => {
+      const { from, to } = rangeBounds("today");
+      phoneSummary(from, to)
+        .then((f) => !dead && setFigures(f))
+        .catch(() => undefined);
+    };
+    load();
+    // A phone sits on a counter for an hour between glances.
+    const timer = setInterval(load, 120_000);
+    return () => {
+      dead = true;
+      clearInterval(timer);
+    };
+  }, [online]);
+
   return (
     <div className="phone-home">
       <header className="phone-home-head">
@@ -173,6 +200,35 @@ export default function PhoneHome({
             screen is what makes it "their phone" rather than a web page. */}
         <InstallButton className="mt-3" />
       </div>
+
+      {online && figures && (
+        <div className="phone-figures" aria-label="The day so far">
+          {figures.taken != null && (
+            <div className="phone-figure is-big">
+              <span className="phone-figure-label">Taken today</span>
+              <span className="phone-figure-value">{money(figures.taken)}</span>
+              <span className="phone-figure-sub">
+                {figures.sales_count} {figures.sales_count === 1 ? "sale" : "sales"}
+              </span>
+            </div>
+          )}
+          {figures.deliveries_out != null && figures.deliveries_out > 0 && (
+            <button
+              className="phone-figure is-tap"
+              onClick={() => onPick("deliveries")}
+            >
+              <span className="phone-figure-label">Still to go</span>
+              <span className="phone-figure-value">{figures.deliveries_out}</span>
+            </button>
+          )}
+          {figures.low_stock != null && figures.low_stock > 0 && (
+            <button className="phone-figure is-tap" onClick={() => onPick("low")}>
+              <span className="phone-figure-label">Running low</span>
+              <span className="phone-figure-value">{figures.low_stock}</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {tiles.length === 0 ? (
         <p className="acc-note">

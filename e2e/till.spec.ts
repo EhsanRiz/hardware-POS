@@ -7121,7 +7121,17 @@ test("a part payment leaves the balance where somebody can still see it", async 
 });
 
 test("a statement opens on what was owed before it, and adds up to what is owed now", async ({ page }) => {
-  const daysAgo = (n: number) => new Date(Date.now() - n * 864e5).toISOString();
+  // The clock is pinned, because every figure below is arithmetic on it and
+  // two of them straddle a boundary that moves with the calendar. "Last 3
+  // months" runs from the FIRST of the month two months back, which is 75
+  // days before the 14th of a month — so the 75-day-old invoice was outside
+  // the window on the 13th and inside it on the 14th, and this test passed
+  // or failed by the date it was run on. The ageing buckets below are
+  // counted from today too, so no single offset is safe on every day of the
+  // year; the fixed date is.
+  const NOW = new Date("2026-09-13T10:00:00Z");
+  await page.clock.setFixedTime(NOW);
+  const daysAgo = (n: number) => new Date(NOW.getTime() - n * 864e5).toISOString();
   be.customers.push({
     id: "k9", code: "TRD-009", name: "Molefe Builders",
     phone: "082 444 7788", is_trade: true, credit_limit: 50000,
@@ -9092,4 +9102,190 @@ test("Manage opens with the line down, against the PIN this device already knows
   await expect(gate).toHaveCount(0);
   await expect(page.locator(".admin-offline")).toContainText(/The line is down/);
   await expect(page.getByRole("button", { name: "Catalogue" })).toBeVisible();
+});
+
+/*
+ * The back office, opened on a phone.
+ *
+ * Manage is the tablet's back office and the phone opens it whole. Its
+ * screens were wide tables at 390px: an invoice number broken in half with
+ * the right side of the card empty, a catalogue of nine columns flowing off
+ * the edge. The three a manager opens from away are cards now, and the
+ * sections that only make sense at the counter are not offered at all.
+ */
+async function openManageOnPhone(
+  page: import("@playwright/test").Page, section: string
+) {
+  await page.getByRole("button", { name: /^Today/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  // The gate's own title is a heading called "Manage" as well, so the back
+  // office is waited for by its screen and not by its name.
+  await expect(page.locator(".admin-screen")).toBeVisible();
+  await page.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("button", { name: section, exact: true }).click();
+}
+
+test("on a phone a sale is a card, and the counter's own actions are not on it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  // One sale to read back, rung on the till before the phone looks at it.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  const phoneContext = await page.context().browser()!.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const phone = await phoneContext.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be);
+  await openManageOnPhone(phone, "Sales");
+
+  const row = phone.locator("li.sale-row").first();
+  await expect(row).toContainText("INV-000001");
+  // A card, not a row: the number and the amount on one line, the rest under.
+  expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("grid");
+  const number = await row.locator(".sale-main > :first-child").boundingBox();
+  const total = await row.locator(".sale-total").boundingBox();
+  expect(Math.abs(number!.y - total!.y), "the number and the total share a line")
+    .toBeLessThanOrEqual(6);
+  expect(total!.x, "the amount is on the right").toBeGreaterThan(number!.x + 100);
+  // And nothing on it that needs the counter: the goods come back to the
+  // till, and the slip comes out of the printer there.
+  await expect(row.getByRole("button", { name: "Return" })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Reprint" })).toHaveCount(0);
+  // The page itself never scrolls sideways.
+  expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await phoneContext.close();
+});
+
+test("the till keeps Return and Reprint on the same list", async ({ page }) => {
+  // The pair above is about the phone, not about the feature: a manager at
+  // the counter still takes goods back and still reprints a slip.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+  await openManage(page);
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  const row = page.locator("li.sale-row").first();
+  await expect(row.getByRole("button", { name: "Return" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Reprint" })).toBeVisible();
+  // And it is still a row there, not a card.
+  expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("flex");
+});
+
+test("on a phone the catalogue is a card each, priced, with no columns to explain", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  await openManageOnPhone(page, "Catalogue");
+
+  const row = page.locator(".cat-table tbody tr").first();
+  await expect(row).toBeVisible();
+  expect(await page.locator(".cat-table thead").evaluate((el) => getComputedStyle(el).display)).toBe("none");
+  expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("grid");
+  // The name and the price on the first line, the code under the name.
+  const name = (await row.locator(".cat-name").boundingBox())!;
+  const retail = (await row.locator(".cat-retail").boundingBox())!;
+  const sku = (await row.locator(".cat-sku").boundingBox())!;
+  expect(Math.abs(name.y - retail.y), "name and price share a line").toBeLessThanOrEqual(6);
+  expect(retail.x, "the price is on the right").toBeGreaterThan(name.x);
+  expect(sku.y, "the code sits under the name").toBeGreaterThan(name.y);
+  // Trade and cost are a tap away in the editor, not a third column of
+  // figures on a 390px card. And there are no columns left to explain.
+  expect(await row.locator(".cat-trade").evaluate((el) => getComputedStyle(el).display)).toBe("none");
+  await expect(page.locator(".cat-legend")).toBeHidden();
+  await expect(page.getByRole("button", { name: /What the columns mean/ })).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test("a phone opens on the day so far, and the figures are taps into the tiles", async ({ page }) => {
+  // Something to count: a sale on the till, and a load still to go out.
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s0", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd, Maseru", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  const phoneContext = await page.context().browser()!.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const phone = await phoneContext.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be);
+
+  // The home answers "how is today" before a tile is tapped.
+  const figures = phone.locator(".phone-figures");
+  await expect(figures).toBeVisible();
+  await expect(figures).toContainText("Taken today");
+  await expect(figures).toContainText("1 sale");
+  await expect(figures).toContainText("Still to go");
+  // The figures sit above the tiles, which are still the way in.
+  const panel = (await figures.boundingBox())!;
+  const tiles = (await phone.locator(".phone-tiles").boundingBox())!;
+  expect(panel.y).toBeLessThan(tiles.y);
+  // And a count is a way in of its own: the load still to go opens Deliveries.
+  await figures.getByRole("button", { name: /Still to go/ }).click();
+  await expect(phone.getByRole("heading", { name: "Deliveries" })).toBeVisible();
+  await phoneContext.close();
+});
+
+test("a counter hand's phone shows what is still to go and not the takings", async ({ page }) => {
+  // The same call, scoped by whose phone it is: the money is the owner's
+  // business, and a counter hand's home says so by not having it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s0", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd, Maseru", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Sam", delivered_by_name: null, delivered_at: null,
+  });
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+  const figures = page.locator(".phone-figures");
+  await expect(figures).toContainText("Still to go");
+  await expect(figures).not.toContainText("Taken today");
+  await expect(figures).not.toContainText("Running low");
+});
+
+test("a phone is not offered the sections that only make sense at a desk", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  await openManageOnPhone(page, "Cash-up");
+  // Cash-up is there, as history: a manager away from the shop wants to know
+  // whether last night closed clean.
+  await expect(page.getByText(/Earlier days/)).toBeVisible();
+  // But not the drawer work, which needs the cash in hand.
+  await expect(page.getByRole("heading", { name: "Open the drawer" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Count the drawer" })).toHaveCount(0);
+  await expect(page.getByText(/happen at the till, with the cash in hand/)).toBeVisible();
+
+  // A CSV file picker and the shop's VAT number are desk work, and are not
+  // in the list at all.
+  await page.getByRole("button", { name: "Sections" }).click();
+  const menu = page.getByRole("button", { name: "Catalogue", exact: true });
+  await expect(menu).toBeVisible();
+  await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Shop", exact: true })).toHaveCount(0);
+});
+
+test("the till still has every section, including the ones a phone drops", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Shop", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cash-up", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Open the drawer" })).toBeVisible();
 });

@@ -5665,4 +5665,61 @@ begin
     'the check is the server''s own');
 end $$;
 
+-- 0097: what a phone shows before anything is tapped ------------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_prod uuid; v_price numeric;
+  v_code text; v_mgr_phone text; v_emp_phone text; v_sale public.sales;
+  v_sum jsonb; v_items jsonb; v_pay jsonb;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
+  v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
+
+  -- A phone each: the manager reads reports, the counter hand does not.
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_mgr);
+  select token into v_mgr_phone from public.pos_enrol_device(v_code, 'Manager phone');
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+  select token into v_emp_phone from public.pos_enrol_device(v_code, 'Counter phone');
+
+  -- A till has the whole back office a tap away and is refused here — and
+  -- refused for BEING a till. (assert_refuses alone proved nothing: with the
+  -- check removed a till still fails, because its owner is null and the
+  -- lookup of that owner finds nobody.)
+  begin
+    perform public.pos_phone_summary(v_tok);
+    raise exception 'FAILED: a till asking for a phone summary — it was allowed';
+  exception when others then
+    perform assert(sqlerrm = 'This is not a personal device',
+      'a till is refused for being a till, got: ' || sqlerrm);
+  end;
+
+  -- One sale today, so there is something to count.
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay);
+
+  v_sum := public.pos_phone_summary(v_mgr_phone);
+  perform assert((v_sum->>'sales_count')::int >= 1, 'the manager sees the day''s count');
+  perform assert((v_sum->>'taken')::numeric >= v_price, 'and what came in');
+  perform assert(v_sum->>'low_stock' is not null, 'and what wants ordering');
+  perform assert(v_sum->>'deliveries_out' is not null, 'and what is still to go out');
+
+  -- The counter hand's own phone: the same call, and the money is not in it.
+  v_sum := public.pos_phone_summary(v_emp_phone);
+  perform assert(v_sum->>'taken' is null, 'a counter hand is not shown the takings');
+  perform assert(v_sum->>'sales_count' is null, 'nor the count');
+  perform assert(v_sum->>'low_stock' is null, 'nor what is low, which is not theirs either');
+  perform assert(v_sum->>'deliveries_out' is not null,
+    'but deliveries are open to everybody who can sign in, as the tile is');
+
+  -- It is the panel above the tiles, not a way to total a year.
+  perform assert_refuses(format(
+    'select public.pos_phone_summary(%L, %L::timestamptz, %L::timestamptz)',
+    v_mgr_phone, now() - interval '300 days', now()), 'a year asked for as a day');
+end $$;
+
 select 'all database tests passed' as result;

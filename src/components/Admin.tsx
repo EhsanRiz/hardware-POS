@@ -87,6 +87,9 @@ export default function Admin({
   // re-check the permission anyway; this is so a counter supervisor is not
   // shown a Staff tab that will only refuse them.
   const camera = useCamera();
+  // What this is running on. A phone gets card layouts and a shorter list of
+  // sections; the till keeps the tables it was designed for.
+  const phone = deviceKind() === "personal";
   const tabs = useMemo(() => {
     const t: { key: TabKey; label: string }[] = [];
     // Catalogue and Bulk import were unconditional, which was harmless while
@@ -95,7 +98,9 @@ export default function Admin({
     // be shown a catalogue screen that would only refuse them.
     if (can(user, "manage_catalogue")) {
       t.push({ key: "catalogue", label: "Catalogue" });
-      t.push({ key: "import", label: "Bulk import" });
+      // Bulk import is a CSV file picker and a column-mapping table. That is
+      // desktop work, and offering it on a phone only wastes a tap.
+      if (!phone) t.push({ key: "import", label: "Bulk import" });
     }
     // Photographing a shelf needs a lens. The shop's counter machine is a
     // PinnPOS all-in-one with no camera in it, so this was a tab that could
@@ -121,13 +126,18 @@ export default function Admin({
     if (deviceKind() === "personal" && can(user, "approve_discount")) {
       t.push({ key: "approvals", label: "Approvals" });
     }
+    // Cash-up stays on a phone, but as history only: counting a drawer needs
+    // the cash in hand (see CashUp). What a manager wants from away is
+    // whether last night closed clean.
     if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
     if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
     if (can(user, "view_reports")) t.push({ key: "tillai", label: "TillAI" });
     if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
-    if (can(user, "manage_settings")) t.push({ key: "shop", label: "Shop" });
+    // The shop's address, VAT number and printer width: set once, on a
+    // keyboard, and never from an aisle.
+    if (can(user, "manage_settings") && !phone) t.push({ key: "shop", label: "Shop" });
     return t;
-  }, [user, camera]);
+  }, [user, camera, phone]);
 
   // The first tab this person may actually open — a shelf-only user's Manage
   // is the camera, not a catalogue that would refuse to load.
@@ -286,7 +296,11 @@ export default function Admin({
     // 100dvh, not just inset-0: a phone's address bar overlays the layout
     // viewport, so the bottom of the last card sat underneath it with no way to
     // scroll clear. The dynamic unit tracks the chrome as it comes and goes.
-    <div className="fixed inset-0 h-[100dvh] bg-paper z-40 flex flex-col">
+    <div
+      className={`admin-screen fixed inset-0 h-[100dvh] bg-paper z-40 flex flex-col${
+        phone ? " is-phone" : ""
+      }`}
+    >
       <header className="flex items-start sm:items-center gap-2 px-4 py-3 bg-colophon flex-wrap">
         {/* On a phone the tabs collapse behind this burger. A strip of seven
             scrolled sideways there, and the far tabs — Staff and Shop, the
@@ -441,7 +455,7 @@ export default function Admin({
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 px-3 pb-3 bg-white border-b border-stone-200">
+          <div className="cat-filters flex flex-wrap items-center gap-2 px-3 pb-3 bg-white border-b border-stone-200">
             {(
               [
                 ["all", `All ${products.length}`],
@@ -492,7 +506,9 @@ export default function Admin({
               Tooltips would not do: nobody can hover on a tablet. One line on
               a tablet; on a phone it sits behind a tap so the list starts
               higher. */}
-          <div className="px-3 py-1.5 bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
+          {/* On a phone there are no columns to explain — the row is a card
+              with each figure beside its name — so the legend goes entirely. */}
+          <div className="cat-legend px-3 py-1.5 bg-stone-50 border-b border-stone-200 text-xs text-stone-500">
             <button
               type="button"
               className="sm:hidden underline"
@@ -526,7 +542,7 @@ export default function Admin({
             {loading ? (
               <p className="p-6 text-center text-stone-500">Loading…</p>
             ) : (
-              <table className="w-full text-sm">
+              <table className="cat-table w-full text-sm">
                 <thead className="sticky top-0 bg-stone-100 text-stone-600 text-left">
                   <tr>
                     <th className="p-2 font-medium sr-only">Photo</th>
@@ -562,7 +578,7 @@ export default function Admin({
                         className="border-b border-stone-100 cursor-pointer even:bg-stone-50/70 hover:bg-amber-50"
                       >
                         {/* The catalogue shows what the till will show. */}
-                        <td className="p-2">
+                        <td className="cat-photo p-2">
                           {imageSrc(p.image_url) ? (
                             <img
                               src={imageSrc(p.image_url)!}
@@ -574,7 +590,7 @@ export default function Admin({
                             <span className="block w-10 h-10 rounded border border-dashed border-stone-200" />
                           )}
                         </td>
-                        <td className="p-2 font-mono text-xs whitespace-nowrap">
+                        <td className="cat-sku p-2 font-mono text-xs whitespace-nowrap">
                           {p.sku}
                           {/* The barcode under the code, because this week's
                               question is "will a gun find it?" */}
@@ -582,7 +598,7 @@ export default function Admin({
                             {p.barcode ?? "no barcode"}
                           </span>
                         </td>
-                        <td className="p-2">
+                        <td className="cat-name p-2">
                           <span className="line-clamp-2" title={p.name}>{p.name}</span>
                           {!p.active && (
                             <span className="ml-2 align-middle text-[11px] font-medium
@@ -591,18 +607,18 @@ export default function Admin({
                             </span>
                           )}
                         </td>
-                        <td className="p-2 text-stone-500 hidden lg:table-cell">
+                        <td className="cat-dept p-2 text-stone-500 hidden lg:table-cell">
                           {p.category_name ?? "—"}
                         </td>
-                        <td className="p-2 text-stone-500 hidden lg:table-cell">{p.unit_code}</td>
-                        <td className="p-2 text-right tabular-nums whitespace-nowrap">
+                        <td className="cat-unit p-2 text-stone-500 hidden lg:table-cell">{p.unit_code}</td>
+                        <td className="cat-retail p-2 text-right tabular-nums whitespace-nowrap">
                           {money(p.price_retail)}
                         </td>
-                        <td className="p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
+                        <td className="cat-trade p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
                           {p.price_trade != null ? money(p.price_trade) : "—"}
                         </td>
                         {canSeeCost && (
-                          <td className="p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
+                          <td className="cat-cost p-2 text-right tabular-nums whitespace-nowrap text-stone-500">
                             {p.cost != null ? money(p.cost) : "—"}
                             {margin != null && (
                               <span
@@ -616,7 +632,7 @@ export default function Admin({
                           </td>
                         )}
                         <td
-                          className={`p-2 pr-4 text-right tabular-nums whitespace-nowrap ${
+                          className={`cat-stock p-2 pr-4 text-right tabular-nums whitespace-nowrap ${
                             low ? "text-amber-600 font-medium" : ""
                           }`}
                         >

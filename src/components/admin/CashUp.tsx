@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { deviceKind } from "../../lib/device";
 import {
   addMovement,
   closeSession,
@@ -47,6 +48,10 @@ function dayBounds(iso: string): { from: Date; to: Date } {
  * marking its own homework.
  */
 export default function CashUp({ pin }: { pin: string }) {
+  // A drawer is counted with the cash in hand, at the till. What a manager
+  // wants from away is whether last night closed clean, so a phone gets the
+  // history and none of the drawer work.
+  const phone = deviceKind() === "personal";
   const [session, setSession] = useState<CashSession | null>(null);
   const [past, setPast] = useState<CashSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,7 +144,12 @@ export default function CashUp({ pin }: { pin: string }) {
         </p>
       )}
 
-      {loading ? (
+      {phone ? (
+        <p className="max-w-2xl text-sm text-stone-500">
+          Opening, counting and closing a drawer happen at the till, with the
+          cash in hand. Here are the days already closed.
+        </p>
+      ) : loading ? (
         <p className="text-stone-500 text-sm">Loading…</p>
       ) : !session ? (
         <div className="max-w-md bg-white rounded-xl border border-stone-200 p-5 space-y-3">

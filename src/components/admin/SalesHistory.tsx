@@ -15,6 +15,7 @@ import type { Sale, SaleItem, User } from "../../lib/types";
 import { can } from "../../lib/permissions";
 import ManagerPinModal from "../ManagerPinModal";
 import ReturnSheet from "./ReturnSheet";
+import { deviceKind } from "../../lib/device";
 import SaleDetail from "../SaleDetail";
 import { fmtDayMonthTime } from "../../lib/dates";
 
@@ -72,6 +73,8 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
   const [releasing, setReleasing] = useState<SaleRow | null>(null);
   // The sale taking a return, if any.
   const [returning, setReturning] = useState<SaleRow | null>(null);
+  // A phone is for reading the day back, not for working the counter.
+  const phone = deviceKind() === "personal";
   // A row is a door, not only a line: tapping it opens the sale.
   const [detail, setDetail] = useState<SaleRow | null>(null);
   // Which sale has its discounts open, and the lines once they have been
@@ -288,10 +291,10 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
             {data.rows.map((s) => (
               <li
                 key={s.id}
-                className="px-4 py-3 flex items-center gap-3 flex-wrap cursor-pointer even:bg-stone-50/70 hover:bg-amber-50"
+                className="sale-row px-4 py-3 flex items-center gap-3 flex-wrap cursor-pointer even:bg-stone-50/70 hover:bg-amber-50"
                 onClick={() => setDetail(s)}
               >
-                <span className="flex-1 min-w-0">
+                <span className="sale-main flex-1 min-w-0">
                   <span className="block">
                     <span className={s.status === "voided" ? "line-through text-stone-400" : ""}>
                       {s.doc_number ?? "(no invoice number)"}
@@ -333,16 +336,19 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                   </span>
                 </span>
 
-                <span className="text-sm text-stone-600">
-                  {TENDER_LABEL[s.payment_method ?? ""] ?? s.payment_method ?? ""}
+                <span className="sale-figs flex items-baseline gap-3">
+                  <span className="sale-pay text-sm text-stone-600">
+                    {TENDER_LABEL[s.payment_method ?? ""] ?? s.payment_method ?? ""}
+                  </span>
+                  <span className="sale-total tabular-nums w-24 text-right">{money(s.total)}</span>
                 </span>
-                <span className="tabular-nums w-24 text-right">{money(s.total)}</span>
 
                 {/* A sale parked for approval had nowhere to go. The RPC to
                     release one has existed since 0004 and nothing ever called
                     it, so "awaiting approval" was a label with no exit — the
                     sale sat there with no invoice number and its stock never
                     came off the shelf. */}
+                <span className="sale-actions flex items-center gap-3">
                 {s.status === "pending_approval" && (
                   <button
                     className="text-sm text-gold-700 underline underline-offset-2"
@@ -371,8 +377,13 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                 {/* Returns live where the invoice is found, because the
                     customer arrives holding the slip. Only on completed
                     sales, and only for the right that voids — the manager
-                    called to the counter. */}
-                {s.status === "completed" && can(user, "void_refund") && (
+                    called to the counter.
+
+                    Not on a phone: taking goods back needs them on the
+                    counter and the cash in the drawer, and the manager
+                    holding the phone is by definition somewhere else. The
+                    row still opens, which is what a phone is for. */}
+                {!phone && s.status === "completed" && can(user, "void_refund") && (
                   <button
                     className="text-sm text-red-800 underline underline-offset-2"
                     onClick={(e) => { e.stopPropagation(); setReturning(s); }}
@@ -381,13 +392,18 @@ export default function SalesHistory({ pin, user }: { pin: string; user: User | 
                   </button>
                 )}
 
-                <button
-                  className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
-                  disabled={printing === s.id}
-                  onClick={(e) => { e.stopPropagation(); void reprint(s); }}
-                >
-                  {printing === s.id ? "Printing…" : "Reprint"}
-                </button>
+                {/* Nor a reprint: the slip comes out of the printer at the
+                    counter, which is not where this person is standing. */}
+                {!phone && (
+                  <button
+                    className="text-sm text-stone-600 underline underline-offset-2 disabled:opacity-40"
+                    disabled={printing === s.id}
+                    onClick={(e) => { e.stopPropagation(); void reprint(s); }}
+                  >
+                    {printing === s.id ? "Printing…" : "Reprint"}
+                  </button>
+                )}
+                </span>
 
                 {/* Where the money went, and on whose say-so. The totals at the
                     top answer "how much came off today"; this answers the

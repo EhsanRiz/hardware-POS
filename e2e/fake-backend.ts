@@ -2503,6 +2503,34 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_search_products":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(searchProducts(String(body.p_query ?? "")));
+      // 0097: the figures a phone opens on. Who is asking is the token's
+      // owner, and only what that person may see comes back.
+      case "rpc/pos_phone_summary": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (reg.kind !== "personal" || !reg.assigned_to) {
+          return fail("This is not a personal device");
+        }
+        const owner = Object.values(USERS).find((u) => u.row.id === reg.assigned_to);
+        const perms = owner?.row.permissions ?? [];
+        const reads = perms.includes("view_reports");
+        const stocks = perms.includes("manage_inventory") || perms.includes("manage_purchasing");
+        const from = new Date(String(body.p_from ?? new Date().toISOString())).getTime();
+        const to = new Date(String(body.p_to ?? new Date().toISOString())).getTime();
+        if (to <= from || to - from > 2 * 86400_000) return fail("That is not a day");
+        const inDay = be.sales.filter((x) => {
+          const at = new Date(x.created_at ?? new Date().toISOString()).getTime();
+          return !x.voided && at >= from && at < to;
+        });
+        return json({
+          sales_count: reads ? inDay.length : null,
+          taken: reads ? Math.round(inDay.reduce((t, x) => t + x.total, 0) * 100) / 100 : null,
+          low_stock: stocks
+            ? PRODUCTS.filter((p) => p.stock_qty != null && p.reorder_level != null
+                && p.stock_qty <= p.reorder_level).length
+            : null,
+          deliveries_out: be.deliveries.filter((d) => d.status === "pending").length,
+        });
+      }
       case "rpc/pos_reserve_doc_numbers": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const type = String(body.p_doc_type ?? "");

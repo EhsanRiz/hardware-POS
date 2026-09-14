@@ -360,6 +360,31 @@ On a phone, the back-office lists (Deliveries, the stock room) are cards
 rather than tables: `data-label` on a cell is the heading it stands under,
 and the rule in `sell.css` under `.phone-body` does the rest.
 
+## The phone
+
+A phone opens on **the day so far** — what the shop has taken, what is still
+to go out, what is running low — and the tiles under it are the way in. The
+figures come from one call (`pos_phone_summary`, 0097) that settles who is
+asking from the phone's own token: a personal register carries its owner, so
+only what that person may see comes back, and a till is refused. No PIN,
+because nothing here is more than a count of something they can open in full
+a tap later. With the line down the panel shows nothing rather than
+yesterday's figures.
+
+Inside Manage, a phone gets its own shape (`.admin-screen.is-phone`):
+
+- **Sales** and the **Catalogue** are a card each rather than a wide table.
+- **Return** and **Reprint** are not on a phone's sale: the goods come back to
+  the counter and the slip comes out of the printer there.
+- **Trade and cost** are off the catalogue card. They are on the editor, a tap
+  away; three more figures at 390px made it a wall of numbers.
+- **Cash-up** is the history only. Counting a drawer needs the cash in hand.
+- **Bulk import** and **Shop** are not offered at all. A CSV file picker and
+  the shop's VAT number are desk work.
+
+All of it keys on the DEVICE, not the window width: a till in a narrow window
+still has the printer and the drawer, and still wants its tables.
+
 ## Fixing a buyer at the counter
 
 Each row in "Who's buying?" has a pencil. It opens the buyer's name, phone
