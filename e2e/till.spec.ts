@@ -9899,3 +9899,103 @@ test("the reports are chosen from a grouped list, not four rows of chips", async
   // The page never runs off the side of the phone.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+/**
+ * The bell: what needs somebody, right now.
+ *
+ * Not a log of what happened — 0100 argues that out — but the conditions
+ * themselves, read out of the shop's own records each time. Which makes the
+ * two things worth pinning here: that each row is a way in to the screen that
+ * clears it, and that a till, which is nobody's device and stands where
+ * customers can read it, is told the counter's work and none of the back
+ * office's.
+ */
+test("the bell tells the counter what is waiting, and is the way to it", async ({ page }) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  be.deliveries.push({
+    id: "b1", doc_number: "DEL-000041", sale_id: "s0", customer_name: "Today Buyer",
+    address: "1 Main Rd", deliver_on: today, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  be.deliveries.push({
+    id: "b2", doc_number: "DEL-000042", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: yesterday, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  const bell = page.locator("button.bell");
+  await expect(bell).toHaveAttribute("aria-label", "2 things need you");
+  await bell.click();
+
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toContainText("1 delivery should already have gone");
+  await expect(panel).toContainText("1 delivery goes out today");
+  // The counter is not the back office, and this screen is readable from the
+  // customer's side of it.
+  await expect(panel).not.toContainText("reorder level");
+  await expect(panel).not.toContainText("waiting to be priced");
+
+  // A row is a way in, not a headline.
+  await panel.getByRole("button", { name: /should already have gone/ }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByPlaceholder(/Find a delivery/)).toBeVisible();
+});
+
+test("with the line down the bell keeps the sales this till is holding", async ({ page }) => {
+  // Something for the shop's half to hold, so that losing it is visible: a
+  // load that should already have gone.
+  be.deliveries.push({
+    id: "b4", doc_number: "DEL-000044", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: new Date(Date.now() - 864e5).toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  // Read while there is a line, so the test is about losing it rather than
+  // never having had it.
+  await expect(page.locator("button.bell")).toHaveAttribute("aria-label", /1 thing needs you/);
+  be.offline = true;
+  await page.context().setOffline(true);
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  await page.locator("button.bell").click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  // The device's own news still works, because it never needed the line.
+  await expect(panel).toContainText("1 sale still to reach the server");
+  // And the shop's half is gone rather than stale: a figure from twenty
+  // minutes ago, shown as though it were now, is worse than no figure.
+  await expect(panel).not.toContainText("delivery");
+});
+
+test("a phone's bell carries the work only its owner can do", async ({ page }) => {
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  be.deliveries.push({
+    id: "b3", doc_number: "DEL-000043", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: yesterday, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  const bell = page.locator("button.bell");
+  await expect(bell).toHaveAttribute("aria-label", /things need you/);
+  await bell.click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toContainText("1 delivery should already have gone");
+  // The owner's own device, so the ordering IS their business here.
+  await expect(panel).toContainText("1 item is at or below its reorder level");
+
+  // And it opens the stock room, which on a phone needs no PIN of its own.
+  await panel.getByRole("button", { name: /reorder level/ }).click();
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+});

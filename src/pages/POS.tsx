@@ -84,6 +84,7 @@ import TillAI from "../components/TillAI";
 import PairRegister from "../components/PairRegister";
 import ManagerPinModal from "../components/ManagerPinModal";
 import { BACK_OFFICE, forgetPins, ownerProved, recall, remember } from "../lib/unlock";
+import { buildNotices, fetchNotices, type Notice, type NoticeCounts } from "../lib/notices";
 import CustomerPicker from "../components/sell/CustomerPicker";
 import LineItems from "../components/sell/LineItems";
 import PaymentColumn from "../components/sell/PaymentColumn";
@@ -349,6 +350,37 @@ export default function POS() {
   // A phone that has been put away asks for its owner's PIN again. The
   // till does not: it is watched, shared, and takes money all day.
   const [locked, unlock] = useAwayLock(kind === "personal");
+
+  /**
+   * What needs somebody (lib/notices, 0100).
+   *
+   * Asked for here rather than in the header or the phone's home, because
+   * both of those want the same list and the device should ask once. The
+   * local half — sales queued or refused — comes from the sync state this
+   * screen already holds, which is why it keeps working with the line down
+   * while the shop's half honestly disappears rather than going stale.
+   */
+  const [noticeCounts, setNoticeCounts] = useState<NoticeCounts | null>(null);
+  useEffect(() => {
+    if (!online || !user) return;
+    let dead = false;
+    const load = () => {
+      fetchNotices(new Date())
+        .then((c) => !dead && setNoticeCounts(c))
+        .catch(() => undefined);
+    };
+    load();
+    const timer = setInterval(load, 120_000);
+    return () => {
+      dead = true;
+      clearInterval(timer);
+    };
+  }, [online, user]);
+
+  const notices = useMemo(
+    () => buildNotices(online ? noticeCounts : null, { pending, failed }),
+    [online, noticeCounts, pending, failed]
+  );
 
   // A phone belongs to one person, and the PIN they signed in with was proved
   // against the server by the sign-in itself. Asking for the same six digits
@@ -1193,6 +1225,32 @@ export default function POS() {
     else setSection("stock");
   }
 
+  /**
+   * A notice tapped goes to where the thing is fixed.
+   *
+   * The destinations are menu keys, so this is the same routing the menu
+   * itself goes through rather than a second way of moving about — and the
+   * two that are not back-office sections (the sync list, and the stock room
+   * behind its own PIN) are handled here for the same reason.
+   */
+  function goNotice(goes: Notice["goes"]) {
+    if (goes === "failed") {
+      setShowFailed(true);
+      return;
+    }
+    if (goes === "deliveries") {
+      if (kind === "personal") setPhoneScreen("deliveries");
+      else setSection("deliveries");
+      return;
+    }
+    if (goes === "stock") {
+      openStock(kind === "personal" ? "phone" : "till");
+      return;
+    }
+    setAdminTab(goes as TabKey);
+    openAdmin();
+  }
+
   /** Somebody leaving takes every proved PIN with them. */
   function signOut() {
     forgetPins();
@@ -1220,6 +1278,8 @@ export default function POS() {
         setSection(s);
       }}
       onShowFailed={() => setShowFailed(true)}
+      notices={notices}
+      onNotice={goNotice}
       onManage={() => openAdmin()}
       onSignOut={signOut}
       onCalculator={() => setShowCalc((v) => !v)}
@@ -1402,6 +1462,8 @@ export default function POS() {
           user={user}
           online={online}
           deviceName={registerName()}
+          notices={notices}
+          onNotice={goNotice}
           onSignOut={signOut}
           onPick={(key) => {
             if (key === "lookup") {

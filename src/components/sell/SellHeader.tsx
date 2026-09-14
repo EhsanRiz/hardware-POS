@@ -1,9 +1,11 @@
 import InnovaMark from "../InnovaMark";
+import NoticeBell from "../NoticeBell";
 import { CalcIcon, CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
 import { applyUpdate, useUpdateReady } from "../../lib/appUpdate";
 import { registerName } from "../../lib/device";
 import { roleTitle } from "../../lib/permissions";
 import { shopSettings } from "../../lib/settings";
+import type { Notice } from "../../lib/notices";
 import type { User } from "../../lib/types";
 
 /**
@@ -28,6 +30,8 @@ export default function SellHeader({
   onManage,
   onSignOut,
   onCalculator,
+  notices = [],
+  onNotice,
 }: {
   user: User | null;
   online: boolean;
@@ -47,6 +51,9 @@ export default function SellHeader({
   ) => void;
   onShowFailed: () => void;
   onManage: () => void;
+  /** What needs somebody, for the bell. */
+  notices?: Notice[];
+  onNotice?: (goes: Notice["goes"]) => void;
   onSignOut: () => void;
   /** Open or close the floating calculator. */
   onCalculator?: () => void;
@@ -154,6 +161,11 @@ export default function SellHeader({
           failed={failed}
           onShowFailed={onShowFailed}
         />
+
+        {/* What needs somebody. Beside the sync chip because they answer the
+            same kind of question — is anything wrong that I cannot see from
+            here — and because the eye already goes to this corner. */}
+        {onNotice && <NoticeBell notices={notices} onGo={onNotice} />}
 
         {/* Which till this is — and only that. It carried the shop name too,
             which at 0.11em tracking in capitals came to 315px of header and

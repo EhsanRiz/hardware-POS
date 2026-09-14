@@ -3231,6 +3231,68 @@ tr.is-void td:last-child { text-decoration: none; }
   .phone-hit-img { display: none; }
 }
 
+/* ---- The bell: what needs somebody ------------------------------------ */
+.bell-wrap { position: relative; display: inline-flex; }
+.bell {
+  position: relative;
+  min-height: 38px;
+  min-width: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--color-surface, #fff);
+  cursor: pointer;
+}
+.bell:active { transform: translateY(1px); }
+/* A dot, not a number: the only question asked in passing is whether there is
+   anything new since the last look. */
+.bell-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-danger, #b3261e);
+  box-shadow: 0 0 0 2px var(--color-surface, #fff);
+}
+.bell-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  width: min(22rem, calc(100vw - 24px));
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.bell-none { margin: 0; padding: 14px 16px; color: var(--color-neutral-700); font-size: 14px; }
+.bell-list { list-style: none; margin: 0; padding: 0; }
+.bell-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--divider-row);
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.bell-list li:last-child .bell-row { border-bottom: 0; }
+.bell-row:active { background: var(--color-surface-2, #f5f3ee); }
+.bell-count { font-weight: 700; font-size: 16px; min-width: 1.4rem; }
+.bell-line { font-size: 14px; line-height: 1.35; }
+
 /* ---- One item, read properly ------------------------------------------ */
 .phone-item { padding: 16px 16px 32px; overflow-y: auto; }
 .phone-item-img {

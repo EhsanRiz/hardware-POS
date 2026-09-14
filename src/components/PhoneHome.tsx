@@ -8,8 +8,10 @@ import { useShopSettings } from "../lib/settings";
 import InnovaMark from "./InnovaMark";
 import InstallButton from "./InstallButton";
 import AppMenu from "./AppMenu";
+import NoticeBell from "./NoticeBell";
 import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
 import { can } from "../lib/permissions";
+import type { Notice } from "../lib/notices";
 import type { User } from "../lib/types";
 
 /**
@@ -32,11 +34,14 @@ import type { User } from "../lib/types";
  * quietly stale is worse than no figure at all.
  */
 export default function PhoneHome({
-  user, online, deviceName, onPick, onSignOut,
+  user, online, deviceName, notices = [], onNotice, onPick, onSignOut,
 }: {
   user: User;
   online: boolean;
   deviceName: string;
+  /** What needs somebody, for the bell beside the burger. */
+  notices?: Notice[];
+  onNotice?: (goes: Notice["goes"]) => void;
   onPick: (key: string) => void;
   onSignOut: () => void;
 }) {
@@ -100,6 +105,9 @@ export default function PhoneHome({
           <span className="sell-wordmark">Innova<span>POS</span></span>
         </div>
         <div className="flex items-center gap-2">
+          {/* What needs somebody, in the corner the eye already checks. The
+              figures below say how the day is going; this says what is stuck. */}
+          {onNotice && <NoticeBell notices={notices} onGo={onNotice} />}
           {updateReady && (
             <button
               className="head-update"

@@ -2594,6 +2594,57 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           deliveries_late: out.filter((d) => d.deliver_on < today).length,
         });
       }
+      case "rpc/pos_notices": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // 0100: a personal device is one person's and is gated by their
+        // effective permissions; a till is nobody's and gets the counter's
+        // own work. Modelled here rather than waved through, because who
+        // sees what IS the feature.
+        const counter = reg.kind !== "personal";
+        let has = (_p: string) => false;
+        if (!counter) {
+          if (!reg.assigned_to) return fail("This personal device has no owner");
+          const owner = Object.values(USERS).find((u) => u.row.id === reg.assigned_to);
+          if (!owner) return fail("That person is no longer on the staff");
+          const every = owner.row.role === "admin";
+          has = (perm: string) => every || (owner.row.permissions ?? []).includes(perm);
+        }
+        const day = String(body.p_today ?? new Date().toISOString().slice(0, 10));
+        const waiting = be.sales.filter(
+          (x) => x.discount_amount > 0 && !x.approved_by && !x.within_limit).length;
+        const pendingOut = be.deliveries.filter((d) => d.status === "pending");
+        const openHours = be.cashSession
+          ? (Date.now() - new Date(be.cashSession.opened_at).getTime()) / 3_600_000
+          : 0;
+        return json({
+          approvals: counter || has("approve_discount") ? waiting : null,
+          // The Deliveries screen has no permission on it, and neither do
+          // these two.
+          deliveries_late: pendingOut.filter((d) => d.deliver_on < day).length,
+          deliveries_today: pendingOut.filter((d) => d.deliver_on === day).length,
+          drawer_open: counter || has("cash_management")
+            ? (be.cashSession && openHours >= 18 ? 1 : 0)
+            : null,
+          low_stock: !counter && (has("manage_inventory") || has("manage_purchasing"))
+            ? PRODUCTS.filter((p) => p.stock_qty != null && p.reorder_level != null
+                && p.stock_qty <= p.reorder_level).length
+            : null,
+          staff_no_pin: !counter && has("manage_staff")
+            ? be.staff.filter((u) => u.status === "invited").length
+            : null,
+          // Shelf captures and lines born on a delivery carry active:false;
+          // the seed products carry no flag at all, which is "on the till".
+          unpriced: !counter && has("manage_catalogue")
+            ? PRODUCTS.filter(
+                (p) => (p as { active?: boolean }).active === false && !p.price_retail).length
+            : null,
+          orders_overdue: !counter && has("manage_purchasing")
+            ? be.purchaseOrders.filter(
+                (o) => (o.status === "sent" || o.status === "part")
+                  && !!o.expected_on && o.expected_on < day).length
+            : null,
+        });
+      }
       case "rpc/pos_reserve_doc_numbers": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const type = String(body.p_doc_type ?? "");

@@ -5867,4 +5867,120 @@ begin
     'one signature for pos_receive_stock');
 end $$;
 
+-- 0100: what needs somebody, and whose business each notice is ---------------
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_code text;
+  v_mgr_phone text; v_counter_phone text; v_narrow uuid;
+  v_n jsonb; v_till jsonb; v_sup uuid; v_po public.purchase_orders;
+  v_prod uuid; v_before int;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_mgr);
+  select token into v_mgr_phone from public.pos_enrol_device(v_code, 'Bell owner phone');
+
+  -- THE OWNER'S PHONE sees the shop whole, because they hold every right.
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert(v_n->>'approvals' is not null, 'the owner is told what waits on them');
+  perform assert(v_n->>'low_stock' is not null, 'and what is running out');
+  perform assert(v_n->>'staff_no_pin' is not null, 'and who cannot sign in yet');
+  perform assert(v_n->>'unpriced' is not null, 'and what the till cannot sell');
+  perform assert(v_n->>'orders_overdue' is not null, 'and which orders are late');
+  perform assert(v_n->>'drawer_open' is not null, 'and whether a drawer was left open');
+
+  -- An item photographed onto the shelf and never priced is one the till
+  -- cannot sell, which is why it is a notice and not a report.
+  select (v_n->>'unpriced')::int into v_before;
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               stock_qty, active, tax_code)
+  values ((select org_id from fixture), 'BELL-UNPRICED', 'Something nobody priced',
+          'ea', 0, null, false, 'standard');
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert_eq((v_n->>'unpriced')::int, v_before + 1,
+    'an unpriced line off the till is one more thing needing somebody');
+
+  -- An order the supplier has had since before it was due.
+  select id into v_sup from public.suppliers
+   where org_id = (select org_id from fixture) limit 1;
+  select id into v_prod from public.products
+   where org_id = (select org_id from fixture) and active limit 1;
+  select (v_n->>'orders_overdue')::int into v_before;
+  v_po := public.pos_po_create(v_tok, '1234', v_sup);
+  perform public.pos_po_set_line(v_tok, '1234', v_po.id, v_prod, 5, 50);
+  v_po := public.pos_po_send(v_tok, '1234', v_po.id);
+  update public.purchase_orders set expected_on = current_date - 2 where id = v_po.id;
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert_eq((v_n->>'orders_overdue')::int, v_before + 1,
+    'an order past its day is one more');
+  -- One that is not due yet is not late, which is the half that makes the
+  -- count mean anything.
+  update public.purchase_orders set expected_on = current_date + 7 where id = v_po.id;
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert_eq((v_n->>'orders_overdue')::int, v_before,
+    'and one still to come is not');
+
+  -- A delivery is late against the SHOP'S day, which is why the day travels.
+  perform assert((v_n->>'deliveries_late')::int >= 1, 'a load from last week is late today');
+  v_n := public.pos_notices(v_mgr_phone, current_date - 30);
+  perform assert_eq((v_n->>'deliveries_late')::int, 0,
+    'and on a day before it was due, it is not');
+
+  -- A COUNTER HAND'S PHONE: their own work, and none of the back office's.
+  -- A user of their own, because the fixture's employee may hold rights that
+  -- would make this prove nothing.
+  select id into v_narrow from public.pos_admin_invite_user(
+    v_tok, '1234', 'Bell Ned', '+27820000056', 'employee'::user_role,
+    array['take_payments']);
+  perform public.auth_set_pin('+27820000056', '246813');
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_narrow);
+  select token into v_counter_phone from public.pos_enrol_device(v_code, 'Bell Ned phone');
+
+  v_n := public.pos_notices(v_counter_phone, current_date);
+  perform assert(v_n->>'approvals' is null, 'a counter hand is not asked to approve');
+  perform assert(v_n->>'drawer_open' is null, 'nor to mind the drawer');
+  perform assert(v_n->>'low_stock' is null, 'nor to order stock');
+  perform assert(v_n->>'staff_no_pin' is null, 'nor to chase the staff list');
+  perform assert(v_n->>'unpriced' is null, 'nor to price the catalogue');
+  perform assert(v_n->>'orders_overdue' is null, 'nor to chase suppliers');
+  perform assert((v_n->>'deliveries_late')::int >= 1,
+    'but the loads are theirs, as the Deliveries screen is');
+
+  -- THE TILL is nobody's device: it gets the counter's own work — a customer
+  -- parked for a manager, the loads, a drawer left overnight — and not one
+  -- thing from the back office.
+  v_till := public.pos_notices(v_tok, current_date);
+  perform assert(v_till->>'approvals' is not null, 'the till is told a customer is waiting');
+  perform assert(v_till->>'drawer_open' is not null, 'and that a drawer is open');
+  perform assert((v_till->>'deliveries_late')::int >= 1, 'and what should have gone');
+  perform assert(v_till->>'low_stock' is null, 'the shared counter is not shown the ordering');
+  perform assert(v_till->>'staff_no_pin' is null, 'nor the staff list');
+  perform assert(v_till->>'unpriced' is null, 'nor the catalogue''s gaps');
+  perform assert(v_till->>'orders_overdue' is null, 'nor the supplier chasing');
+
+  -- Eighteen hours, the same rule the till's own banner uses: a drawer opened
+  -- this morning is the day's work, one opened yesterday is a thing nobody
+  -- closed. Put back afterwards, because the fixture's day carries on.
+  update public.cash_sessions set opened_at = now() - interval '20 hours'
+   where org_id = (select org_id from fixture) and closed_at is null;
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert((v_n->>'drawer_open')::int >= 1, 'a drawer open overnight wants somebody');
+  update public.cash_sessions set opened_at = now() - interval '2 hours'
+   where org_id = (select org_id from fixture) and closed_at is null;
+  v_n := public.pos_notices(v_mgr_phone, current_date);
+  perform assert_eq((v_n->>'drawer_open')::int, 0,
+    'and this morning''s drawer is just the day''s work');
+
+  -- A revoked device is nobody at all.
+  perform assert_refuses(
+    format('select public.pos_notices(%L, %L::date)', 'not-a-token', current_date),
+    'a token this shop never issued is refused');
+
+  -- One signature, as every function here has.
+  perform assert_eq((select count(*)::int from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'pos_notices'), 1,
+    'one signature for pos_notices');
+end $$;
+
 select 'all database tests passed' as result;
