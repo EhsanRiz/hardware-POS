@@ -10099,8 +10099,24 @@ async function stubPush(page: import("@playwright/test").Page) {
     const container = navigator.serviceWorker as unknown as Record<string, unknown>;
     Object.defineProperty(container, "ready", { get: () => Promise.resolve(registration) });
     container.getRegistration = async () => registration;
-    (window as unknown as { Notification: { requestPermission: () => Promise<string> } })
-      .Notification.requestPermission = async () => "granted";
+    // Headless Chrome answers "denied" to Notification.permission by default,
+    // which is a real state the app handles (it says so rather than offering
+    // a switch that cannot work) — but it is not the state THIS test is
+    // about, and leaving it to the browser is why this passed here and failed
+    // on CI. Pinned, both halves.
+    const N = (window as unknown as {
+      Notification: { requestPermission: () => Promise<string> };
+    }).Notification;
+    Object.defineProperty(N, "permission", { get: () => "default", configurable: true });
+    N.requestPermission = async () => "granted";
+  });
+}
+
+/** The same phone, with notifications turned off in its own settings. */
+async function stubPushBlocked(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const N = (window as unknown as { Notification: unknown }).Notification;
+    Object.defineProperty(N, "permission", { get: () => "denied", configurable: true });
   });
 }
 
@@ -10133,5 +10149,16 @@ test("the till is never offered a notification a customer could read", async ({ 
   await page.locator("button.bell").click();
   const panel = page.getByRole("dialog", { name: "What needs you" });
   await expect(panel).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Tell me when the app is shut/ })).toHaveCount(0);
+});
+
+test("a phone that blocks notifications is told so, not offered a switch", async ({ page }) => {
+  // Its own settings are the only place this can be undone, and a button that
+  // silently does nothing is worse than a sentence that explains.
+  await stubPushBlocked(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await page.locator("button.bell").click();
+  const panel = page.getByRole("dialog", { name: "What needs you" });
+  await expect(panel).toContainText("set to block notifications");
   await expect(panel.getByRole("button", { name: /Tell me when the app is shut/ })).toHaveCount(0);
 });
