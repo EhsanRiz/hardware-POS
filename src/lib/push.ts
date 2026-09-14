@@ -19,7 +19,7 @@ import { supabase } from "./supabase";
  * leaves the edge function.
  */
 const VAPID_PUBLIC =
-  "BIWnmJU7s_fGPTPjABZStn6aI1TPX7WrUMcm2e0XQ8SYiCXKFkmqnXrM7BbvqZYEXhnab7XWu7dYOOE0zLMK0N8";
+  "BDU4kTDcxyG9O9qCbCIzqEAedELwxo53mhJS7Ivw_rnCmOODwNGEmrAWrLbaRe2GDzztBQfHMMxzUn7R4atXlbU";
 
 export type PushState = "unsupported" | "blocked" | "off" | "on";
 
