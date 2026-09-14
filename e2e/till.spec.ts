@@ -9122,9 +9122,14 @@ test("Manage opens with the line down, against the PIN this device already knows
  * are in the document at once: the one to press is the top screen's.
  */
 async function phoneMenu(page: import("@playwright/test").Page, label: string) {
-  const admin = page.locator(".admin-screen");
-  const root = (await admin.count()) > 0 ? admin : page.locator(".phone-home");
-  await root.getByRole("button", { name: "Sections" }).click();
+  // The LAST one, not the one belonging to whichever screen a count says is
+  // up: Manage renders over the screen beneath it and both burgers are in
+  // the document at once, so asking "is Manage there yet" is a race — and
+  // one that only lost on a slower machine, which is how it passed here and
+  // failed on CI twice.
+  const burger = page.getByRole("button", { name: "Sections" }).last();
+  await expect(burger).toBeVisible();
+  await burger.click();
   await page.getByRole("menuitem", { name: label, exact: true }).click();
 }
 
