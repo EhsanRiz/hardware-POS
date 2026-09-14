@@ -5802,4 +5802,69 @@ begin
     'one signature for pos_phone_summary');
 end $$;
 
+-- 0099: a delivery of something nobody has ever counted ----------------------
+do $$
+declare
+  v_tok text; v_org uuid; v_prod uuid; v_why text;
+  v_row record; v_after numeric;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  -- What the Shelf screen makes from the aisle: priced, on the till, and with
+  -- no stock figure at all.
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               stock_qty, active, tax_code, barcode)
+  values (v_org, 'SHELF-99', 'Wood Glue 500ml', 'ea', 79, null, true,
+          'standard', '6009900099999')
+  returning id into v_prod;
+
+  -- Left to itself the refusal is 0025's, word for word, so nothing that
+  -- calls this without knowing about the flag starts counting by accident.
+  begin
+    perform public.pos_receive_stock(v_tok, '1234',
+      format('[{"product_id":"%s","qty":12}]', v_prod)::jsonb, 'GRN-771');
+    v_why := 'allowed';
+  exception when others then v_why := sqlerrm;
+  end;
+  perform assert(v_why like '%Stock is not tracked for Wood Glue 500ml%',
+    'an untracked line is still refused by default: ' || v_why);
+  perform assert((select stock_qty is null from public.products where id = v_prod),
+    'and nothing started counting');
+
+  -- Told to start counting, it starts at nothing and books in what arrived.
+  select * into v_row from public.pos_receive_stock(v_tok, '1234',
+    format('[{"product_id":"%s","qty":12}]', v_prod)::jsonb, 'GRN-771', null, true);
+  perform assert_eq(v_row.received, 12::numeric, 'twelve arrived');
+  select stock_qty into v_after from public.products where id = v_prod;
+  perform assert_eq(v_after, 12::numeric, 'and the shelf holds exactly that');
+
+  -- The movement says the shelf went from nothing to what arrived, which is
+  -- the whole reason counting starts at zero rather than at the delivery.
+  perform assert(exists (
+    select 1 from public.stock_movements m
+     where m.product_id = v_prod and m.reason = 'receipt'
+       and m.qty_delta = 12 and m.qty_after = 12 and m.note like 'GRN-771%'),
+    'one receipt movement, from nothing to twelve');
+
+  -- Counting, once started, is not started again: the next delivery adds.
+  perform public.pos_receive_stock(v_tok, '1234',
+    format('[{"product_id":"%s","qty":3}]', v_prod)::jsonb, 'GRN-772', null, true);
+  select stock_qty into v_after from public.products where id = v_prod;
+  perform assert_eq(v_after, 15::numeric, 'the second delivery adds to the first');
+
+  -- A counter hand still may not book anything in, flag or no flag.
+  perform assert_refuses(
+    format($f$select * from public.pos_receive_stock(%L, %L, %L::jsonb, null, null, true)$f$,
+           v_tok, '5678', format('[{"product_id":"%s","qty":1}]', v_prod)),
+    'and the inventory right is still the door');
+
+  -- One signature: the five-argument version is gone, or every caller that
+  -- names no flag becomes ambiguous.
+  perform assert_eq((select count(*)::int from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'pos_receive_stock'), 1,
+    'one signature for pos_receive_stock');
+end $$;
+
 select 'all database tests passed' as result;

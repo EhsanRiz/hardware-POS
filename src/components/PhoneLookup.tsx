@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import ScanButton from "./ScanButton";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/money";
 import { fmtQty } from "../lib/receipt";
@@ -56,6 +57,9 @@ export default function PhoneLookup({
           aria-label="Scan a barcode, or search"
           onChange={(e) => setTerm(e.target.value)}
         />
+        {/* The box says "scan a barcode" because at the counter a gun types
+            one into it. In the aisle the phone's own lens has to do it. */}
+        <ScanButton onCode={setTerm} />
         {term && (
           <button className="btn-line quiet" onClick={() => { setTerm(""); box.current?.focus(); }}>
             Clear

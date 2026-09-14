@@ -2246,6 +2246,9 @@ tr.is-void td:last-child { text-decoration: none; }
   font-weight: 600;
 }
 .stock-receive-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+/* What booking in will do to a line nobody has ever counted: its own line
+   under the reference and the button, not squeezed in beside them. */
+.stock-starting { flex-basis: 100%; margin: 0; }
 /* The row a scan just landed on, lit briefly so the eye finds it in a long list. */
 .sell tbody tr.stock-row-hit > td,
 .acc tbody tr.stock-row-hit > td { background: var(--color-accent-100, #fdf3d8); transition: background 0.2s; }

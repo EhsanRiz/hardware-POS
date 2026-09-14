@@ -12,8 +12,7 @@ import { useOnline } from "../../lib/offline";
 import { fmtQty } from "../../lib/receipt";
 import type { Product } from "../../lib/types";
 import { fmtDayMonthTime } from "../../lib/dates";
-import BarcodeScanner from "../BarcodeScanner";
-import { useCamera } from "../../lib/useCamera";
+import ScanButton from "../ScanButton";
 import StockTake from "./StockTake";
 
 const CATALOGUE_KEY = "catalogue.products";
@@ -50,9 +49,6 @@ export default function Stock({ pin }: { pin: string }) {
   const [delivery, setDelivery] = useState<Map<string, string>>(new Map());
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
-  // The phone's camera as a scanner, on the delivery tab.
-  const [scanning, setScanning] = useState(false);
-  const camera = useCamera();
   // The row the last scan landed on, lit for a moment so the eye finds it.
   const [hit, setHit] = useState<string | null>(null);
 
@@ -100,16 +96,24 @@ export default function Stock({ pin }: { pin: string }) {
   );
 
   const shown = useMemo(() => {
-    const base = tab === "low" ? low : tracked;
+    // A delivery can bring ANYTHING the shop sells, including a line nobody
+    // has ever counted — an item photographed onto the shelf from the aisle
+    // starts life with no stock figure, and its first delivery is where the
+    // counting starts. Listing only tracked lines here is what made the till
+    // answer "no item in the catalogue has that barcode" for an item sitting
+    // in the catalogue. The other tabs are about stock levels, so there they
+    // stay lines that have one.
+    const base = tab === "low" ? low : tab === "receive" ? products : tracked;
     const q = term.trim().toLowerCase();
     if (!q) return base;
     return base.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.sku.toLowerCase().includes(q) ||
+        (p.barcode ?? "").includes(q) ||
         (p.bin ?? "").toLowerCase().includes(q)
     );
-  }, [tab, low, tracked, term]);
+  }, [tab, low, tracked, products, term]);
 
   const deliveryLines = useMemo(
     () =>
@@ -117,6 +121,18 @@ export default function Stock({ pin }: { pin: string }) {
         .map(([id, qty]) => ({ id, qty: Number(qty) }))
         .filter((l) => l.qty > 0),
     [delivery]
+  );
+
+  // Lines on this delivery that the shop has never counted. Whether to start
+  // counting something is a catalogue decision and the server keeps it that
+  // way — so it is asked for explicitly, and the answer is the person putting
+  // these lines on the delivery having been told below what booking in does.
+  const starting = useMemo(
+    () =>
+      deliveryLines
+        .map((l) => products.find((p) => p.id === l.id))
+        .filter((p): p is Product => !!p && p.stock_qty == null),
+    [deliveryLines, products]
   );
 
   /**
@@ -128,13 +144,16 @@ export default function Stock({ pin }: { pin: string }) {
   function receiveCode(raw: string): boolean {
     const code = raw.trim();
     if (!code) return false;
-    const p = tracked.find((x) => x.barcode === code);
+    const p = products.find((x) => x.barcode === code);
     if (!p) {
       // Only a barcode is reported as unknown; Enter on a typed search is
       // just Enter. Either way the gun's digits are cleared out of the box,
       // or the list stays filtered to nothing and the next read piles on.
       if (/^\d{6,14}$/.test(code)) {
-        setError(`No item in the catalogue has barcode ${code}. Add it in Catalogue first.`);
+        setError(
+          `No item on the till has barcode ${code}. Add it in Catalogue — or ` +
+          `price it there, if it is waiting to go on.`
+        );
         setTerm("");
       }
       return false;
@@ -162,7 +181,8 @@ export default function Stock({ pin }: { pin: string }) {
         pin,
         deliveryLines.map((l) => ({ product_id: l.id, qty: l.qty })),
         reference || null,
-        null
+        null,
+        starting.length > 0
       );
       setBanner(
         `${res.length} line${res.length === 1 ? "" : "s"} booked in${
@@ -268,6 +288,13 @@ export default function Stock({ pin }: { pin: string }) {
                   deliveryLines.length === 1 ? "" : "s"
                 }`}
           </button>
+          {starting.length > 0 && (
+            <p className="acc-note stock-starting">
+              {starting.length === 1
+                ? `${starting[0].name} has never been counted — booking in starts counting it at what arrives.`
+                : `${starting.length} of these lines have never been counted — booking in starts counting them at what arrives.`}
+            </p>
+          )}
         </div>
       )}
 
@@ -290,20 +317,16 @@ export default function Stock({ pin }: { pin: string }) {
             style={{ marginBottom: 0, maxWidth: 420 }}
             aria-label={tab === "receive" ? "Scan or find an item" : "Find an item"}
           />
-          {/* Only where there is a lens to scan with. On the counter machine
-              the box beside this takes a laser scanner's keystrokes, which is
-              how that till reads a barcode; a camera button there opens a
-              dialog that can only fail. */}
-          {tab === "receive" && camera && (
-            <button
-              type="button"
-              className="btn-line"
-              onClick={() => setScanning(true)}
+          {/* Only where there is a lens to scan with — ScanButton shows
+              nothing without one. On the counter machine the box beside this
+              takes a laser scanner's keystrokes, which is how that till reads
+              a barcode. */}
+          {tab === "receive" && (
+            <ScanButton
               disabled={busy}
-              title="Scan a barcode with the camera"
-            >
-              Scan
-            </button>
+              // One code, one more received, and the viewfinder closes.
+              onCode={(code) => receiveCode(code)}
+            />
           )}
         </div>
       )}
@@ -345,13 +368,17 @@ export default function Stock({ pin }: { pin: string }) {
                   <td colSpan={4} className="acc-empty">
                     {tab === "low"
                       ? "Nothing is below its reorder level."
+                      : tab === "receive"
+                      ? "Nothing in the catalogue matches."
                       : "No tracked items match."}
                   </td>
                 </tr>
               )}
               {shown.map((p) => {
                 const isLow =
-                  p.reorder_level != null && p.stock_qty! <= p.reorder_level;
+                  p.stock_qty != null &&
+                  p.reorder_level != null &&
+                  p.stock_qty <= p.reorder_level;
                 return (
                   <tr key={p.id} id={`stock-row-${p.id}`} className={hit === p.id ? "stock-row-hit" : undefined}>
                     <td>
@@ -363,7 +390,13 @@ export default function Stock({ pin }: { pin: string }) {
                       </span>
                     </td>
                     <td className={`num ${isLow ? "is-bad" : ""}`} data-label="On hand">
-                      {fmtQty(p.stock_qty!)} {p.unit_code}
+                      {/* Never counted is not zero, and showing a zero would
+                          read as "we are out of it". */}
+                      {p.stock_qty == null ? (
+                        <span className="quiet">Never counted</span>
+                      ) : (
+                        `${fmtQty(p.stock_qty)} ${p.unit_code}`
+                      )}
                     </td>
                     <td className="num quiet" data-label="Reorder at">
                       {p.reorder_level != null ? fmtQty(p.reorder_level) : "—"}
@@ -442,18 +475,6 @@ export default function Stock({ pin }: { pin: string }) {
           </table>
         )}
       </div>
-      {scanning && (
-        <BarcodeScanner
-          onCode={(code) => {
-            // One code, one more received, and the viewfinder closes — the
-            // next box is a tap away, and a barcode left in view must not
-            // keep counting on its own.
-            setScanning(false);
-            receiveCode(code);
-          }}
-          onClose={() => setScanning(false)}
-        />
-      )}
     </div>
   );
 }

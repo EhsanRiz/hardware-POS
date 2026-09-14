@@ -98,6 +98,12 @@ export const PRODUCTS: FakeProduct[] = [
   mk("p4", "NCN-2550", null, "Nail Concrete 2.5 x 50mm", "kg", "Kilogram", true, 68, 61, 40, 10),
   mk("p5", "PDL-50", "6001234000060", "Padlock 50mm Brass", "ea", "Each", false, 89, 80, 45, 10),
   mk("p6", "CBL-25-100", null, "Twin & Earth 2.5mm 100m", "roll", "Roll", false, 1450, 1330, 2, 3),
+  // Photographed onto the shelf from the aisle and priced, but never counted:
+  // stock_qty null, which is what the Shelf screen creates and what the real
+  // shop's own catalogue holds. Without one of these here the fake could not
+  // represent the item that made the till say "no item in the catalogue has
+  // that barcode" about an item in the catalogue.
+  mk("p7", "SHELF-6001234000091", "6001234000091", "Wood Glue 500ml", "ea", "Each", false, 79, 70, null, null),
 ];
 
 function mk(
@@ -2279,15 +2285,24 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
         const lines = (body.p_lines as { product_id: string; qty: number }[]) ?? [];
+        const starting = body.p_start_tracking === true;
         if (!lines.length) return fail("Nothing to receive");
         for (const l of lines) {
           if (!(l.qty > 0)) return fail("Every line needs a quantity above zero");
-          if (!PRODUCTS.find((x) => x.id === l.product_id)) {
-            return fail("Unknown product on the delivery");
+          const prod = PRODUCTS.find((x) => x.id === l.product_id);
+          if (!prod) return fail("Unknown product on the delivery");
+          // 0099: a line with no stock figure is refused unless the delivery
+          // says to start counting it. Modelled, because the whole point of
+          // the flag is that the server decides and not the screen.
+          if (prod.stock_qty == null && !starting) {
+            return fail(`Stock is not tracked for ${prod.name}`);
           }
         }
         return json(lines.map((l) => {
           const prod = PRODUCTS.find((x) => x.id === l.product_id)!;
+          // Counting starts at nothing, so the movement says the shelf went
+          // from nothing to what arrived.
+          if (prod.stock_qty == null && starting) prod.stock_qty = 0;
           if (prod.stock_qty != null) {
             prod.stock_qty = Math.round((prod.stock_qty + l.qty) * 1000) / 1000;
           }

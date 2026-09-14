@@ -123,12 +123,17 @@ export async function adminStockHistory(
  *
  * One movement per line, each stamped 'receipt' with the reference, so the
  * ledger can answer "where did these 200 bags come from" months later.
+ *
+ * startTracking is the shop saying yes to counting lines it has never counted
+ * — an item photographed onto the shelf arrives with no stock figure, and 0099
+ * refuses it without this rather than deciding for the catalogue.
  */
 export async function receiveStock(
   pin: string,
   lines: { product_id: string; qty: number }[],
   reference: string | null,
-  note: string | null
+  note: string | null,
+  startTracking = false
 ): Promise<{ product_id: string; name: string; received: number; stock_qty: number }[]> {
   const { data, error } = await supabase.rpc("pos_receive_stock", {
     p_register_token: requireToken(),
@@ -136,6 +141,7 @@ export async function receiveStock(
     p_lines: lines,
     p_reference: reference,
     p_note: note,
+    p_start_tracking: startTracking,
   });
   if (error) throw error;
   return data as { product_id: string; name: string; received: number; stock_qty: number }[];

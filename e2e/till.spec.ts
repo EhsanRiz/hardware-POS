@@ -2501,20 +2501,20 @@ test("the catalogue chips find what is running low and what a gun cannot find", 
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   const rows = page.locator("tbody tr");
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(7);
 
   // Two below its reorder level of three.
   await page.getByRole("button", { name: /^Low stock \d+$/ }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Twin & Earth 2.5mm 100m");
 
-  // Four of the six carry no barcode; the cement does, and is not listed.
+  // Four of the seven carry no barcode; the cement does, and is not listed.
   await page.getByRole("button", { name: /^No barcode \d+$/ }).click();
   await expect(rows).toHaveCount(4);
   await expect(page.getByRole("cell", { name: /Cement 42.5N 50kg/ })).toHaveCount(0);
 
   await page.getByRole("button", { name: /^All \d+$/ }).click();
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(7);
 });
 
 test("the catalogue says what its columns mean, and shows the barcode and margin on the row", async ({ page }) => {
@@ -2556,7 +2556,10 @@ test("a phone scans the barcode into a new product", async ({ page }) => {
   await openManage(page);
   await page.getByRole("button", { name: /New product/i }).click();
 
-  await page.getByRole("button", { name: /^Scan$/ }).click();
+  // The one beside the Barcode field: the catalogue's own search has a Scan
+  // of its own behind this editor, and either would open a viewfinder.
+  await page.locator("label", { hasText: "Barcode" })
+    .getByRole("button", { name: "Scan" }).click();
   const scanner = page.getByRole("dialog", { name: "Scan a barcode" });
   await expect(scanner).toBeVisible();
   await scanCode(page, "6009876543210");
@@ -5401,6 +5404,53 @@ test("a delivery is counted in by scanning, gun or camera, one more per read", a
   expect(be.stockMoves).toEqual([
     { product_id: "p1", qty_delta: 24, reason: "receipt", note: "JAS-27181" },
     { product_id: "p5", qty_delta: 1, reason: "receipt", note: "JAS-27181" },
+  ]);
+});
+
+/**
+ * The delivery that arrives for something nobody has ever counted.
+ *
+ * The Stock screen looked only at lines that already had a stock figure, so an
+ * item photographed onto the shelf from the aisle — priced, on the till, in
+ * the catalogue, but never counted — could not be found at the back door at
+ * all, and the scan reported it as a barcode the CATALOGUE did not know. Which
+ * blamed the catalogue for holding the thing it was holding.
+ */
+test("a delivery of something the shelf has never counted starts counting it", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByRole("button", { name: /Receive a delivery/ }).click();
+
+  // The glue is in the catalogue with that barcode on it. Scanned at the back
+  // door it is FOUND, and nothing is blamed on the catalogue.
+  const scan = page.getByLabel("Scan or find an item");
+  await scan.fill("6001234000091");
+  await scan.press("Enter");
+  await expect(page.locator(".acc-note.is-bad")).toHaveCount(0);
+  const glue = page.getByLabel("Quantity received of Wood Glue 500ml");
+  await expect(glue).toHaveValue("1");
+  // Never counted is not zero, and the row says which it is.
+  await expect(page.locator("tr", { hasText: "Wood Glue 500ml" })).toContainText("Never counted");
+  // And what booking in is about to do is said before it is done, because
+  // starting to count something is the shop's decision, not the screen's.
+  await expect(page.locator(".stock-starting"))
+    .toContainText(/Wood Glue 500ml has never been counted/);
+
+  await glue.fill("12");
+  await page.getByPlaceholder(/Supplier invoice/).fill("GRN-771");
+  await page.getByRole("button", { name: /Book in 1 line/ }).click();
+  await expect(page.getByText(/1 line booked in against GRN-771/)).toBeVisible();
+
+  // Counting started at nothing, so the shelf holds exactly what arrived —
+  // and the ledger says where it came from.
+  expect(PRODUCTS.find((p) => p.id === "p7")!.stock_qty).toBe(12);
+  expect(be.stockMoves).toEqual([
+    { product_id: "p7", qty_delta: 12, reason: "receipt", note: "GRN-771" },
   ]);
 });
 
@@ -9606,4 +9656,54 @@ test("the stock count on a phone has room for the reason it is being counted", a
   const apply = (await editor.getByRole("button", { name: "Apply" }).boundingBox())!;
   expect(Math.abs(counted.y - apply.y), "the count and Apply are a pair").toBeLessThanOrEqual(4);
   expect(box.y, "the reason has its own line").toBeGreaterThan(counted.y + 8);
+});
+
+/**
+ * Scanning, on a device with no gun.
+ *
+ * At the counter a scanner gun is a keyboard: it types the digits into
+ * whatever box has focus and presses Enter, which is why every search box here
+ * takes a barcode without a button. A phone has no gun, so the two places
+ * somebody standing in the aisle finds an item — the catalogue and Look it up
+ * — need the lens to do the gun's job.
+ */
+test("the catalogue is searched with the camera, and one barcode opens the item", async ({ page }) => {
+  await installFakeDetector(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await openManageOnPhone(page, "Catalogue");
+
+  // A chip pressed first, because a scan must find the thing being held up to
+  // the camera wherever it is — not only if it happens to sit under whatever
+  // filter was left on.
+  await page.getByRole("button", { name: /^Low stock \d+$/ }).click();
+  await expect(page.getByRole("cell", { name: /Padlock 50mm Brass/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Scan" }).click();
+  await expect(page.getByRole("dialog", { name: "Scan a barcode" })).toBeVisible();
+  await scanCode(page, "6001234000060");
+
+  // The code went into the box, and the filter that would have hidden the
+  // very item being held up to the camera let go.
+  await expect(page.getByPlaceholder(/Search by name/)).toHaveValue("6001234000060");
+  await expect(page.getByRole("button", { name: /^All \d+$/ }))
+    .toHaveAttribute("aria-pressed", "true");
+
+  // Scanning a thing to look at it IS opening it: the editor, on that item.
+  await expect(page.getByRole("heading", { name: "Padlock 50mm Brass" })).toBeVisible();
+  // The right one, by the code that was read rather than by the name on it.
+  await expect(page.getByPlaceholder("6001234000015")).toHaveValue("6001234000060");
+});
+
+test("Look it up is scanned when the thing is already in your hand", async ({ page }) => {
+  await installFakeDetector(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await phoneMenu(page, "Look it up");
+
+  await page.getByRole("button", { name: "Scan" }).click();
+  await expect(page.getByRole("dialog", { name: "Scan a barcode" })).toBeVisible();
+  await scanCode(page, "6001234000015");
+
+  const hit = page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" });
+  await expect(hit).toBeVisible();
+  await expect(hit.locator(".phone-hit-price")).toHaveText(/R\s?115\.00/);
 });

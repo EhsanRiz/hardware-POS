@@ -40,6 +40,7 @@ function compareBy(key: SortKey, a: AdminProduct, b: AdminProduct): number {
   }
 }
 import ProductEditor from "./ProductEditor";
+import ScanButton from "./ScanButton";
 import CashUp from "./admin/CashUp";
 import Reports from "./admin/Reports";
 import SalesHistory from "./admin/SalesHistory";
@@ -444,6 +445,26 @@ export default function Admin({
               onChange={(e) => setTerm(e.target.value)}
               placeholder="Search by name, SKU or barcode…"
               className="flex-1 rounded-xl border border-stone-300 px-3 py-2"
+            />
+            {/* At the counter a gun types the barcode into the box above and
+                the list narrows. Away from the counter there is no gun and the
+                item is in your other hand, so the lens is the gun. */}
+            <ScanButton
+              className="px-4 rounded-xl border border-stone-300 bg-white font-semibold"
+              onCode={(code) => {
+                // A scanned code is a whole barcode, so show the thing
+                // wherever it is: a chip pressed earlier ("Low stock") or a
+                // department left set would otherwise hide the very item
+                // being held up to the camera.
+                setView("all");
+                setDept("all");
+                setTerm(code);
+                const hit = products.filter((p) => p.barcode === code);
+                // Scanning a thing to look at it IS opening it. Only when the
+                // code names exactly one line: two would be a catalogue fault
+                // to see in the list, not a coin toss.
+                if (hit.length === 1) setEditing(hit[0]);
+              }}
             />
             <button
               onClick={() => setEditing("new")}
