@@ -1256,6 +1256,14 @@ export default function POS() {
           user={user}
           pin={adminPin}
           initialTab={adminTab}
+          // On a phone the menu inside Manage carries the phone's own
+          // screens too, so picking one closes Manage and opens it.
+          onLeave={(key) => {
+            setAdminPin(null);
+            setAdminTab(undefined);
+            if (key === "stock" && !stockPin) setAskStockPin(true);
+            else setPhoneScreen(key as "lookup" | "deliveries" | "stock");
+          }}
           onClose={() => {
             setAdminPin(null);
             setAdminTab(undefined);
@@ -1362,17 +1370,12 @@ export default function POS() {
               return;
             }
 
-            // Everything else is a doorway into a back-office screen that
-            // already exists, opened straight onto its own tab. The PIN is
-            // asked for the same way it is on the till — held in memory only,
-            // re-checked server-side by every call behind it.
-            const tab: TabKey =
-              key === "scan" ? "suppliers"
-              : key === "approvals" ? "approvals"
-              : key === "shelf" ? "shelf"
-              : key === "today" ? "reports"
-              : "buying"; // "buying" and "low" both
-            setAdminTab(tab);
+            // Everything else is a section of Manage, opened straight onto
+            // its own tab. The menu and Manage share one list (lib/menu), so
+            // the key IS the tab. The PIN is asked for the same way it is on
+            // the till — held in memory only, re-checked server-side by every
+            // call behind it.
+            setAdminTab(key as TabKey);
             setAskAdminPin(true);
           }}
         />

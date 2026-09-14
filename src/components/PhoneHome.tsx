@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { phoneSummary, type PhoneSummary } from "../lib/api";
 import { money } from "../lib/money";
 import { rangeBounds } from "../lib/sales";
+import { menuItems, type MenuItem } from "../lib/menu";
+import { useCamera } from "../lib/useCamera";
+import { useShopSettings } from "../lib/settings";
 import InnovaMark from "./InnovaMark";
 import InstallButton from "./InstallButton";
+import AppMenu from "./AppMenu";
 import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
-import { can, canAny } from "../lib/permissions";
-import type { PermKey } from "../lib/permissions";
+import { can } from "../lib/permissions";
 import type { User } from "../lib/types";
 
 /**
@@ -18,114 +20,17 @@ import type { User } from "../lib/types";
  * trade counter, approving a discount down the line, deciding what to buy
  * while standing in front of the shelf that is empty.
  *
- * So this is not the till with smaller buttons, and it is not the section nav
- * rearranged. It is a short, curated list of the things somebody actually
- * reaches for when they are NOT at the counter, biggest first, sized for one
- * thumb. Curated is the operative word: every feature added from here on has
- * to earn its place on this screen rather than being appended to it, or in a
- * year it is a launcher with twenty tiles and no one can find anything.
+ * It opens on the DAY, not on a launcher. Nine tiles filled the screen with
+ * nine doors and answered nothing, so whoever opened the app in the evening
+ * had to guess which door had the figure they came for. Now the figures are
+ * the screen and each one is the way into what it summarises; everything
+ * else is behind one menu (lib/menu), the same menu Manage shows, so a
+ * destination is the same two taps from wherever you are.
  *
- * Nothing here grants anything. Every tile leads to a screen that checks the
- * same permission server-side it always did, and the database refuses money on
- * a personal device outright (0074). Hiding a tile is a courtesy, not a lock.
+ * Only what this person may see comes back from the server (0098), and with
+ * the line down none of it shows rather than yesterday's — a figure that is
+ * quietly stale is worse than no figure at all.
  */
-
-export interface Tile {
-  key: string;
-  label: string;
-  hint: string;
-  icon: ReactNode;
-  /** Shown only if the signer holds at least one of these. */
-  perms: PermKey[];
-  /** Needs the line up — greyed and explained when there is none. */
-  online?: boolean;
-}
-
-const Icon = ({ d }: { d: string }) => (
-  <svg viewBox="0 0 24 24" width="30" height="30" fill="none"
-    stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-    aria-hidden="true">
-    <path d={d} />
-  </svg>
-);
-
-export const PHONE_TILES: Tile[] = [
-  {
-    key: "scan",
-    label: "Scan a document",
-    hint: "A supplier's quote or invoice, photographed and filed",
-    perms: ["manage_purchasing"],
-    online: true,
-    icon: <Icon d="M3 9V6a3 3 0 0 1 3-3h3M21 9V6a3 3 0 0 0-3-3h-3M3 15v3a3 3 0 0 0 3 3h3M21 15v3a3 3 0 0 1-3 3h-3M7 12h10" />,
-  },
-  {
-    key: "approvals",
-    label: "Approve a discount",
-    hint: "Issue a code down the phone",
-    perms: ["approve_discount"],
-    online: true,
-    icon: <Icon d="M9 12l2 2 4-4M12 3l7 4v5c0 4.4-3 8.3-7 9-4-.7-7-4.6-7-9V7l7-4z" />,
-  },
-  {
-    key: "buying",
-    label: "Buying",
-    hint: "What to order, orders out, what you owe",
-    perms: ["manage_purchasing"],
-    online: true,
-    icon: <Icon d="M3 4h2l2.7 11.4a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L21 8H6M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" />,
-  },
-  {
-    key: "deliveries",
-    label: "Deliveries",
-    hint: "What is still to go out, and marking it off",
-    perms: [],
-    // Works from the last list it saw, and a mark-off queues: the site is
-    // where the signal is worst and the page gets signed.
-    online: false,
-    icon: <Icon d="M3 7h11v9H3zM14 10h4l3 3v3h-7zM7.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z" />,
-  },
-  {
-    key: "stock",
-    label: "Stock",
-    hint: "Receive a delivery, count a shelf, see what moved",
-    perms: ["manage_inventory"],
-    online: true,
-    icon: <Icon d="M4 8l8-4 8 4v9l-8 4-8-4zM4 8l8 4 8-4M12 12v9" />,
-  },
-  {
-    key: "lookup",
-    label: "Look it up",
-    hint: "Price, what's on the shelf, and where",
-    // Anybody who can be signed in at all can answer "have you got it".
-    perms: [],
-    icon: <Icon d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3" />,
-  },
-  {
-    key: "shelf",
-    label: "Photograph shelf items",
-    hint: "Barcodes and pictures, from the aisle",
-    perms: ["shelf_capture", "manage_catalogue"],
-    online: true,
-    icon: <Icon d="M4 7h3l2-2h6l2 2h3v12H4V7zM12 16a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />,
-  },
-  {
-    key: "low",
-    label: "What's low",
-    hint: "Everything at or below its reorder level",
-    perms: ["manage_inventory", "manage_purchasing"],
-    online: true,
-    icon: <Icon d="M12 9v5M12 17.5v.5M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z" />,
-  },
-  {
-    key: "today",
-    label: "Today",
-    hint: "What the shop has taken so far",
-    perms: ["view_reports"],
-    online: true,
-    icon: <Icon d="M3 20V10M9 20V4M15 20v-7M21 20V8" />,
-  },
-];
-
 export default function PhoneHome({
   user, online, deviceName, onPick, onSignOut,
 }: {
@@ -135,28 +40,24 @@ export default function PhoneHome({
   onPick: (key: string) => void;
   onSignOut: () => void;
 }) {
-  const tiles = PHONE_TILES.filter(
-    (t) => t.perms.length === 0 || canAny(user, t.perms)
-  );
+  const camera = useCamera();
+  const shop = useShopSettings();
+  const items = menuItems(user, camera);
+  const [menuOpen, setMenuOpen] = useState(false);
   // A phone is installed to a home screen and then never navigated, exactly
   // like the till — so it goes just as stale, and the same button fixes it.
-  // Nothing is ever in progress on this screen, but it is still offered
-  // rather than taken: a reload while somebody is walking the aisles reading
-  // a tile is a surprise, and surprises on a phone are how a person stops
-  // trusting it.
   const updateReady = useUpdateReady();
 
-  // The day so far, over the tiles. A launcher with no figures on it made a
-  // manager open a tile to learn whether it was worth opening. Only what
-  // this person may see comes back (0097); the line being down shows none of
-  // it rather than yesterday's, which would be worse than nothing.
   const [figures, setFigures] = useState<PhoneSummary | null>(null);
   useEffect(() => {
     if (!online) return;
     let dead = false;
     const load = () => {
       const { from, to } = rangeBounds("today");
-      phoneSummary(from, to)
+      // The shop's own day for "due today", not the server's: a delivery
+      // due today must not read as late because the server is two hours on.
+      const today = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`;
+      phoneSummary(from, to, today)
         .then((f) => !dead && setFigures(f))
         .catch(() => undefined);
     };
@@ -169,10 +70,32 @@ export default function PhoneHome({
     };
   }, [online]);
 
+  const open = (item: MenuItem) => {
+    setMenuOpen(false);
+    onPick(item.key);
+  };
+  /** A figure is a way in: tapping it opens the screen it is about. */
+  const go = (key: string) => {
+    if (items.some((i) => i.key === key)) onPick(key);
+  };
+  const f = figures;
+  const waiting = f?.waiting_approval ?? 0;
+  const late = f?.deliveries_late ?? 0;
+
   return (
     <div className="phone-home">
       <header className="phone-home-head">
         <div className="flex items-center gap-2">
+          <button
+            className="phone-burger"
+            aria-label="Sections"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            <span aria-hidden="true" />
+            <span aria-hidden="true" />
+            <span aria-hidden="true" />
+          </button>
           <InnovaMark size={22} />
           <span className="sell-wordmark">Innova<span>POS</span></span>
         </div>
@@ -190,6 +113,10 @@ export default function PhoneHome({
         </div>
       </header>
 
+      {menuOpen && (
+        <AppMenu items={items} onPick={open} onClose={() => setMenuOpen(false)} />
+      )}
+
       <div className="phone-home-who">
         <h1>{user.name}</h1>
         <p>
@@ -201,62 +128,99 @@ export default function PhoneHome({
         <InstallButton className="mt-3" />
       </div>
 
-      {online && figures && (
+      {online && f && (
         <div className="phone-figures" aria-label="The day so far">
-          {figures.taken != null && (
-            <div className="phone-figure is-big">
-              <span className="phone-figure-label">Taken today</span>
-              <span className="phone-figure-value">{money(figures.taken)}</span>
-              <span className="phone-figure-sub">
-                {figures.sales_count} {figures.sales_count === 1 ? "sale" : "sales"}
-              </span>
+          {/* Whatever is standing still because nobody has looked. First,
+              because it is why the app was opened at all, and absent
+              entirely when there is nothing waiting. */}
+          {(waiting > 0 || late > 0) && (
+            <div className="phone-figure is-big is-urgent">
+              <span className="phone-figure-label">Needs you now</span>
+              {waiting > 0 && (
+                <button className="phone-figure-line" onClick={() => go("approvals")}>
+                  {waiting} {waiting === 1 ? "sale" : "sales"} waiting for a manager
+                </button>
+              )}
+              {late > 0 && (
+                <button className="phone-figure-line" onClick={() => go("deliveries")}>
+                  {late} {late === 1 ? "delivery" : "deliveries"} past the day promised
+                </button>
+              )}
             </div>
           )}
-          {figures.deliveries_out != null && figures.deliveries_out > 0 && (
-            <button
-              className="phone-figure is-tap"
-              onClick={() => onPick("deliveries")}
-            >
-              <span className="phone-figure-label">Still to go</span>
-              <span className="phone-figure-value">{figures.deliveries_out}</span>
+
+          {f.taken != null && (
+            <button className="phone-figure is-big is-tap" onClick={() => go("sales")}>
+              <span className="phone-figure-label">Taken today</span>
+              <span className="phone-figure-value">{money(f.taken)}</span>
+              <span className="phone-figure-sub">
+                {f.sales_count} {f.sales_count === 1 ? "sale" : "sales"}
+                {f.cash_taken != null && f.card_taken != null && (
+                  <> · cash {money(f.cash_taken)} · card {money(f.card_taken)}</>
+                )}
+              </span>
             </button>
           )}
-          {figures.low_stock != null && figures.low_stock > 0 && (
-            <button className="phone-figure is-tap" onClick={() => onPick("low")}>
+
+          {/* What the drawer should be holding, by the till's own name. The
+              same figure the cash-up screen counts against. */}
+          {f.drawers != null && (
+            <button className="phone-figure is-big is-tap" onClick={() => go("cashup")}>
+              <span className="phone-figure-label">Money in the till</span>
+              {f.drawers.length === 0 ? (
+                <span className="phone-figure-sub">No drawer is open.</span>
+              ) : (
+                f.drawers.map((d, i) => (
+                  <span className="phone-figure-row" key={i}>
+                    <span>{d.till}</span>
+                    <span className="phone-figure-amt">{money(d.expected)}</span>
+                  </span>
+                ))
+              )}
+            </button>
+          )}
+
+          {f.deliveries_out > 0 && (
+            <button className="phone-figure is-tap" onClick={() => go("deliveries")}>
+              <span className="phone-figure-label">Still to go</span>
+              <span className="phone-figure-value">{f.deliveries_out}</span>
+              <span className="phone-figure-sub">
+                {f.deliveries_today} today{late > 0 ? ` · ${late} late` : ""}
+              </span>
+            </button>
+          )}
+
+          {f.low_stock != null && f.low_stock > 0 && (
+            <button className="phone-figure is-tap" onClick={() => go("buying")}>
               <span className="phone-figure-label">Running low</span>
-              <span className="phone-figure-value">{figures.low_stock}</span>
+              <span className="phone-figure-value">{f.low_stock}</span>
+              <span className="phone-figure-sub">
+                {(f.low_names ?? []).join(", ")}
+              </span>
+            </button>
+          )}
+
+          {f.owed != null && f.owed > 0 && (
+            <button className="phone-figure is-tap" onClick={() => go("reports")}>
+              <span className="phone-figure-label">Owed to the shop</span>
+              <span className="phone-figure-value">{money(f.owed)}</span>
             </button>
           )}
         </div>
       )}
 
-      {tiles.length === 0 ? (
-        <p className="acc-note">
+      {!online && (
+        <p className="phone-home-note" role="status">
+          The line is down. Today's figures need a connection; what this phone
+          already has is still in the menu.
+        </p>
+      )}
+
+      {items.length === 0 && (
+        <p className="phone-home-note">
           Nothing on this phone is yours to do yet. Whoever manages staff can
           give you what you need.
         </p>
-      ) : (
-        <div className="phone-tiles">
-          {tiles.map((t) => {
-            const off = t.online && !online;
-            return (
-              <button
-                key={t.key}
-                className="phone-tile"
-                disabled={off}
-                onClick={() => onPick(t.key)}
-              >
-                <span className="phone-tile-icon">{t.icon}</span>
-                <span className="phone-tile-label">{t.label}</span>
-                <span className="phone-tile-hint">
-                  {/* A tile that needs the line says so, rather than looking
-                      broken or — worse — showing yesterday's figure as today's. */}
-                  {off ? "Needs a connection" : t.hint}
-                </span>
-              </button>
-            );
-          })}
-        </div>
       )}
 
       {/* A phone cannot take money. Said out loud, once, so nobody hunts for
@@ -266,6 +230,14 @@ export default function PhoneHome({
           Selling happens at the counter — a phone cannot take money.
         </p>
       )}
+
+      <footer className="phone-home-colophon">
+        <p className="phone-home-shop">{shop.shop_name}</p>
+        <p>
+          InnovaPOS · a product of InnovaEarth
+          <br />© {new Date().getFullYear()} InnovaEarth · All rights reserved
+        </p>
+      </footer>
     </div>
   );
 }

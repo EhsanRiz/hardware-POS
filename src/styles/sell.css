@@ -3041,6 +3041,30 @@ tr.is-void td:last-child { text-decoration: none; }
  * The takings take the full width because that is the question; the counts
  * beside them are taps into the tile that answers them.
  */
+/* The way into everything else. Three bars, because a phone's home is the
+   dashboard now and the doors are behind one menu. */
+.phone-burger {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(245, 242, 234, 0.3);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  flex: none;
+}
+.phone-burger span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-bg);
+}
+
 .phone-figures {
   display: flex;
   flex-wrap: wrap;
@@ -3062,6 +3086,37 @@ tr.is-void td:last-child { text-decoration: none; }
   color: inherit;
 }
 .phone-figure.is-big { flex: 1 1 100%; }
+/* What is standing still because nobody has looked. Amber, because it is the
+   only card on the screen that is asking for something. */
+.phone-figure.is-urgent {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100, #fbf3e0);
+}
+.phone-figure-line {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-accent-700);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+/* One open drawer per line: the till's name, and what it should hold. */
+.phone-figure-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+  padding-top: 2px;
+}
+.phone-figure-amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+
 .phone-figure.is-tap { cursor: pointer; }
 .phone-figure-label {
   font-family: var(--font-heading);
@@ -3079,6 +3134,32 @@ tr.is-void td:last-child { text-decoration: none; }
 }
 .phone-figure.is-big .phone-figure-value { font-size: 30px; font-weight: 700; }
 .phone-figure-sub { font-size: 12px; color: var(--color-neutral-700); }
+
+/* A line of plain sense when there is nothing to show, and the shop's own
+   name at the foot — a phone in a hand should say whose shop it belongs to. */
+.phone-home-note {
+  margin: 0;
+  padding: 4px 16px 12px;
+  font-size: 13.5px;
+  color: var(--color-neutral-700);
+}
+.phone-home-colophon {
+  margin-top: auto;
+  padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-neutral-700);
+  border-top: 1px solid var(--divider);
+}
+.phone-home-colophon p { margin: 0; }
+.phone-home-shop {
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-colophon);
+  margin-bottom: 2px !important;
+}
 
 .phone-hits { list-style: none; margin: 0; padding: 0 0 20px; }
 .phone-hit {

@@ -362,14 +362,35 @@ and the rule in `sell.css` under `.phone-body` does the rest.
 
 ## The phone
 
-A phone opens on **the day so far** — what the shop has taken, what is still
-to go out, what is running low — and the tiles under it are the way in. The
-figures come from one call (`pos_phone_summary`, 0097) that settles who is
+A phone opens on **the day so far**, and everything else is behind **one
+menu**. There used to be nine tiles and no figures: nine doors that answered
+nothing, so whoever opened the app in the evening had to guess which door had
+the number they came for.
+
+The figures are the screen now, and each is a way into what it summarises:
+
+| Figure | Whose business |
+| --- | --- |
+| Needs you now: sales parked for a manager, deliveries past their day | approve_discount, and everybody |
+| Taken today, with the cash and card split | view_reports |
+| Money in the till, each open drawer by its till's name | cash_management |
+| Still to go, split into today and late | everybody who can sign in |
+| Running low, with the first two names | manage_inventory or manage_purchasing |
+| Owed to the shop | view_reports |
+
+They come from one call (`pos_phone_summary`, 0098) that settles who is
 asking from the phone's own token: a personal register carries its owner, so
 only what that person may see comes back, and a till is refused. No PIN,
 because nothing here is more than a count of something they can open in full
-a tap later. With the line down the panel shows nothing rather than
-yesterday's figures.
+a tap later. The drawer figure is `cash_session_figures`, the same function
+the cash-up screen counts against, so the two cannot disagree. With the line
+down the panel shows nothing rather than yesterday's figures.
+
+The menu is `src/lib/menu.ts`, one list rendered by both the home and Manage
+(`AppMenu`), so a destination is the same two taps from either place and the
+two can never drift apart. It carries the three screens the phone owns (Look
+it up, Deliveries, Stock) alongside the sections of Manage; picking a screen
+from inside Manage leaves it.
 
 Inside Manage, a phone gets its own shape (`.admin-screen.is-phone`):
 

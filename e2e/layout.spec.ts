@@ -107,7 +107,7 @@ test.describe("manager's phone, 390", () => {
 
     // The strip is gone on a phone — the burger replaces it, and the header
     // says where you are since the tabs no longer can.
-    await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toBeHidden();
+    await expect(page.getByRole("menuitem", { name: "Bulk import", exact: true })).toHaveCount(0);
     await expect(header).toContainText("Catalogue");
 
     const burger = page.getByRole("button", { name: "Sections" });
@@ -119,7 +119,7 @@ test.describe("manager's phone, 390", () => {
     // window, and issuing an approval code is a personal device's job (the
     // whole point of the code is that the manager is away from the counter).
     for (const label of ["Catalogue", "Bulk import", "Shelf", "Sales", "Cash-up", "Staff", "Shop"]) {
-      const row = page.getByRole("button", { name: label, exact: true });
+      const row = page.getByRole("menuitem", { name: label, exact: true });
       await expect(row, `${label} is offered`).toBeVisible();
       const rb = await row.boundingBox();
       expect(rb!.height, `${label} on one line`).toBeLessThan(56);
@@ -127,14 +127,14 @@ test.describe("manager's phone, 390", () => {
     }
 
     // Picking one goes there and puts the menu away.
-    await page.getByRole("button", { name: "Shop", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Shop", exact: true }).click();
     await expect(page.getByLabel("Shop name")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toBeHidden();
+    await expect(page.getByRole("menuitem", { name: "Bulk import", exact: true })).toHaveCount(0);
     await expect(header).toContainText("Shop");
 
     // Reopened, the menu marks where you are.
     await burger.click();
-    await expect(page.getByRole("button", { name: "Shop", exact: true }))
+    await expect(page.getByRole("menuitem", { name: "Shop", exact: true }))
       .toHaveAttribute("aria-current", "page");
 
     // Leaving is always available — never folded into the menu.

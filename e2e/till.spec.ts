@@ -623,8 +623,8 @@ test("a manager's TillAI is unlocked by the PIN they signed in with, and asks on
 
 test("TillAI is on a phone as the same bubble, and its sheet is the screen", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
-  // The bubble, in the corner, as on the till — not a tile among the errands.
-  await expect(page.locator(".phone-tiles")).not.toContainText(/TillAI/);
+  // The bubble, in the corner, as on the till — not a row in the menu.
+  await expect(page.locator(".phone-home")).not.toContainText(/TillAI/);
   const bubble = page.getByRole("button", { name: "TillAI" });
   await expect(bubble).toBeVisible();
   await bubble.click();
@@ -651,7 +651,7 @@ test("TillAI is on a phone as the same bubble, and its sheet is the screen", asy
   // The header's chevron is the way back to the errands, bubble still there.
   await page.getByRole("button", { name: "Back" }).click();
   await expect(sheet).toHaveCount(0);
-  await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
   await expect(bubble).toBeVisible();
 
   // A counter hand's own phone has the same bubble and the counter's view:
@@ -1879,8 +1879,8 @@ test("a manager issues a code, and it releases a discount over the phone", async
   await installBackend(phone, be);
   await enrolPhoneAndSignIn(phone, be, USERS.manager.pin);
 
-  await phone.getByRole("button", { name: /Approve a discount/i }).click();
-  // The tile is a doorway, not a grant: the PIN is asked here exactly as it is
+  await phoneMenu(phone, "Approvals");
+  // The menu is a doorway, not a grant: the PIN is asked here exactly as it is
   // on the till, held in memory only and re-checked by every call behind it.
   const gate = phone.getByRole("dialog", { name: "Manage" });
   for (const d of USERS.manager.pin.split("")) {
@@ -3618,7 +3618,7 @@ test("the pending-enrolment row fits a manager's phone", async ({ page }) => {
   // through it rather than from a strip. Not an exact name: Thabo is waiting,
   // so the row also wears the badge that says so.
   await page.getByRole("button", { name: "Sections" }).click();
-  await page.getByRole("button", { name: /^Staff/ }).click();
+  await page.getByRole("menuitem", { name: /^Staff/ }).click();
   const pending = page.getByRole("button", { name: /Thabo cannot sign in yet/i });
   await expect(pending).toBeVisible();
 
@@ -3936,7 +3936,7 @@ test("the phone menu says who is waiting, and steps aside without stealing the p
   // The Staff row wears the count. A closed menu is the one place on a phone
   // where "someone still cannot sign in" could hide; the badge is how it
   // does not.
-  const staffRow = page.getByRole("button", { name: /^Staff/ });
+  const staffRow = page.getByRole("menuitem", { name: /^Staff/ });
   await expect(staffRow).toContainText("1 waiting");
 
   // The menu is a card over the page, not a page: the catalogue is still
@@ -5540,7 +5540,7 @@ test("on a phone the supplier form scrolls, so its buttons are never under the k
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: "Sections" }).click();
-  await page.getByRole("button", { name: /^Suppliers/ }).click();
+  await page.getByRole("menuitem", { name: /^Suppliers/ }).click();
   await page.getByRole("button", { name: "Add supplier" }).click();
   const form = page.getByRole("dialog", { name: "Add supplier" });
   await form.getByLabel("Supplier name").fill("Focus Suppliers");
@@ -5730,7 +5730,7 @@ test("on a phone the scan dialog keeps all its buttons on the screen", async ({ 
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: "Sections" }).click();
-  await page.getByRole("button", { name: /^Suppliers/ }).click();
+  await page.getByRole("menuitem", { name: /^Suppliers/ }).click();
   await page.getByRole("button", { name: "Scan a document" }).click();
   const scan = page.getByRole("dialog", { name: "Scan a document" });
   await scan.getByLabel("Add PDF or photos").setInputFiles([
@@ -7410,8 +7410,9 @@ test("a manager's phone has Deliveries and Stock, and a counter hand's has Deliv
   // only be a locked door.
   await page.setViewportSize({ width: 390, height: 844 });
   await enrolPhoneAndSignIn(page, be);
-  await expect(page.getByRole("button", { name: /^Deliveries/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Stock/ })).toBeVisible();
+  await page.getByRole("button", { name: "Sections" }).click();
+  await expect(page.getByRole("menuitem", { name: "Deliveries" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Stock" })).toBeVisible();
 });
 
 test("a counter hand's phone offers Deliveries but not the stock room", async ({ page }) => {
@@ -7419,8 +7420,9 @@ test("a counter hand's phone offers Deliveries but not the stock room", async ({
   // second person needs their own device, as they would in the shop.
   await page.setViewportSize({ width: 390, height: 844 });
   await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
-  await expect(page.getByRole("button", { name: /^Deliveries/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Stock/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Sections" }).click();
+  await expect(page.getByRole("menuitem", { name: "Deliveries" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Stock" })).toHaveCount(0);
 });
 
 test("from the phone, a delivery is marked off and the page never scrolls sideways", async ({ page }) => {
@@ -7432,7 +7434,7 @@ test("from the phone, a delivery is marked off and the page never scrolls sidewa
     cashier_name: "Manager", delivered_by_name: null, delivered_at: null,
   });
   await enrolPhoneAndSignIn(page, be);
-  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await phoneMenu(page, "Deliveries");
   await expect(page.getByRole("heading", { name: "Deliveries" })).toBeVisible();
   await expect(page.getByText("T. Mokoena")).toBeVisible();
 
@@ -7465,7 +7467,7 @@ test("from the phone, a delivery is marked off and the page never scrolls sidewa
 test("from the phone, the stock room asks the PIN once and then opens", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enrolPhoneAndSignIn(page, be);
-  await page.getByRole("button", { name: /^Stock/ }).click();
+  await phoneMenu(page, "Stock");
   // The same gate the till has, proved against the server by the cheapest
   // inventory call; a counter hand's PIN is refused there, not hidden here.
   const gate = page.getByRole("dialog", { name: "Stock" });
@@ -7486,7 +7488,7 @@ test("from the phone, the stock room asks the PIN once and then opens", async ({
 
   // Back, and in again without the PIN: it is held for the session.
   await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: /^Stock/ }).click();
+  await phoneMenu(page, "Stock");
   await expect(gate).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
 });
@@ -7606,9 +7608,11 @@ test("a phone lands on its errands, not on the till", async ({ page }) => {
 
   // What it offers instead, and whose phone it says it is.
   await expect(page.locator(".phone-home-who h1")).toHaveText("Manager");
-  await expect(page.getByRole("button", { name: /Look it up/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Approve a discount/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Buying/ })).toBeVisible();
+  await page.getByRole("button", { name: "Sections" }).click();
+  await expect(page.getByRole("menuitem", { name: "Look it up" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Approvals" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Buying" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   // Said out loud, so nobody hunts for a till that is never coming.
   await expect(page.getByText(/a phone cannot take money/i)).toBeVisible();
@@ -7619,10 +7623,12 @@ test("a phone offers only the errands that person may run", async ({ page }) => 
   await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
 
   await expect(page.locator(".phone-home-who h1")).toHaveText("Sam");
-  await expect(page.getByRole("button", { name: /Look it up/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Approve a discount/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Buying/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Today/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Sections" }).click();
+  await expect(page.getByRole("menuitem", { name: "Look it up" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Deliveries" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Approvals" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Buying" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Reports" })).toHaveCount(0);
 });
 
 test("only its owner can sign in on a phone", async ({ page }) => {
@@ -7667,7 +7673,7 @@ test("Look it up answers price, stock and bin with the line down", async ({ page
   be.offline = true;
   await page.context().setOffline(true);
 
-  await page.getByRole("button", { name: /Look it up/ }).click();
+  await phoneMenu(page, "Look it up");
   await page.getByPlaceholder(/Scan a barcode/i).fill("cement");
 
   const hit = page.locator(".phone-hit", { hasText: "Cement 42.5N 50kg" });
@@ -7709,9 +7715,9 @@ test("a manager issues a code for somebody's phone from the staff list", async (
   await expect(page.getByRole("link", { name: /enrol/i })).toHaveCount(0);
 });
 
-test("a tile opens the back office on its own screen, behind the PIN", async ({ page }) => {
+test("the menu opens the back office on its own screen, behind the PIN", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
-  await page.getByRole("button", { name: /Buying/ }).click();
+  await phoneMenu(page, "Buying");
 
   // The PIN is asked for on a phone exactly as it is at the counter: held in
   // memory only, re-checked server-side by every call behind it.
@@ -7724,10 +7730,9 @@ test("a tile opens the back office on its own screen, behind the PIN", async ({ 
   // Straight onto Buying, not onto the first tab of a nav the phone never
   // showed. Closing it comes back to the errands.
   //
-  // Exact names, and the catalogue checked for by its absence: PhoneHome stays
-  // mounted UNDER the back office, so a loose /What to order/ matched the
-  // Buying tile's own hint ("What to order, orders out, what you owe") and
-  // passed with the routing broken.
+  // Exact names, and the catalogue checked for by its absence: PhoneHome
+  // stays mounted UNDER the back office, so a loose /What to order/ once
+  // matched the old Buying tile's hint and passed with the routing broken.
   await expect(page.getByRole("button", { name: "What you owe", exact: true }))
     .toBeVisible();
   await expect(page.getByRole("button", { name: /New product/i })).toHaveCount(0);
@@ -7792,7 +7797,7 @@ test("a phone put away asks for its owner's PIN before anything else", async ({ 
   // Not a panel over the errands — they must not be readable, because somebody
   // who is not the owner may be holding the handset.
   await expect(page.locator(".phone-lock")).toBeVisible();
-  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+  await expect(page.locator(".phone-home-who")).toHaveCount(0);
   await expect(page.getByText(/put away/i)).toBeVisible();
 
   // Somebody else's PIN is not a way in, even a real one.
@@ -7800,13 +7805,13 @@ test("a phone put away asks for its owner's PIN before anything else", async ({ 
     await page.locator(`button:text-is("${d}")`).first().click();
   }
   await expect(page.getByText(/not recognised/i)).toBeVisible();
-  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+  await expect(page.locator(".phone-home-who")).toHaveCount(0);
 
   // Their own PIN puts them back where they were.
   for (const d of USERS.manager.pin.split("")) {
     await page.locator(`button:text-is("${d}")`).first().click();
   }
-  await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
 });
 
 test("a phone glanced away from does not lock", async ({ page }) => {
@@ -7817,7 +7822,7 @@ test("a phone glanced away from does not lock", async ({ page }) => {
   await putAway(page, 10);
 
   await expect(page.locator(".phone-lock")).toHaveCount(0);
-  await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
 });
 
 test("a till is not locked by being left alone", async ({ page }) => {
@@ -7851,7 +7856,7 @@ test("a locked phone with no line still answers a price", async ({ page }) => {
   // And it is still locked: Back returns to the PIN, not to the errands.
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.locator(".phone-lock")).toBeVisible();
-  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+  await expect(page.locator(".phone-home-who")).toHaveCount(0);
 });
 
 test("a tender picked by mistake is changed by tapping another", async ({ page }) => {
@@ -8660,7 +8665,7 @@ test("and the phone says it too, since it goes just as stale", async ({ page }) 
   await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
   await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
   // Still the phone's own screen, not a reload back to sign-in.
-  await expect(page.locator(".phone-tiles")).toBeVisible();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
 });
 
 /*
@@ -8682,17 +8687,15 @@ test("from the phone, a delivery marked off with no signal is kept, says so, and
   await enrolPhoneAndSignIn(page, be);
 
   // Seen once with the line up, so the phone has the morning's load.
-  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await phoneMenu(page, "Deliveries");
   await expect(page.getByText("T. Mokoena")).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
 
-  // At the gate: no signal. The tile still opens, on the list it kept.
+  // At the gate: no signal. The menu still opens it, on the list it kept.
   be.offline = true;
   await page.context().setOffline(true);
   await expect(page.locator(".phone-home-who")).toContainText("no line", { timeout: 30000 });
-  const tile = page.getByRole("button", { name: /^Deliveries/ });
-  await expect(tile).toBeEnabled();
-  await tile.click();
+  await phoneMenu(page, "Deliveries");
   await expect(page.getByText("T. Mokoena")).toBeVisible();
 
   // Marked off: the row turns over at once, and says the server does not
@@ -8711,7 +8714,7 @@ test("from the phone, a delivery marked off with no signal is kept, says so, and
   await page.context().setOffline(false);
   await page.reload();
   await page.waitForSelector(".phone-home");
-  await page.getByRole("button", { name: /^Deliveries/ }).click();
+  await phoneMenu(page, "Deliveries");
   await expect(row).toContainText("will sync");
   expect(be.deliveries[0].status).toBe("pending");
 
@@ -9113,10 +9116,22 @@ test("Manage opens with the line down, against the PIN this device already knows
  * the edge. The three a manager opens from away are cards now, and the
  * sections that only make sense at the counter are not offered at all.
  */
+/**
+ * Open the app's one menu and pick a destination by name. Manage renders
+ * OVER the phone's home, which is still mounted behind it, so both burgers
+ * are in the document at once: the one to press is the top screen's.
+ */
+async function phoneMenu(page: import("@playwright/test").Page, label: string) {
+  const admin = page.locator(".admin-screen");
+  const root = (await admin.count()) > 0 ? admin : page.locator(".phone-home");
+  await root.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("menuitem", { name: label, exact: true }).click();
+}
+
 async function openManageOnPhone(
   page: import("@playwright/test").Page, section: string
 ) {
-  await page.getByRole("button", { name: /^Today/ }).click();
+  await phoneMenu(page, section);
   const gate = page.getByRole("dialog", { name: "Manage" });
   for (const d of USERS.manager.pin.split("")) {
     await gate.locator(`button:text-is("${d}")`).first().click();
@@ -9124,8 +9139,6 @@ async function openManageOnPhone(
   // The gate's own title is a heading called "Manage" as well, so the back
   // office is waited for by its screen and not by its name.
   await expect(page.locator(".admin-screen")).toBeVisible();
-  await page.getByRole("button", { name: "Sections" }).click();
-  await page.getByRole("button", { name: section, exact: true }).click();
 }
 
 test("on a phone a sale is a card, and the counter's own actions are not on it", async ({ page }) => {
@@ -9233,10 +9246,12 @@ test("a phone opens on the day so far, and the figures are taps into the tiles",
   await expect(figures).toContainText("Taken today");
   await expect(figures).toContainText("1 sale");
   await expect(figures).toContainText("Still to go");
-  // The figures sit above the tiles, which are still the way in.
+  // The figures are the screen: they sit under the name and above the foot.
   const panel = (await figures.boundingBox())!;
-  const tiles = (await phone.locator(".phone-tiles").boundingBox())!;
-  expect(panel.y).toBeLessThan(tiles.y);
+  const who = (await phone.locator(".phone-home-who").boundingBox())!;
+  const foot = (await phone.locator(".phone-home-colophon").boundingBox())!;
+  expect(panel.y).toBeGreaterThan(who.y);
+  expect(panel.y).toBeLessThan(foot.y);
   // And a count is a way in of its own: the load still to go opens Deliveries.
   await figures.getByRole("button", { name: /Still to go/ }).click();
   await expect(phone.getByRole("heading", { name: "Deliveries" })).toBeVisible();
@@ -9274,11 +9289,10 @@ test("a phone is not offered the sections that only make sense at a desk", async
 
   // A CSV file picker and the shop's VAT number are desk work, and are not
   // in the list at all.
-  await page.getByRole("button", { name: "Sections" }).click();
-  const menu = page.getByRole("button", { name: "Catalogue", exact: true });
-  await expect(menu).toBeVisible();
-  await expect(page.getByRole("button", { name: "Bulk import", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Shop", exact: true })).toHaveCount(0);
+  await page.locator(".admin-screen").getByRole("button", { name: "Sections" }).click();
+  await expect(page.getByRole("menuitem", { name: "Catalogue", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Bulk import", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Shop", exact: true })).toHaveCount(0);
 });
 
 test("the till still has every section, including the ones a phone drops", async ({ page }) => {
@@ -9288,4 +9302,130 @@ test("the till still has every section, including the ones a phone drops", async
   await expect(page.getByRole("button", { name: "Shop", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cash-up", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Open the drawer" })).toBeVisible();
+});
+
+/*
+ * The phone's home is the day, and one menu is the way to everything else.
+ *
+ * It was nine tiles and no figures: nine doors that answered nothing, so
+ * whoever opened the app in the evening had to guess which door had the
+ * number they came for. The figures are the screen now, each one a way into
+ * what it summarises, and the doors are behind the same menu Manage shows.
+ */
+test("the phone opens on the whole day, and every figure is a way in", async ({ page }) => {
+  // A drawer open on the till, a load still to go, one late, and a sale.
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s0", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd", deliver_on: today, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  be.deliveries.push({
+    id: "d2", doc_number: "DEL-000002", sale_id: "s0", customer_name: "Late Buyer",
+    address: "2 Kerk St", deliver_on: yesterday, deliver_at: null, charge: 0,
+    note: null, status: "pending", cashier_name: "Manager",
+    delivered_by_name: null, delivered_at: null,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await page.getByLabel("Close", { exact: true }).click();
+
+  const ctx = await page.context().browser()!.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const phone = await ctx.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be);
+
+  const figures = phone.locator(".phone-figures");
+  await expect(figures).toBeVisible();
+  // The takings, and how they were paid.
+  await expect(figures).toContainText("Taken today");
+  await expect(figures).toContainText("1 sale");
+  await expect(figures).toContainText(/cash R/);
+  // The drawer, by the till's own name, and the same figure cash-up counts
+  // against: the float plus what went in.
+  const drawer = figures.getByRole("button", { name: /Money in the till/ });
+  await expect(drawer).toContainText("Front Counter");
+  await expect(drawer).toContainText(/615\.00/);
+  // What is still to go, split into today's and what should have gone.
+  await expect(figures).toContainText("Still to go");
+  await expect(figures).toContainText("1 today · 1 late");
+  // And the late one is called out on its own, at the top.
+  const urgent = figures.getByRole("button", { name: /past the day promised/ });
+  await expect(urgent).toBeVisible();
+
+  // Every figure is a way in. The late delivery opens Deliveries.
+  await urgent.click();
+  await expect(phone.getByRole("heading", { name: "Deliveries" })).toBeVisible();
+  await ctx.close();
+});
+
+test("the tiles are gone, and the menu is the same list on the home and inside Manage", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  await expect(page.locator(".phone-tiles")).toHaveCount(0);
+
+  // The home's menu.
+  await page.locator(".phone-home").getByRole("button", { name: "Sections" }).click();
+  const home = await page.getByRole("menuitem").allInnerTexts();
+  await page.keyboard.press("Escape");
+  expect(home).toContain("Look it up");
+  expect(home).toContain("Deliveries");
+  expect(home).toContain("Approvals");
+  expect(home).toContain("Reports");
+
+  // Manage's menu is that same list, so a destination is the same two taps
+  // from either place.
+  await openManageOnPhone(page, "Reports");
+  await page.locator(".admin-screen").getByRole("button", { name: "Sections" }).click();
+  const inside = await page.getByRole("menuitem").allInnerTexts();
+  expect(inside.map((t) => t.replace(/\s*✓$/, "").trim()))
+    .toEqual(home.map((t) => t.trim()));
+
+  // And a screen the phone owns is reachable from inside Manage: picking it
+  // leaves, rather than looking for a section that is not there.
+  await page.getByRole("menuitem", { name: "Deliveries" }).click();
+  await expect(page.getByRole("heading", { name: "Deliveries" })).toBeVisible();
+  await expect(page.locator(".admin-screen")).toHaveCount(0);
+});
+
+test("a counter hand's phone shows the loads and never the money", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.cashSession = {
+    id: "cs1", opened_by_name: "Manager", opened_at: new Date().toISOString(),
+    opening_float: 500, fromIndex: 0, fromPayments: 0,
+  };
+  be.deliveries.push({
+    id: "d1", doc_number: "DEL-000001", sale_id: "s0", customer_name: "T. Mokoena",
+    address: "14 Mabille Rd", deliver_on: new Date().toISOString().slice(0, 10),
+    deliver_at: null, charge: 0, note: null, status: "pending",
+    cashier_name: "Sam", delivered_by_name: null, delivered_at: null,
+  });
+  await enrolPhoneAndSignIn(page, be, USERS.employee.pin);
+  const figures = page.locator(".phone-figures");
+  await expect(figures).toContainText("Still to go");
+  await expect(figures).not.toContainText("Taken today");
+  await expect(figures).not.toContainText("Money in the till");
+  await expect(figures).not.toContainText("Owed to the shop");
+  await expect(figures).not.toContainText("Running low");
+});
+
+test("the phone says whose shop it is at the foot", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be);
+  const foot = page.locator(".phone-home-colophon");
+  await expect(foot).toContainText("Ladybrand Hardware");
+  await expect(foot).toContainText("a product of InnovaEarth");
+  await expect(foot).toContainText(`© ${new Date().getFullYear()}`);
+  await expect(foot).toContainText("All rights reserved");
 });

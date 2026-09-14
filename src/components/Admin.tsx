@@ -17,6 +17,8 @@ import { useOnline } from "../lib/offline";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
 import { can } from "../lib/permissions";
+import { menuItems } from "../lib/menu";
+import AppMenu from "./AppMenu";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
 
@@ -75,6 +77,7 @@ export default function Admin({
   pin,
   onClose,
   initialTab,
+  onLeave,
 }: {
   user: User | null;
   pin: string;
@@ -82,6 +85,12 @@ export default function Admin({
   /** Land on a section rather than the first one — the till's "Cash up"
       notice opens straight onto the drawer. */
   initialTab?: TabKey;
+  /**
+   * A phone's menu carries the screens the phone owns as well as Manage's
+   * own sections, because on a phone there is one menu for the whole app
+   * (lib/menu). Picking one of those means leaving here for it.
+   */
+  onLeave?: (key: string) => void;
 }) {
   // Only the tabs this person is actually allowed to open. The RPCs behind each
   // re-check the permission anyway; this is so a counter supervisor is not
@@ -392,41 +401,30 @@ export default function Admin({
           the work in progress is the cost. Rows keep their full height; a
           menu you mis-tap is worse than a menu that is a little tall. */}
       {menuOpen && (
-        <div className="sm:hidden">
-          <div
-            className="fixed inset-0 z-40 bg-black/20"
-            onClick={() => setMenuOpen(false)}
-          />
-          <div className="absolute left-2 top-16 z-50 w-72 bg-white border border-stone-200 rounded-2xl shadow-xl overflow-hidden">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => {
-                  setTab(t.key);
-                  setMenuOpen(false);
-                }}
-                aria-current={tab === t.key ? "page" : undefined}
-                className={`w-full flex items-center gap-2 text-left px-4 py-3 text-[15px] border-b border-stone-100 last:border-b-0 ${
-                  tab === t.key ? "bg-gold-100 font-medium" : "hover:bg-stone-50"
-                }`}
-              >
-                {t.label}
-                {/* Somebody stuck at "PIN not set" must be visible from here,
-                    or a closed menu is where that problem goes to hide. */}
-                {t.key === "staff" && staffWaiting > 0 && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                    {staffWaiting} waiting
-                  </span>
-                )}
-                {tab === t.key && (
-                  <span aria-hidden="true" className="ml-auto">
-                    ✓
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+        <AppMenu
+          // A phone's menu is the app's one menu, screens included. A till
+          // in a narrow window is a TILL: it reaches Deliveries and Stock
+          // from its own nav behind "Back to till", and it keeps the two
+          // sections a phone drops (Bulk import, Shop). Feeding it the
+          // phone's list would have taken those away and offered it three
+          // destinations it already has.
+          items={
+            phone && user
+              ? menuItems(user, camera)
+              : tabs.map((t) => ({ key: t.key, label: t.label, kind: "tab" as const, perms: [] }))
+          }
+          current={tab}
+          onClose={() => setMenuOpen(false)}
+          onPick={(item) => {
+            setMenuOpen(false);
+            // A screen the phone owns is not a section of this one: leave.
+            if (item.kind === "screen") onLeave?.(item.key);
+            else setTab(item.key as TabKey);
+          }}
+          // Somebody stuck at "PIN not set" must be visible from here, or a
+          // closed menu is where that problem goes to hide.
+          badges={staffWaiting > 0 ? { staff: `${staffWaiting} waiting` } : {}}
+        />
       )}
 
       {error && (

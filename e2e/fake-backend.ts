@@ -334,6 +334,8 @@ export class Backend {
   cashSession: {
     id: string; opened_by_name: string; opened_at: string; opening_float: number;
     fromIndex: number; fromPayments: number;
+    /** The till whose drawer this is. A phone reading the figure is not it. */
+    till?: string;
   } | null = null;
   cashMovements: { id: string; kind: string; amount: number; reason: string;
                    by_name: string; created_at: string }[] = [];
@@ -2511,7 +2513,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           return fail("This is not a personal device");
         }
         const owner = Object.values(USERS).find((u) => u.row.id === reg.assigned_to);
-        const perms = owner?.row.permissions ?? [];
+        // effective_permissions, as the server computes it: an owner holds
+        // every right by role, not by a list. Reading the list alone had the
+        // fake refusing an owner the cash figures their own screen shows.
+        const all = owner?.row.role === "admin";
+        const perms = all
+          ? ["take_payments", "apply_discount", "approve_discount", "void_refund",
+             "manage_catalogue", "manage_inventory", "manage_purchasing",
+             "manage_customers", "manage_quotes", "view_reports", "view_cost_prices",
+             "shelf_capture", "cash_management", "manage_staff", "manage_settings"]
+          : (owner?.row.permissions ?? []);
         const reads = perms.includes("view_reports");
         const stocks = perms.includes("manage_inventory") || perms.includes("manage_purchasing");
         const from = new Date(String(body.p_from ?? new Date().toISOString())).getTime();
@@ -2521,14 +2532,51 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const at = new Date(x.created_at ?? new Date().toISOString()).getTime();
           return !x.voided && at >= from && at < to;
         });
+        const approves = perms.includes("approve_discount");
+        const counts = perms.includes("cash_management");
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const paid = (method: "cash" | "other") =>
+          r2(inDay.reduce((t, x) => t + (x.payments ?? [])
+            .filter((p) => (method === "cash" ? p.method === "cash" : p.method !== "cash"))
+            .reduce((u, p) => u + p.amount, 0), 0));
+        const lowLines = PRODUCTS.filter((p) => p.stock_qty != null && p.reorder_level != null
+          && p.stock_qty <= p.reorder_level);
+        const today = String(body.p_today ?? new Date().toISOString().slice(0, 10));
+        const out = be.deliveries.filter((d) => d.status === "pending");
         return json({
           sales_count: reads ? inDay.length : null,
-          taken: reads ? Math.round(inDay.reduce((t, x) => t + x.total, 0) * 100) / 100 : null,
-          low_stock: stocks
-            ? PRODUCTS.filter((p) => p.stock_qty != null && p.reorder_level != null
-                && p.stock_qty <= p.reorder_level).length
+          taken: reads ? r2(inDay.reduce((t, x) => t + x.total, 0)) : null,
+          cash_taken: reads ? paid("cash") : null,
+          card_taken: reads ? paid("other") : null,
+          owed: reads
+            ? r2(be.customers.reduce((t, c) => t + Math.max(0, be.balance(c.id)), 0))
             : null,
-          deliveries_out: be.deliveries.filter((d) => d.status === "pending").length,
+          // A sale the server parked, as the fake decides one: a discount
+          // nobody with the right approved and outside the cashier's limit.
+          waiting_approval: approves
+            ? be.sales.filter((x) => x.discount_amount > 0 && !x.approved_by && !x.within_limit).length
+            : null,
+          drawers: counts
+            ? (be.cashSession
+                ? [{
+                    till: be.cashSession.till
+                      ?? be.registers.find((r) => r.kind === "till")?.name
+                      ?? "This till",
+                    opened_at: be.cashSession.opened_at,
+                    opened_by: be.cashSession.opened_by_name,
+                    expected: be.cashFigures().expected_cash,
+                  }]
+                : [])
+            : null,
+          low_stock: stocks ? lowLines.length : null,
+          low_names: stocks
+            ? [...lowLines]
+                .sort((a, b) => (a.stock_qty! - a.reorder_level!) - (b.stock_qty! - b.reorder_level!))
+                .slice(0, 2).map((p) => p.name)
+            : null,
+          deliveries_out: out.length,
+          deliveries_today: out.filter((d) => d.deliver_on === today).length,
+          deliveries_late: out.filter((d) => d.deliver_on < today).length,
         });
       }
       case "rpc/pos_reserve_doc_numbers": {

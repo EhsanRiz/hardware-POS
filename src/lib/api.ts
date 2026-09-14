@@ -1030,12 +1030,33 @@ export async function createDelivery(args: {
   return data as DeliveryRow;
 }
 
+/** One open drawer and what it should be holding. */
+export interface DrawerFigure {
+  till: string;
+  opened_at: string;
+  opened_by: string | null;
+  expected: number;
+}
+
 /** The figures a phone opens on. Null where this person may not see one. */
 export interface PhoneSummary {
+  /** view_reports */
   sales_count: number | null;
   taken: number | null;
+  cash_taken: number | null;
+  card_taken: number | null;
+  owed: number | null;
+  /** approve_discount */
+  waiting_approval: number | null;
+  /** cash_management. Empty means no drawer is open. */
+  drawers: DrawerFigure[] | null;
+  /** manage_inventory or manage_purchasing */
   low_stock: number | null;
-  deliveries_out: number | null;
+  low_names: string[] | null;
+  /** Everybody who can sign in, as the Deliveries screen is. */
+  deliveries_out: number;
+  deliveries_today: number;
+  deliveries_late: number;
 }
 
 /**
@@ -1044,11 +1065,15 @@ export interface PhoneSummary {
  * user id to send — and nothing comes back that this person may not open in
  * full a tap later. See 0097.
  */
-export async function phoneSummary(from: Date, to: Date): Promise<PhoneSummary> {
+export async function phoneSummary(
+  from: Date, to: Date, today: string
+): Promise<PhoneSummary> {
   const { data, error } = await supabase.rpc("pos_phone_summary", {
     p_register_token: requireToken(),
     p_from: from.toISOString(),
     p_to: to.toISOString(),
+    // The shop's own day, not the server's: see 0098.
+    p_today: today,
   });
   if (error) throw error;
   return data as PhoneSummary;

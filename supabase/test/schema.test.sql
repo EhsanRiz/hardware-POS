@@ -5722,4 +5722,84 @@ begin
     v_mgr_phone, now() - interval '300 days', now()), 'a year asked for as a day');
 end $$;
 
+-- 0098: the whole day, and whose business each figure is ---------------------
+
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_prod uuid; v_price numeric;
+  v_code text; v_mgr_phone text; v_emp_phone text; v_sale public.sales;
+  v_sum jsonb; v_items jsonb; v_pay jsonb; v_cust uuid; v_open boolean;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+  select id, price_retail into v_prod, v_price
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+  v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
+  v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
+
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_mgr);
+  select token into v_mgr_phone from public.pos_enrol_device(v_code, 'Owner phone');
+  select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_emp);
+  select token into v_emp_phone from public.pos_enrol_device(v_code, 'Counter phone 2');
+
+  -- A drawer open on the till, and a delivery due today beside one overdue.
+  select public.pos_cash_session_status(v_tok) is not null into v_open;
+  if not v_open then perform public.pos_cash_session_open(v_tok, '1234', 500); end if;
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay);
+  perform public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'Today Buyer', '1 Main Rd', current_date);
+  v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => v_items, p_payment_method => 'cash', p_payments => v_pay);
+  perform public.pos_create_delivery(v_tok, v_emp, v_sale.id, 'Late Buyer', '2 Main Rd',
+    current_date - 3);
+
+  -- THE OWNER sees the lot.
+  v_sum := public.pos_phone_summary(v_mgr_phone, null, null, current_date);
+  perform assert(v_sum->>'taken' is not null, 'the owner sees the takings');
+  perform assert(v_sum->>'cash_taken' is not null, 'and how they were paid');
+  perform assert(v_sum->>'owed' is not null, 'and what the shop is owed');
+  perform assert(v_sum->>'waiting_approval' is not null, 'and what is waiting on them');
+  perform assert(jsonb_array_length(v_sum->'drawers') = 1, 'and the one open drawer');
+  perform assert_eq((v_sum->'drawers'->0->>'expected')::numeric,
+    (public.cash_session_figures(cs)->>'expected_cash')::numeric,
+    'the drawer figure is the one cash-up counts against')
+    from public.cash_sessions cs
+   where cs.org_id = (select org_id from fixture) and cs.closed_at is null;
+  perform assert(v_sum->'drawers'->0->>'till' is not null, 'named by its till');
+
+  -- The day's deliveries are split: due today, and should already have gone.
+  perform assert((v_sum->>'deliveries_today')::int >= 1, 'a delivery due today is today''s');
+  perform assert((v_sum->>'deliveries_late')::int >= 1, 'and one from last week is late');
+  perform assert((v_sum->>'deliveries_out')::int
+    >= (v_sum->>'deliveries_today')::int + (v_sum->>'deliveries_late')::int,
+    'and both are part of what is still to go');
+
+  -- SOMEBODY WITH NOTHING BUT THE COUNTER sees the loads and no money at
+  -- all. A user of their own, because the fixture's counter hand happens to
+  -- hold the drawer right and would have proved nothing here.
+  declare v_narrow uuid;
+  begin
+    select id into v_narrow from public.pos_admin_invite_user(
+      v_tok, '1234', 'Narrow Ned', '+27820000055', 'employee'::user_role,
+      array['take_payments']);
+    perform public.auth_set_pin('+27820000055', '135791');
+    select code into v_code from public.pos_staff_enrolment_code(v_tok, '1234', v_narrow);
+    select token into v_emp_phone from public.pos_enrol_device(v_code, 'Ned''s phone');
+  end;
+  v_sum := public.pos_phone_summary(v_emp_phone, null, null, current_date);
+  perform assert(v_sum->>'taken' is null, 'a counter hand is not shown the takings');
+  perform assert(v_sum->>'cash_taken' is null, 'nor the split');
+  perform assert(v_sum->>'owed' is null, 'nor what the shop is owed');
+  perform assert(jsonb_typeof(v_sum->'drawers') = 'null', 'nor what is in the drawer');
+  perform assert(v_sum->>'waiting_approval' is null, 'nor what is waiting on a manager');
+  perform assert((v_sum->>'deliveries_out')::int >= 2,
+    'but the loads are theirs, as the Deliveries screen is');
+
+  -- One signature: the three-argument version is gone.
+  perform assert_eq((select count(*)::int from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'pos_phone_summary'), 1,
+    'one signature for pos_phone_summary');
+end $$;
+
 select 'all database tests passed' as result;
