@@ -80,10 +80,15 @@ export function whatToSay(
   if (lines.length === 0) return null;
 
   return {
-    // The shop's name is not in here on purpose: this arrives on a lock
-    // screen, and what is on it should be the work and not the takings.
-    title: "InnovaPOS",
-    body: lines.join(" · "),
+    // The title IS the news. The phone already says which app this is — twice
+    // on iOS, which adds a "from InnovaPOS" line of its own — so a title that
+    // says it a third time spends the one line somebody reads at a glance on
+    // nothing. The most urgent line goes there and the rest follows under it.
+    //
+    // The shop's name is in neither on purpose: this arrives on a lock screen,
+    // and what is on it should be the work and not the takings.
+    title: lines[0],
+    body: lines.slice(1).join(" · "),
     // One notification, replaced rather than stacked: three buzzes saying
     // almost the same thing is the thing people mute.
     tag: "innovapos-needs-you",

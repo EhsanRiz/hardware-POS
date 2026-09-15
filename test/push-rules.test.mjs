@@ -32,18 +32,29 @@ check("and is not at ten past midnight", withinHours(midnight), false);
 check("nor at half past six", withinHours(dawn), false);
 
 // A customer standing at a counter, and nothing said about it yet.
+// The title is what a locked phone shows in bold, so it carries the news —
+// the app's own name is already above it, twice on iOS.
 check("the first sale waiting is worth a buzz",
-  whatToSay({ approvals: 1, deliveries_late: 0 }, null, morning)?.body,
+  whatToSay({ approvals: 1, deliveries_late: 0 }, null, morning)?.title,
   "1 sale is waiting for a manager");
-check("and both kinds arrive as one line",
+check("with nothing trailing after it",
+  whatToSay({ approvals: 1, deliveries_late: 0 }, null, morning)?.body, "");
+check("and when two things wait, the more urgent is the title",
+  whatToSay({ approvals: 2, deliveries_late: 1 }, null, morning)?.title,
+  "2 sales are waiting for a manager");
+check("and the other is under it",
   whatToSay({ approvals: 2, deliveries_late: 1 }, null, morning)?.body,
-  "2 sales are waiting for a manager · 1 delivery should already have gone");
+  "1 delivery should already have gone");
+// A late load on its own is the title, not a body with an empty heading.
+check("a load that should have gone stands on its own",
+  whatToSay({ approvals: 0, deliveries_late: 1 }, null, morning)?.title,
+  "1 delivery should already have gone");
 
 // Said once. The cron runs every few minutes and must not say it again.
 check("the same news is not sent twice",
   whatToSay({ approvals: 1, deliveries_late: 0 }, "a1d0", morning), null);
 check("but one more sale is news",
-  whatToSay({ approvals: 2, deliveries_late: 0 }, "a1d0", morning)?.body,
+  whatToSay({ approvals: 2, deliveries_late: 0 }, "a1d0", morning)?.title,
   "2 sales are waiting for a manager");
 // Going down is progress, and progress does not buzz.
 check("one fewer is not news",
@@ -56,8 +67,8 @@ check("and neither is the last one being dealt with",
 check("nothing is sent at night, however much has piled up",
   whatToSay({ approvals: 3, deliveries_late: 4 }, null, midnight), null);
 check("it waits for the morning",
-  whatToSay({ approvals: 3, deliveries_late: 4 }, null, morning)?.body,
-  "3 sales are waiting for a manager · 4 deliveries should already have gone");
+  whatToSay({ approvals: 3, deliveries_late: 4 }, null, morning)?.title,
+  "3 sales are waiting for a manager");
 
 // One notification per phone, replaced rather than stacked.
 check("the tag is the same every time",
@@ -65,7 +76,11 @@ check("the tag is the same every time",
   "innovapos-needs-you");
 // And nothing about money on a lock screen.
 const said = whatToSay({ approvals: 1, deliveries_late: 2 }, null, morning);
-check("the title says only which app it is", said.title, "InnovaPOS");
+// No money on a lock screen. Case-sensitive on purpose: a lower-case "r
+// 2" appears inside "manager 2", and an assertion that fires on that is an
+// assertion nobody will trust the next time it goes red.
+check("no figure from the till is on the lock screen",
+  /\bR\s?\d/.test(`${said.title} ${said.body}`), false);
 check("what is recorded as sent is what was waiting", said.signature, "a1d2");
 check("which is the same string the signature makes",
   signature({ approvals: 1, deliveries_late: 2 }), "a1d2");
