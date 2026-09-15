@@ -39,6 +39,19 @@ check("the first sale waiting is worth a buzz",
   "1 sale is waiting for a manager");
 check("with nothing trailing after it",
   whatToSay({ approvals: 1, deliveries_late: 0 }, null, morning)?.body, "");
+
+// Which shop, under the news: somebody who helps at two of them needs to know
+// before they put their boots on. The name is over the door; it is not a
+// figure out of the till.
+check("the shop says which shop it is",
+  whatToSay({ approvals: 1, deliveries_late: 0 }, null, morning, "Ladybrand Hardware")?.body,
+  "Ladybrand Hardware");
+check("and it follows the other thing waiting rather than replacing it",
+  whatToSay({ approvals: 1, deliveries_late: 2 }, null, morning, "Ladybrand Hardware")?.body,
+  "2 deliveries should already have gone · Ladybrand Hardware");
+check("a shop with no name set leaves no stray separator",
+  whatToSay({ approvals: 1, deliveries_late: 2 }, null, morning, "   ")?.body,
+  "2 deliveries should already have gone");
 check("and when two things wait, the more urgent is the title",
   whatToSay({ approvals: 2, deliveries_late: 1 }, null, morning)?.title,
   "2 sales are waiting for a manager");

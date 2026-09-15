@@ -54,7 +54,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const rows = (data ?? []) as {
-    id: string; endpoint: string; p256dh: string; auth: string;
+    id: string; endpoint: string; p256dh: string; auth: string; shop: string;
     approvals: number; deliveries_late: number; last_sent: string | null;
   }[];
 
@@ -63,7 +63,7 @@ Deno.serve(async (req: Request) => {
   for (const row of rows) {
     const say = whatToSay(
       { approvals: row.approvals, deliveries_late: row.deliveries_late },
-      row.last_sent, now,
+      row.last_sent, now, row.shop,
     );
     if (!say) {
       quiet++;

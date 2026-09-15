@@ -6023,6 +6023,14 @@ begin
   perform assert(v_row.approvals is not null, 'an owner is told about approvals');
   perform assert(v_row.deliveries_late >= 1, 'and about a load that should have gone');
   perform assert(v_row.last_sent is null, 'nothing has been said yet');
+  -- 0102: which shop, so a phone that goes off in a pocket says whose.
+  perform assert_eq(v_row.shop,
+    (select name from public.organizations where id = (select org_id from fixture)),
+    'and which shop is asking');
+  perform assert_eq((select count(*)::int from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'push_due'), 1,
+    'one signature for push_due');
 
   -- Said, and remembered, so the next sweep holds its tongue.
   select id into v_id from public.push_subscriptions where endpoint = 'https://push.example/abc';
