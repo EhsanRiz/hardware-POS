@@ -99,7 +99,29 @@ Cloudflare reports it does match `worker/index.ts`, so the code is current;
 but "a version exists that isn't deployed" is precisely the state this
 document had assumed away.
 
-This is a gap in the checking, not a known fault. It needs a smoke check after
-every deploy that fetches the live page and asserts the built asset is the one
-being served — a deploy that silently does not land is the failure a shop
-notices as "the fix you sent me never arrived".
+This was a gap in the checking, not a known fault. **It is now closed** —
+`scripts/smoke.mjs` runs as the last step of the deploy job and fetches the
+live origin. Six guards, each a deploy a person would have called successful:
+
+| Guard | The deploy it catches |
+|---|---|
+| the live page is this build | uploaded a version, serving the old one |
+| each `/assets/…` file is byte-for-byte the built one | hashed name right, bytes not — a cache or a half-finished upload |
+| `sw.js` is the built file | the service worker keeps a till on last week's app after it says it updated |
+| `push-sw.js` is the built file | notifications quietly stop arriving |
+| the Worker is answering, not just the assets | files served, `/api/` no longer proxied, every call from the till goes nowhere |
+| the security headers are on the live response | the response never went through `withSecurityHeaders` |
+
+An origin that cannot be reached is a red guard rather than a stack trace, and
+is retried — a name that has not propagated is not the same as a deploy that
+did not land.
+
+It runs *after* the deploy, so it cannot prevent a bad one. What it does is
+make the pipeline that claimed to ship say whether it did, rather than leaving
+that to the shop.
+
+The checker has no second opinion behind it, so it is exercised before it is
+trusted: `npm run test:smoke` stands up a server that answers the way the
+Worker does, serving the real `dist/`, and bends it each of those ways in
+turn. Every guard was broken by hand and the matching test seen to go red —
+and only the matching one; a single fault reports a single fault.

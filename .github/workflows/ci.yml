@@ -165,6 +165,14 @@ jobs:
           }
           npm run build
 
+      # The smoke check is only worth running if it can tell a good deploy
+      # from a bad one, and it is the one check with no second opinion behind
+      # it. This drives it against a server bending the build five ways —
+      # stale page, swapped bytes, stale service worker, Worker gone, headers
+      # missing — and each has to come back red.
+      - name: The smoke check can still spot a bad deploy
+        run: npm run test:smoke
+
       # Checked here rather than left to wrangler, which reports a missing
       # token as a wall of generic advice about how to create one — true, but
       # useless when the real answer is "it is saved under Variables instead of
@@ -201,3 +209,20 @@ jobs:
           # wrangler.toml names the worker (hardware-pos) and attaches
           # app.innovaearth.com itself, so there is no dashboard step.
           command: deploy
+
+      # ------------------------------------------------------------------
+      # And then look at the address a cashier types.
+      #
+      # Everything above this line is a tool reporting success. Nothing in
+      # this repository had ever fetched the live origin and compared it to
+      # the build — so a deploy that uploaded a version and did not serve it
+      # looked exactly like a deploy that worked. Cloudflare found that state
+      # here before this step existed ("the latest version of your Worker
+      # isn't currently deployed"), and the board was green throughout.
+      #
+      # This runs AFTER the deploy and so cannot prevent a bad one. What it
+      # does is make the pipeline that claimed to ship tell the truth about
+      # whether it did, instead of a shop finding out.
+      # ------------------------------------------------------------------
+      - name: The shop is being served this build
+        run: node scripts/smoke.mjs https://till.innovaearth.com dist
