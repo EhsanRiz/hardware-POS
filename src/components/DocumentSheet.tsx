@@ -5,22 +5,25 @@ import { imageSrc } from "../lib/images";
 import { shopSettings } from "../lib/settings";
 import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
 import InnovaMark from "./InnovaMark";
-import { emailSheet, saveSheetPdf, sheetMailto, type SendOutcome } from "../lib/sendSheet";
+import { emailSheet, saveSheetPdf, sendLabel, sheetMailto, type SendOutcome } from "../lib/sendSheet";
 import { primeLogo } from "../lib/logoBytes";
 import { useEffect, useState } from "react";
 
 /**
  * An A4 quotation or tax invoice, on screen and on paper.
  *
- * Print goes through the browser; Download and Email hand over a PDF written
- * by lib/pdf.ts. Both exist because they answer different questions: Print is
- * for the copy that goes over the counter, and the PDF is the file that gets
- * emailed, filed and forwarded.
+ * Print goes through the browser; Download and the send button hand over a
+ * PDF written by lib/pdf.ts. Both exist because they answer different
+ * questions: Print is for the copy that goes over the counter, and the PDF is
+ * the file that gets sent, filed and forwarded.
  *
- * Email opens the device's own mail app with the document in the body. That
- * is deliberate rather than sending from a server: it goes out from the
- * shop's own address, lands in the shop's own sent items, and the person
- * pressing the button can add a sentence before it leaves.
+ * The send button goes through the device rather than a server: on a phone
+ * that is the share sheet with the PDF already on it (WhatsApp, mail,
+ * anything else installed), and on a desktop it is the mail app with the
+ * document in the body. Either way it leaves from the shop's own address or
+ * account, lands in the shop's own sent items, and the person pressing it can
+ * add a sentence first. The button says which of the two it will do
+ * (sendLabel).
  */
 export default function DocumentSheet({
   sheet,
@@ -92,7 +95,8 @@ export default function DocumentSheet({
           <div className="ml-auto flex gap-2">
             {/* The document goes as a PDF, not as forty lines in the body.
                 When the device can attach it itself the mail draft is the
-                share sheet's business, so the link must not also fire. */}
+                share sheet's business, so the link must not also fire — and
+                the word on the button follows the same fact (sendLabel). */}
             <a
               className="px-4 py-2 rounded-xl border border-stone-300"
               href={sheetMailto(sheet, s)}
@@ -100,7 +104,7 @@ export default function DocumentSheet({
                 if (emailSheet(sheet, s, setSent).attached) e.preventDefault();
               }}
             >
-              Email
+              {sendLabel()}
             </a>
             <button
               className="px-4 py-2 rounded-xl border border-stone-300"

@@ -124,6 +124,13 @@ const LIVE_KEY = "sell.live";
  * Layout and every measurement come from design_handoff_innovapos §1; the
  * styles live in src/styles/sell.css.
  */
+/** What the phone's own screens are called at the top of the page. */
+const PHONE_SCREEN_TITLE: Record<string, string> = {
+  stock: "Stock",
+  quotes: "Quotes",
+  deliveries: "Deliveries",
+};
+
 export default function POS() {
   const { user, logout, sessionPin, setSessionPin } = useAuth();
   const online = useOnline();
@@ -342,7 +349,8 @@ export default function POS() {
   // Where a personal device is standing. The tiles are doorways into the
   // back office, so "home" is where it returns whenever one closes; only
   // Look it up is a screen of its own.
-  const [phoneScreen, setPhoneScreen] = useState<"home" | "lookup" | "deliveries" | "stock">("home");
+  const [phoneScreen, setPhoneScreen] =
+    useState<"home" | "lookup" | "deliveries" | "stock" | "quotes">("home");
   // Read once. It cannot change without the app reloading, and the till
   // re-renders on every keystroke in the scan box — no reason to parse it
   // out of local storage each time.
@@ -1432,22 +1440,29 @@ export default function POS() {
         </>
       );
     }
-    // Deliveries and the stock room, whole, on the phone: the first two of
-    // the till's own screens a manager or owner can work from away from the
-    // counter. Both already ran on a personal token — every RPC behind them
-    // takes the register token and, for stock, the PIN — so nothing on the
-    // server changed; what was missing was a way in. Stock keeps the same
-    // PIN gate the till has, held in memory for the session.
-    if (phoneScreen === "deliveries" || (phoneScreen === "stock" && stockPin)) {
+    // Deliveries, the stock room and quotes, whole, on the phone: the till's
+    // own screens a manager or owner can work from away from the counter. All
+    // already ran on a personal token — every RPC behind them takes the
+    // register token and, for stock, the PIN — so nothing on the server
+    // changed; what was missing was a way in. Stock keeps the same PIN gate
+    // the till has, held in memory for the session.
+    //
+    // Quotes arrives without its "Open on the till" button: a phone has no
+    // Sell screen to open one onto. What it has instead is the reason it is
+    // here — the document, and the share sheet.
+    if (phoneScreen === "deliveries" || phoneScreen === "quotes"
+        || (phoneScreen === "stock" && stockPin)) {
       return (
         <>
           <div className="phone-screen">
             <header className="phone-screen-head">
               <button className="btn-line quiet" onClick={() => setPhoneScreen("home")}>Back</button>
-              <h1>{phoneScreen === "stock" ? "Stock" : "Deliveries"}</h1>
+              <h1>{PHONE_SCREEN_TITLE[phoneScreen]}</h1>
             </header>
             <div className="phone-body sell">
-              {phoneScreen === "stock" ? <Stock pin={stockPin!} /> : <Deliveries user={user} />}
+              {phoneScreen === "stock" ? <Stock pin={stockPin!} />
+                : phoneScreen === "quotes" ? <Quotes user={user} />
+                : <Deliveries user={user} />}
             </div>
           </div>
           {overlays}
@@ -1471,6 +1486,10 @@ export default function POS() {
             }
             if (key === "deliveries") {
               setPhoneScreen("deliveries");
+              return;
+            }
+            if (key === "quotes") {
+              setPhoneScreen("quotes");
               return;
             }
             if (key === "stock") {

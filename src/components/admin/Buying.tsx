@@ -24,7 +24,7 @@ import {
 } from "../../lib/adminApi";
 import { fmtDate } from "../../lib/dates";
 import { orderSheet } from "../../lib/orderSheet";
-import { emailSheet, saveSheetPdf, sheetMailto } from "../../lib/sendSheet";
+import { emailSheet, saveSheetPdf, sendLabel, sheetMailto } from "../../lib/sendSheet";
 import { shopSettings, vatRate } from "../../lib/settings";
 import { shopWhere, type Sheet } from "../../lib/sheet";
 import DocumentSheet from "../DocumentSheet";
@@ -469,7 +469,7 @@ function Orders({
                       </button>
                       <a
                         className="btn-line quiet"
-                        aria-label={`Email ${o.doc_number}`}
+                        aria-label={`${sendLabel()} ${o.doc_number}`}
                         href={sheetMailto(sheetFor(o)!, shopSettings())}
                         onClick={(e) => {
                           const done = emailSheet(sheetFor(o)!, shopSettings(), () => {});
@@ -477,7 +477,7 @@ function Orders({
                           markSent(o);
                         }}
                       >
-                        Email
+                        {sendLabel()}
                       </a>
                     </span>
                   )}
@@ -827,7 +827,7 @@ function OrderSheet({
         {(po.status === "draft" || po.status === "sent") && asSheet() && (
           <a
             className="btn-line"
-            aria-label={`Email ${po.doc_number}`}
+            aria-label={`${sendLabel()} ${po.doc_number}`}
             href={sheetMailto(asSheet()!, shopSettings())}
             onClick={(e) => {
               const done = emailSheet(asSheet()!, shopSettings(), () => {});
@@ -837,7 +837,7 @@ function OrderSheet({
               }
             }}
           >
-            Email the supplier
+            {sendLabel()} with the supplier
           </a>
         )}
         {po.status === "draft" && (

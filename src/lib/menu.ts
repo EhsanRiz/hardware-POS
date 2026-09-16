@@ -30,6 +30,11 @@ export interface MenuItem {
 const ITEMS: MenuItem[] = [
   { key: "lookup", label: "Look it up", kind: "screen", perms: [] },
   { key: "deliveries", label: "Deliveries", kind: "screen", perms: [] },
+  // A quote is the one document a customer chases somebody about away from
+  // the counter — "can you send it to me again" — and until now the only
+  // copy lived on a till in the shop. Either permission is enough: a cashier
+  // who wrote it, or a manager who is being asked about it.
+  { key: "quotes", label: "Quotes", kind: "screen", perms: ["take_payments", "view_reports"] },
   { key: "stock", label: "Stock", kind: "screen", perms: ["manage_inventory"] },
   { key: "shelf", label: "Shelf", kind: "tab", perms: ["shelf_capture", "manage_catalogue"], camera: true },
   { key: "catalogue", label: "Catalogue", kind: "tab", perms: ["manage_catalogue"] },

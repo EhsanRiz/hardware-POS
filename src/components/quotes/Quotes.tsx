@@ -16,7 +16,8 @@ import { shopSettings, vatRate } from "../../lib/settings";
 import DocumentSheet from "../DocumentSheet";
 import type { Sheet } from "../../lib/sheet";
 import {
-  archiveSheet, emailSheet, saveFile, saveSheetPdf, sheetMailto, type SendOutcome,
+  archiveSheet, emailSheet, saveFile, saveSheetPdf, sendLabel, sheetMailto,
+  type SendOutcome,
 } from "../../lib/sendSheet";
 import { quoteSheet } from "../../lib/quoteSheet";
 import { primeLogo } from "../../lib/logoBytes";
@@ -41,8 +42,13 @@ export default function Quotes({
   onRecall,
 }: {
   user: User;
-  /** Load a quote's lines onto the Sell screen. */
-  onRecall: (quote: QuoteSummary, lines: QuoteLine[]) => void;
+  /**
+   * Load a quote's lines onto the Sell screen.
+   *
+   * Absent on a phone, which has no Sell screen to load them onto — so the
+   * offer is not made there rather than made and then refused.
+   */
+  onRecall?: (quote: QuoteSummary, lines: QuoteLine[]) => void;
 }) {
   const online = useOnline();
   const [quotes, setQuotes] = useState<QuoteSummary[] | null>(null);
@@ -222,6 +228,10 @@ export default function Quotes({
   }
 
   async function recall(q: QuoteSummary) {
+    // Nothing offers this without a till to open onto, but the guard is here
+    // rather than in an assertion: a phone quietly doing nothing beats a
+    // phone throwing at somebody holding a customer's quote.
+    if (!onRecall) return;
     setBusy(true);
     setError(null);
     try {
@@ -313,6 +323,7 @@ export default function Quotes({
                 </td>
                 <td className="num">
                   <span className="quote-actions">
+                    {onRecall && (
                     <button
                       className="btn-line"
                       onClick={(e) => { e.stopPropagation(); void recall(q); }}
@@ -320,6 +331,7 @@ export default function Quotes({
                     >
                       Open on the till
                     </button>
+                    )}
                     <button
                       className="btn-line quiet"
                       onClick={(e) => { e.stopPropagation(); void downloadPdf(q); }}
@@ -442,7 +454,7 @@ export default function Quotes({
                   if (done.attached) e.preventDefault();
                 }}
               >
-                Email
+                {sendLabel()}
               </a>
               {/* Said out loud, because a browser that cannot attach a file
                   leaves the person a step to do themselves. */}
@@ -451,6 +463,7 @@ export default function Quotes({
                   PDF saved — attach it to the message that just opened.
                 </span>
               )}
+              {onRecall && (
               <button
                 className="flex-1 py-2.5 rounded-xl bg-colophon text-paper disabled:opacity-40"
                 disabled={busy || !online}
@@ -462,6 +475,7 @@ export default function Quotes({
               >
                 Open on the till
               </button>
+              )}
             </div>
           </div>
         </div>

@@ -519,8 +519,14 @@ export default function ShopSettings({ pin }: { pin: string }) {
 
       {/* One Save for the page, not one per card. Every card edits the same
           record and a single save writes all of it, so repeated buttons would
-          only raise the question of which one this field belongs to. */}
-      <div className="max-w-xl flex items-center gap-3 mt-4">
+          only raise the question of which one this field belongs to.
+
+          It floats at the foot of the pane rather than sitting at the bottom
+          of the page. The page runs to banking details, printing, slip width
+          and two blocks of small print, so the button was several screens
+          below whatever had just been corrected — and a Save you have to go
+          looking for is a Save that gets forgotten on the way. */}
+      <div className="sticky bottom-0 z-10 max-w-xl flex items-center gap-3 mt-4 rounded-xl border border-stone-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
         <button
           className="px-4 py-2 rounded-lg bg-colophon text-paper disabled:opacity-40"
           disabled={busy || !f.shop_name.trim()}

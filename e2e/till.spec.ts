@@ -10193,3 +10193,103 @@ test("a phone that blocks notifications is told so, not offered a switch", async
   await expect(panel).toContainText("set to block notifications");
   await expect(panel.getByRole("button", { name: /Tell me when the app is shut/ })).toHaveCount(0);
 });
+
+/**
+ * A phone that can hand a file to another app, which is every phone.
+ *
+ * Headless Chromium on Linux cannot, and answers so honestly — which is why
+ * the existing quote tests still find a link called "Email" and are the other
+ * half of this pair. This is the device the button is actually pressed on.
+ */
+async function stubCanShare(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const n = navigator as unknown as Record<string, unknown>;
+    n.canShare = () => true;
+    n.share = async () => {};
+  });
+}
+
+test("the Save on the shop's details stays in reach of the field being corrected", async ({ page }) => {
+  // The page runs to banking details, printing, slip width and two blocks of
+  // small print. Save was the last thing on it, several screens below a
+  // branch code somebody had just fixed — so the fix was typed, the page was
+  // left, and nothing was written.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Shop", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Printing/i })).toBeVisible();
+
+  const save = page.getByRole("button", { name: /^Save$/ });
+  const pane = page.locator("div.overflow-auto").filter({ has: save });
+
+  // Non-vacuity: this proves nothing on a page that fits. It must overflow,
+  // and something below the fold must really be below it.
+  const room = await pane.evaluate((el) => ({
+    scroll: el.scrollHeight, seen: el.clientHeight,
+  }));
+  expect(room.scroll, "the settings page is longer than the pane")
+    .toBeGreaterThan(room.seen + 200);
+  await pane.evaluate((el) => { el.scrollTop = 0; });
+  await expect(page.getByLabel("Terms on a till slip"), "the small print is off the bottom")
+    .not.toBeInViewport();
+
+  // And from up here, with the small print out of sight, Save is still there.
+  await expect(save).toBeInViewport();
+  const box = (await save.boundingBox())!;
+  const seen = page.viewportSize()!;
+  expect(box.y + box.height, "the button is on the screen, not under it")
+    .toBeLessThanOrEqual(seen.height);
+});
+
+test("on a phone the button says Share, because the share sheet is what opens", async ({ page }) => {
+  // Reported from the shop: a manager pressed "Email" and got WhatsApp,
+  // AirDrop, Notes and mail somewhere down the list. The press was right and
+  // the word was wrong — and wrong on the device it is pressed on most.
+  await stubCanShare(page);
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await saveAsQuote(page);
+  await page.getByLabel("Close").click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000001" }).click();
+
+  const popup = page.getByRole("dialog", { name: "Quote QUO-000001" });
+  await expect(popup.getByRole("link", { name: "Share" })).toBeVisible();
+  await expect(popup.getByRole("link", { name: "Email" })).toHaveCount(0);
+});
+
+test("a phone can find a quote and send it without going back to the shop", async ({ page }) => {
+  // "Can you send me that quote again" is asked of whoever answers the phone,
+  // and the only copy lived on a till behind the counter.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await saveAsQuote(page);
+  await page.getByLabel("Close").click();
+
+  const phoneContext = await page.context().browser()!.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const phone = await phoneContext.newPage();
+  await installBackend(phone, be);
+  await enrolPhoneAndSignIn(phone, be);
+  await phoneMenu(phone, "Quotes");
+
+  await expect(phone.getByRole("heading", { name: "Quotes" })).toBeVisible();
+  await expect(phone.getByText("QUO-000001")).toBeVisible();
+
+  // Not offered what a phone cannot do: there is no Sell screen here to open
+  // a quote onto, and a button that refuses is worse than no button.
+  await expect(phone.getByRole("button", { name: "Open on the till" })).toHaveCount(0);
+
+  // What it IS here for: the document.
+  await phone.getByText("QUO-000001").first().click();
+  await expect(phone.getByRole("link", { name: /Share|Email/ }).first()).toBeVisible();
+
+  // The page itself never scrolls sideways.
+  expect(await phone.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390);
+  await phoneContext.close();
+});

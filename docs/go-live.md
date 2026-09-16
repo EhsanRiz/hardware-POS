@@ -17,7 +17,7 @@ fake sale in anybody's real books.
 | # | What | State |
 |---|------|-------|
 | 1 | Production is what the migrations say it is | **passed** — 2026-09-16 |
-| 2 | Shop settings: name, VAT, address, receipt footer | not started |
+| 2 | Shop settings: name, VAT, address, receipt footer | **passed, with four fixes** — 2026-09-16 |
 | 3 | Staff, PINs and permissions — including the sets nobody has signed in as | not started |
 | 4 | Devices: till paired, phone paired, both installed as apps | not started |
 | 5 | Catalogue: real items, real barcodes, real prices | not started |
@@ -125,3 +125,57 @@ trusted: `npm run test:smoke` stands up a server that answers the way the
 Worker does, serving the real `dist/`, and bends it each of those ways in
 turn. Every guard was broken by hand and the matching test seen to go red —
 and only the matching one; a single fault reports a single fault.
+
+
+## 2. Shop settings — passed, with four fixes
+
+Done on the till (the Shop tab is hidden on a phone by design, `Admin.tsx:148`).
+The VAT number and the four banking fields were blank; both were filled and
+both now print. Verified on a real slip and a real quotation: the name, the
+`VAT No:` line, the `PAYMENT DETAILS` block and `VAT included` are all on the
+paper, and everything typed survived a reload.
+
+**The VAT number was the find.** The rate is not a shop setting — it comes
+from a global `tax_rates` table where `standard` is 15%, and every product
+defaults to that code. So the till charged VAT and printed the amount, while
+the `VAT No:` line is conditional (`receipt.ts:274`) and was simply absent. A
+document showing a VAT amount without the supplier's VAT registration number
+is not a valid tax invoice. The client is VAT-registered, so filling the field
+was the whole fix — but any shop that is *not* registered would need every
+product's `tax_code` changed, because there is no per-shop switch. Worth
+knowing before the next shop, not during it.
+
+Four things came back from working the screen for real:
+
+- **Save now floats.** It sat at the foot of a page that runs to banking,
+  printing, slip width and two blocks of small print, so it was several
+  screens below whatever had just been corrected. It is pinned to the bottom
+  of the pane now.
+- **The send button says "Share" where that is what happens.** On a phone the
+  press opens the operating system's share sheet — WhatsApp first, mail some
+  way down — and the button said "Email", naming the one route least likely to
+  be taken, on the device it is pressed on most. It now asks the device
+  (`sendLabel`) and says "Email" only where a mail draft is really what opens.
+- **Quotes is on the phone.** "Can you send me that quote again" is asked of
+  whoever answers the phone, and the only copy lived on a till behind the
+  counter. It arrives without "Open on the till": a phone has no Sell screen to
+  open one onto, and a button that refuses is worse than no button.
+- **More than one bank account** is still outstanding — see below.
+
+### Outstanding: a shop usually has more than one bank
+
+The four banking fields are columns on the organisation, so a shop can record
+exactly one account. Real shops keep two or more, and in South Africa listing
+the customer's own bank matters: an EFT within a bank clears the same day,
+between banks it does not.
+
+Proposed shape, not yet built: bank accounts become their own table, each with
+a switch for whether it appears on documents. Every account with the switch on
+prints in the payment block. A shop keeping a second account for its own
+reasons switches that one off; a shop wanting customers to pick switches both
+on. This needs a migration, the four columns migrated into a first row, and
+every place that prints the block changed (`receipt.ts`, `pdf.ts`,
+`DocumentSheet.tsx`).
+
+Better done before the shop is live than after: moving the data while somebody
+is selling on it is the harder version of the same change.

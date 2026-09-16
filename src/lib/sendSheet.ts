@@ -54,6 +54,31 @@ export function canShareFile(file: File): boolean {
   return typeof navigator !== "undefined" && !!navigator.canShare?.({ files: [file] });
 }
 
+/**
+ * What to call the button that sends a document.
+ *
+ * The press does one of two quite different things and has always said only
+ * one of them. On a phone it opens the operating system's own share sheet,
+ * where WhatsApp is usually the first thing on it and mail is somewhere
+ * further down — so "Email" names the route the person is least likely to
+ * take, and names it on the device where the button is pressed most. Where
+ * the browser cannot attach a file the press really does open a mail draft,
+ * and there the old word is the true one.
+ *
+ * Probed with a one-byte stand-in rather than the real document: this decides
+ * a label drawn long before anybody clicks, and building a PDF to work out
+ * what to call a button is a screen that stutters every time it opens.
+ */
+export function sendLabel(): "Share" | "Email" {
+  try {
+    const probe = new File([new Uint8Array(1)], "q.pdf", { type: "application/pdf" });
+    return canShareFile(probe) ? "Share" : "Email";
+  } catch {
+    // A browser without the File constructor cannot be sharing files either.
+    return "Email";
+  }
+}
+
 /** Down to the device, under the document's own name. */
 export function saveFile(file: File): void {
   const url = URL.createObjectURL(file);
