@@ -1224,16 +1224,18 @@ begin
   select token into v_tok from till;
 
   perform public.pos_admin_save_settings(v_tok, '1234', jsonb_build_object(
-    'bank_name', 'First National Bank',
-    'bank_account_name', '5 Star Hardware CC',
-    'bank_account_number', '62012345678',
-    'bank_branch_code', '250655',
     'email', 'accounts@5star.co.za'));
+  -- 0103: the accounts are rows of their own, written as a list.
+  perform public.pos_admin_save_bank_accounts(v_tok, '1234', jsonb_build_array(
+    jsonb_build_object('bank_name', 'First National Bank',
+      'account_name', '5 Star Hardware CC', 'account_number', '62012345678',
+      'branch_code', '250655')));
 
   select * into v_row from public.pos_org_settings(v_tok);
-  perform assert_eq(v_row.bank_account_number, '62012345678',
+  perform assert_eq(v_row.bank_accounts->0->>'account_number', '62012345678',
     'the shop can say where its money goes');
-  perform assert_eq(v_row.bank_branch_code, '250655', 'branch code and all');
+  perform assert_eq(v_row.bank_accounts->0->>'branch_code', '250655',
+    'branch code and all');
   perform assert_eq(v_row.email, 'accounts@5star.co.za', 'and where to write to it');
 
   -- The rate the till shows comes from the table the sale reads, so the two
@@ -1246,8 +1248,94 @@ begin
   perform public.pos_admin_save_settings(v_tok, '1234',
     jsonb_build_object('phone', '065 735 2766'));
   select * into v_row from public.pos_org_settings(v_tok);
-  perform assert_eq(v_row.bank_account_number, '62012345678',
+  perform assert_eq(v_row.bank_accounts->0->>'account_number', '62012345678',
     'and editing the phone number does not lose the bank account');
+end $$;
+
+-- 0103: a shop banks in more than one place -----------------------------------
+--
+-- An EFT within a bank clears the same day and between banks it does not, so
+-- a customer who can see their own bank on the invoice pays sooner. The other
+-- half is the account a shop keeps to itself, which must never reach a till.
+
+do $$
+declare v_tok text; v_row record; v_n int; v_names text;
+begin
+  select token into v_tok from till;
+
+  perform public.pos_admin_save_bank_accounts(v_tok, '1234', jsonb_build_array(
+    jsonb_build_object('bank_name', 'First National Bank',
+      'account_name', '5 Star Hardware CC', 'account_number', '62012345678',
+      'branch_code', '250655'),
+    jsonb_build_object('bank_name', 'Capitec Business',
+      'account_name', '5 Star Hardware CC', 'account_number', '1051234567',
+      'branch_code', '470010'),
+    -- The shop's own, not the customer's business.
+    jsonb_build_object('bank_name', 'Standard Bank', 'account_name', 'Savings',
+      'account_number', '00099988877', 'branch_code', '051001',
+      'on_documents', false),
+    -- Somebody pressed Add and thought better of it.
+    jsonb_build_object('bank_name', '', 'account_name', '',
+      'account_number', '', 'branch_code', '')));
+
+  select count(*) into v_n from public.bank_accounts;
+  perform assert_eq(v_n, 3, 'an account with nothing in it is not an account');
+
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(jsonb_array_length(v_row.bank_accounts), 2,
+    'a till is given the accounts that go on documents, and no others');
+  perform assert_eq(v_row.bank_accounts->0->>'bank_name', 'First National Bank',
+    'in the order the shop entered them — its main account first');
+  perform assert_eq(v_row.bank_accounts->1->>'bank_name', 'Capitec Business',
+    'and the second after it');
+  perform assert_eq(
+    (select count(*)::int from jsonb_array_elements(v_row.bank_accounts) e
+      where e->>'account_number' = '00099988877'), 0,
+    'the account kept off documents never reaches the till at all');
+
+  -- The settings screen sees all of them, which is the only place it can.
+  select count(*) into v_n from public.pos_admin_bank_accounts(v_tok, '1234');
+  perform assert_eq(v_n, 3, 'the shop itself sees the private one');
+
+  -- Sent whole: a row taken off the screen is a row gone from the shop, with
+  -- no second call to forget it and no way for the two to disagree.
+  perform public.pos_admin_save_bank_accounts(v_tok, '1234', jsonb_build_array(
+    jsonb_build_object('bank_name', 'Capitec Business',
+      'account_name', '5 Star Hardware CC', 'account_number', '1051234567',
+      'branch_code', '470010')));
+  select count(*) into v_n from public.bank_accounts;
+  perform assert_eq(v_n, 1, 'saving the list is what deletes a removed account');
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(v_row.bank_accounts->0->>'bank_name', 'Capitec Business',
+    'and what is left is what was sent');
+
+  -- A shop with no accounts at all gets an empty list, not a null: the slip
+  -- decides whether to print a heading by counting, and counting null throws.
+  perform public.pos_admin_save_bank_accounts(v_tok, '1234', '[]'::jsonb);
+  select * into v_row from public.pos_org_settings(v_tok);
+  perform assert_eq(jsonb_array_length(v_row.bank_accounts), 0,
+    'no accounts is an empty list, never null');
+
+  -- Put back, because the tests after this one print documents.
+  perform public.pos_admin_save_bank_accounts(v_tok, '1234', jsonb_build_array(
+    jsonb_build_object('bank_name', 'First National Bank',
+      'account_name', '5 Star Hardware CC', 'account_number', '62012345678',
+      'branch_code', '250655')));
+end $$;
+
+-- Only somebody who may change the shop's settings may change where its money
+-- is paid. Both doors, because reading the list exposes the private account.
+do $$
+declare v_tok text;
+begin
+  select token into v_tok from till;
+  perform assert_refuses(
+    format('select public.pos_admin_save_bank_accounts(%L, %L, %L::jsonb)',
+           v_tok, '4321', '[]'),
+    'a cashier cannot move where the shop is paid');
+  perform assert_refuses(
+    format('select * from public.pos_admin_bank_accounts(%L, %L)', v_tok, '4321'),
+    'nor read the account the shop keeps to itself');
 end $$;
 
 -- 0039: approving over the phone without giving away a PIN --------------------

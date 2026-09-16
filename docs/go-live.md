@@ -162,20 +162,30 @@ Four things came back from working the screen for real:
   open one onto, and a button that refuses is worse than no button.
 - **More than one bank account** is still outstanding — see below.
 
-### Outstanding: a shop usually has more than one bank
+### Done: a shop banks in more than one place
 
 The four banking fields are columns on the organisation, so a shop can record
 exactly one account. Real shops keep two or more, and in South Africa listing
 the customer's own bank matters: an EFT within a bank clears the same day,
 between banks it does not.
 
-Proposed shape, not yet built: bank accounts become their own table, each with
-a switch for whether it appears on documents. Every account with the switch on
-prints in the payment block. A shop keeping a second account for its own
-reasons switches that one off; a shop wanting customers to pick switches both
-on. This needs a migration, the four columns migrated into a first row, and
-every place that prints the block changed (`receipt.ts`, `pdf.ts`,
-`DocumentSheet.tsx`).
+Built in 0103. Accounts are rows of their own, each with a switch for whether
+it appears on documents. Everything switched on prints, in the order the shop
+entered it; an account switched off stays in the settings screen and is never
+sent to a till at all, so it cannot be printed by accident. The four columns
+were migrated into a first row and then dropped — two places to write the same
+fact is how one of them goes stale, and the one that prints would not have been
+the one anybody edited.
 
-Better done before the shop is live than after: moving the data while somebody
-is selling on it is the harder version of the same change.
+Done before the shop went live rather than after: moving this data while
+somebody is selling on it is the harder version of the same change.
+
+**A bug found by re-reading the diff, not by a test.** Saving sends the list
+whole — that is what makes removing a row work — and the screen starts with an
+empty list. So anything that leaves it empty when it should not be is an
+instruction to delete every account the shop has. Two ways in: a read that
+fails, and a read that lands *after* somebody has started typing in a
+different field, because the page had one "has this been touched" flag for
+everything on it. The accounts now track their own, nothing is offered to edit
+until the read has come back, and a save with no read behind it writes
+nothing. There is a test for the failing read.

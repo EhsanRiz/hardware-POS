@@ -16,9 +16,13 @@ function load(path, stubs) {
 
 const moneyMod = load("src/lib/money.ts", {});
 const sheetMod = load("src/lib/sheet.ts", {});
+// The real one, not a stub: which accounts print, and in what order, is the
+// thing being checked here.
+const bankingMod = load("src/lib/banking.ts", {});
 const { sheetAsPdf, sheetFileName, widthOf } = load("src/lib/pdf.ts", {
   "./money": moneyMod,
   "./sheet": sheetMod,
+  "./banking": bankingMod,
 });
 
 const results = [];
@@ -172,15 +176,32 @@ check("and no part of it reaches the quantity column",
 console.log("--- pdf: the invoice differs from the quote ---");
 const inv = Buffer.from(sheetAsPdf({
   ...quote, kind: "invoice", number: "INV-000123", customer: { name: "Mokoena" },
-}, { ...shop, bank_name: "FNB", bank_account_number: "62012345678" })).toString("latin1");
+}, { ...shop, bank_accounts: [{ bank_name: "FNB", account_name: "",
+    account_number: "62012345678", branch_code: "" }] })).toString("latin1");
 inside(inv, "a tax invoice with banking");
 check("a tax invoice says so", inv.includes("(Tax Invoice) Tj"));
 check("it has no signature block", !inv.includes("(ACCEPTED BY) Tj"));
 check("it says where to pay while it is owed", inv.includes("(62012345678) Tj"));
 check("a paid one does not", !Buffer.from(sheetAsPdf(
   { ...quote, kind: "invoice", number: "INV-1", paidWith: "Cash" },
-  { ...shop, bank_name: "FNB", bank_account_number: "62012345678" }
+  { ...shop, bank_accounts: [{ bank_name: "FNB", account_name: "",
+    account_number: "62012345678", branch_code: "" }] }
 )).toString("latin1").includes("(62012345678) Tj"));
+
+// 0103: a shop banks in more than one place, and it matters which — an EFT
+// within a bank clears the same day, between banks it takes two. Both have to
+// be on the page or the customer cannot choose.
+const two = Buffer.from(sheetAsPdf(
+  { ...quote, kind: "invoice", number: "INV-000124", customer: { name: "Mokoena" } },
+  { ...shop, bank_accounts: [
+    { bank_name: "FNB", account_name: "5 Star", account_number: "62012345678", branch_code: "250655" },
+    { bank_name: "Capitec", account_name: "5 Star", account_number: "1051234567", branch_code: "470010" },
+  ] }
+)).toString("latin1");
+check("the first account is on the invoice", two.includes("(62012345678) Tj"));
+check("and so is the second", two.includes("(1051234567) Tj"));
+check("each under its own bank",
+  two.includes("(FNB) Tj") && two.includes("(Capitec) Tj"));
 
 console.log("--- pdf: more lines than fit on a page ---");
 const many = sheetAsPdf({
@@ -325,7 +346,8 @@ const stmt = Buffer.from(sheetAsPdf(stSheet([
     charge: 230, payment: 0, balance: 2190 },
   { date: "28 Aug 2026", ref: "receipt 1", detail: "Cash",
     charge: 0, payment: 400, balance: 1790 },
-]), { ...shop, bank_name: "FNB", bank_account_number: "62012345678" }))
+]), { ...shop, bank_accounts: [{ bank_name: "FNB", account_name: "",
+    account_number: "62012345678", branch_code: "" }] }))
   .toString("latin1");
 check("it says what it is", stmt.includes("(Statement) Tj"));
 // A statement with no period on it is a balance, and a customer cannot check

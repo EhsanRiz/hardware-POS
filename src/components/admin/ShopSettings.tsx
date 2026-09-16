@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  adminSaveSettings, setDeliveryCost, uploadShopLogo, type ShopDetails,
+  adminSaveSettings, fetchBankAccounts, saveBankAccounts, setDeliveryCost,
+  uploadShopLogo, type EditableBankAccount, type ShopDetails,
 } from "../../lib/adminApi";
 import { errorMessage } from "../../lib/errors";
 import { downscaleImage, imageSrc } from "../../lib/images";
@@ -37,19 +38,35 @@ const FIELDS: Field[] = [
   { key: "currency", label: "Currency symbol" },
 ];
 
-// Where the money goes. Kept as its own card rather than seven more boxes
-// under the address: these are only read by somebody about to pay, and they
-// have their own failure — a wrong digit here is an invoice nobody can settle.
-const BANK_FIELDS: Field[] = [
+// Where the money goes. Its own card rather than four more boxes under the
+// address: these are only read by somebody about to pay, and they have their
+// own failure — a wrong digit here is an invoice nobody can settle.
+//
+// Repeated per account since 0103. A shop banks in more than one place and it
+// matters to the customer which: an EFT within a bank clears the same day,
+// between banks it does not.
+interface BankField {
+  key: keyof Omit<EditableBankAccount, "on_documents">;
+  label: string;
+  hint?: string;
+  inputMode?: "numeric";
+}
+
+const BANK_FIELDS: BankField[] = [
   { key: "bank_name", label: "Bank" },
   {
-    key: "bank_account_name",
+    key: "account_name",
     label: "Account name",
     hint: "The name the account is held in, which is not always the trading name.",
   },
-  { key: "bank_account_number", label: "Account number", inputMode: "numeric" },
-  { key: "bank_branch_code", label: "Branch code", inputMode: "numeric" },
+  { key: "account_number", label: "Account number", inputMode: "numeric" },
+  { key: "branch_code", label: "Branch code", inputMode: "numeric" },
 ];
+
+const EMPTY_ACCOUNT: EditableBankAccount = {
+  bank_name: "", account_name: "", account_number: "", branch_code: "",
+  on_documents: true,
+};
 
 /**
  * The shop's own details.
@@ -68,6 +85,17 @@ export default function ShopSettings({ pin }: { pin: string }) {
   const [cols, setCols] = useState<number>(slipWidth);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /**
+   * The shop's accounts, read separately because the till is never given all
+   * of them — an account kept off documents exists only here.
+   *
+   * `banksLoaded` is not presentation. Saving sends the list WHOLE, so an
+   * empty list is an instruction to delete every account the shop has — and
+   * this starts empty. Until the read has come back there is nothing safe to
+   * send, so nothing is sent and nothing is offered to edit.
+   */
+  const [banks, setBanks] = useState<EditableBankAccount[]>([]);
+  const [banksLoaded, setBanksLoaded] = useState(false);
   // Read-only, and served rather than compiled in — see the note beside it.
   const [vat, setVat] = useState<number | null>(() => shopSettings().vat_rate ?? null);
   /**
@@ -101,6 +129,30 @@ export default function ShopSettings({ pin }: { pin: string }) {
       }
     });
   }, []);
+
+  /**
+   * The accounts, behind the same PIN that opened this screen.
+   *
+   * Not part of the settings the till caches: a till is only ever given the
+   * accounts meant for documents, and the one a shop keeps to itself has to
+   * be asked for by somebody who may change the settings. Held to the same
+   * rule as the fetch above — an answer that lands after somebody has started
+   * typing is not allowed to wipe what they typed.
+   */
+  const banksTouched = useRef(false);
+  useEffect(() => {
+    void fetchBankAccounts(pin)
+      .then((rows) => {
+        // Its own flag, not the page's. Somebody who starts typing their new
+        // phone number the instant the screen opens has not touched the
+        // ACCOUNTS, and treating that as "leave them alone" left the list
+        // empty — which Save would then have written, deleting every account
+        // the shop had. The two edits are independent and are tracked apart.
+        if (!banksTouched.current) setBanks(rows);
+        setBanksLoaded(true);
+      })
+      .catch((e) => setError(errorMessage(e, "Could not read the bank accounts")));
+  }, [pin]);
 
   function set(k: TextKey, v: string) {
     touched.current = true;
@@ -164,11 +216,29 @@ export default function ShopSettings({ pin }: { pin: string }) {
     setSaved(false);
   }
 
+  function setBank(i: number, patch: Partial<EditableBankAccount>) {
+    banksTouched.current = true;
+    setBanks((prev) => prev.map((b, n) => (n === i ? { ...b, ...patch } : b)));
+    setSaved(false);
+  }
+
   async function save() {
     setBusy(true);
     setError(null);
     try {
       await adminSaveSettings(pin, { ...f });
+      // The accounts go with the same press. Two calls, because they are two
+      // records — but one button, because a manager correcting a branch code
+      // and a phone number in one visit should press Save once.
+      //
+      // Only once they have been read. The list is sent whole, so sending the
+      // empty one this screen starts with would delete every account the shop
+      // has — and a read that failed or has not landed is not a shop with no
+      // accounts.
+      if (banksLoaded) {
+        await saveBankAccounts(pin, banks);
+        setBanks(await fetchBankAccounts(pin));
+      }
       await refreshSettings();
       setSaved(true);
     } catch (e) {
@@ -236,22 +306,93 @@ export default function ShopSettings({ pin }: { pin: string }) {
             and account sales. Leave blank and those slips say nothing about
             where to pay.
           </p>
+          {/* Why more than one is worth the trouble: a payment inside a bank
+              lands the same day, between banks it takes two — so a customer
+              who can see their own bank pays the shop sooner. */}
+          <p className="text-sm text-stone-500">
+            List more than one and a customer can pay into their own bank,
+            which clears the same day instead of in two.
+          </p>
         </div>
 
-        {BANK_FIELDS.map((field) => (
-          <label key={field.key} className="block">
-            <span className="text-sm text-stone-600">{field.label}</span>
-            <input
-              className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
-              value={f[field.key] ?? ""}
-              inputMode={field.inputMode}
-              onChange={(e) => set(field.key, e.target.value)}
-              aria-label={field.label}
-            />
-            {field.hint && <span className="text-xs text-stone-500">{field.hint}</span>}
-          </label>
+        {!banksLoaded && (
+          <p className="text-sm text-stone-500">Reading the shop's accounts…</p>
+        )}
+
+        {banksLoaded && banks.length === 0 && (
+          <p className="text-sm text-stone-500">
+            No account yet — invoices leave without saying where to pay.
+          </p>
+        )}
+
+        {banksLoaded && banks.map((bank, i) => (
+          <div key={i} className="rounded-lg border border-stone-200 p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-medium text-stone-800">
+                {bank.bank_name.trim() || `Account ${i + 1}`}
+              </h3>
+              <button
+                type="button"
+                className="ml-auto text-sm text-stone-600 underline"
+                aria-label={`Remove account ${i + 1}`}
+                onClick={() => {
+                  banksTouched.current = true;
+                  setBanks((prev) => prev.filter((_, n) => n !== i));
+                  setSaved(false);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+
+            {BANK_FIELDS.map((field) => (
+              <label key={field.key} className="block">
+                <span className="text-sm text-stone-600">{field.label}</span>
+                <input
+                  className="mt-1 w-full border border-stone-300 rounded-lg px-3 py-2"
+                  value={bank[field.key]}
+                  inputMode={field.inputMode}
+                  onChange={(e) => setBank(i, { [field.key]: e.target.value })}
+                  aria-label={`${field.label} ${i + 1}`}
+                />
+                {field.hint && <span className="text-xs text-stone-500">{field.hint}</span>}
+              </label>
+            ))}
+
+            {/* The account a shop keeps to itself. Switched off it stays here
+                and is never sent to a till, so it cannot be printed by
+                accident on somebody's invoice. */}
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={bank.on_documents}
+                aria-label={`Show account ${i + 1} on invoices and quotes`}
+                onChange={(e) => setBank(i, { on_documents: e.target.checked })}
+              />
+              <span className="text-sm text-stone-700">
+                Show on invoices and quotes
+                <span className="block text-xs text-stone-500">
+                  Off for an account the shop keeps to itself — it stays here
+                  and never reaches a till.
+                </span>
+              </span>
+            </label>
+          </div>
         ))}
 
+        <button
+          type="button"
+          className="px-3 py-2 rounded-lg border border-stone-300 text-sm"
+          disabled={!banksLoaded}
+          onClick={() => {
+            banksTouched.current = true;
+            setBanks((prev) => [...prev, { ...EMPTY_ACCOUNT }]);
+            setSaved(false);
+          }}
+        >
+          Add another account
+        </button>
       </div>
 
       <div className="max-w-xl bg-white rounded-xl border border-stone-200 p-5 space-y-4 mt-4">
@@ -557,10 +698,6 @@ function toDetails(s: ReturnType<typeof shopSettings>): ShopDetails {
     currency: s.currency,
     registration_number: s.registration_number,
     email: s.email ?? "",
-    bank_name: s.bank_name ?? "",
-    bank_account_name: s.bank_account_name ?? "",
-    bank_account_number: s.bank_account_number ?? "",
-    bank_branch_code: s.bank_branch_code ?? "",
     receipt_terms: s.receipt_terms ?? "",
     quote_terms: s.quote_terms ?? "",
     logo_url: s.logo_url ?? "",

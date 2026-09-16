@@ -477,10 +477,6 @@ export class Backend {
     currency: "R",
     registration_number: "",
     email: "",
-    bank_name: "",
-    bank_account_name: "",
-    bank_account_number: "",
-    bank_branch_code: "",
     // 0052: the small print, seeded as the migration seeds it.
     receipt_terms: "Returns within 10 days with this invoice and the original packaging. No returns on special orders or tinted paint.",
     quote_terms: "Prices are subject to stock availability.",
@@ -490,6 +486,22 @@ export class Backend {
     // 0064: read off the delivery line, not stored on the shop.
     delivery_cost: null as unknown as string,
   };
+  /**
+   * 0103: the shop's bank accounts, rows rather than four columns.
+   *
+   * Held apart from orgSettings because the server keeps them apart: a till is
+   * only ever given the accounts marked for documents, so an account a shop
+   * keeps to itself has to be un-printable here too. A fake that handed all of
+   * them to the till would make a passing test out of the exact leak this is
+   * meant to prevent.
+   */
+  bankAccounts: {
+    id: string; bank_name: string; account_name: string;
+    account_number: string; branch_code: string; on_documents: boolean;
+  }[] = [];
+  /** Set to see the settings screen with the accounts unreadable. */
+  bankReadFails = false;
+
   /**
    * The archived quotation PDFs, by quote id. Write once: the fake refuses a
    * second copy exactly as pos_quote_set_pdf does, because "the document the
@@ -561,6 +573,8 @@ export class Backend {
     this.archivedQuotes = {};
     this.deliveries = [];
     this.stockCounts = [];
+    this.bankAccounts = [];
+    this.bankReadFails = false;
   }
 
   /** Balance the way the real customer_balance() computes it. */
@@ -3059,15 +3073,64 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!tokenOk) return fail("Register not paired or revoked");
         // The rate the till displays comes from the server, as it does in
         // 0038 — the screen must not be able to outlive what is charged.
-        return json([{ ...be.orgSettings, vat_rate: 0.15 }]);
+        return json([{
+          ...be.orgSettings,
+          vat_rate: 0.15,
+          // 0103: the accounts meant for documents, in the shop's own order,
+          // and stripped of the switch — a till has no use for it and cannot
+          // leak what it was never given.
+          bank_accounts: be.bankAccounts
+            .filter((b) => b.on_documents)
+            .map(({ bank_name, account_name, account_number, branch_code }) => ({
+              bank_name, account_name, account_number, branch_code,
+            })),
+        }]);
+
+      // Every account, the private ones included — behind the PIN, which is
+      // the only place they can be seen.
+      case "rpc/pos_admin_bank_accounts": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        // A line that drops on the way in. The screen starts with an empty
+        // list and saving sends the list WHOLE, so a read that never came
+        // back must not be mistaken for a shop with no accounts.
+        if (be.bankReadFails) return fail("Could not read the bank accounts");
+        return json(be.bankAccounts.map((b) => ({ ...b })));
+      }
+
+      // Written whole: the list the screen holds IS the answer, so a row it
+      // no longer has is a row the shop no longer has. An account with nothing
+      // in it is dropped rather than stored, as pos_admin_save_bank_accounts
+      // drops it — otherwise a stray Add prints an empty heading.
+      case "rpc/pos_admin_save_bank_accounts": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const sent = (body.p_accounts ?? []) as Record<string, unknown>[];
+        be.bankAccounts = sent
+          .map((a, i) => ({
+            id: "bank" + (i + 1),
+            bank_name: String(a.bank_name ?? ""),
+            account_name: String(a.account_name ?? ""),
+            account_number: String(a.account_number ?? ""),
+            branch_code: String(a.branch_code ?? ""),
+            on_documents: a.on_documents !== false,
+          }))
+          .filter((a) => (a.bank_name + a.account_name + a.account_number + a.branch_code).trim() !== "");
+        return json(null);
+      }
 
       case "rpc/pos_admin_save_settings": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
-        Object.assign(
-          be.orgSettings,
-          body.p_settings as Record<string, string | boolean>
-        );
+        const sent = { ...(body.p_settings as Record<string, string | boolean>) };
+        // 0103 dropped the four banking columns, so this RPC cannot write
+        // them however they are sent. Dropped here rather than merged, or a
+        // test could "save" a bank account through a door the server shut.
+        for (const gone of ["bank_name", "bank_account_name",
+                            "bank_account_number", "bank_branch_code"]) {
+          delete sent[gone];
+        }
+        Object.assign(be.orgSettings, sent);
         return json(null);
       }
 

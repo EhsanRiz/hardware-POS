@@ -27,6 +27,7 @@
  * logoBytes.ts for why JPEG and why it is loaded ahead of the click. Without
  * one the document sets the shop's name in type, which is a letterhead too.
  */
+import { bankingRows } from "./banking";
 import { money } from "./money";
 import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet, type SheetKind } from "./sheet";
 import type { PdfImage } from "./logoBytes";
@@ -507,21 +508,16 @@ export function sheetAsPdf(
         p.y += 12;
       }
       p.y += 6;
-      const stBanking: [string, string][] = (
-        [
-          ["Bank", s.bank_name],
-          ["Account name", s.bank_account_name],
-          ["Account no", s.bank_account_number],
-          ["Branch code", s.bank_branch_code],
-        ] as [string, string | null | undefined][]
-      ).filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
+      const stBanking = bankingRows(s);
       if (owed && stBanking.length) {
-        for (const [k, v] of stBanking) {
-          p.text(k, SIDE, 9, { colour: GREY });
-          p.text(v, SIDE + 80, 9);
-          p.y += 12;
+        for (const rows of stBanking) {
+          for (const [k, v] of rows) {
+            p.text(k, SIDE, 9, { colour: GREY });
+            p.text(v, SIDE + 80, 9);
+            p.y += 12;
+          }
+          p.y += 6;
         }
-        p.y += 6;
       }
       const stTerms = (s.receipt_terms ?? "").trim();
       for (const line of stTerms ? wrap(stTerms, 9, RIGHT - 175 - SIDE) : []) {
@@ -604,21 +600,16 @@ export function sheetAsPdf(
       }
       p.y += 6;
     }
-    const banking: [string, string][] = (
-      [
-        ["Bank", s.bank_name],
-        ["Account name", s.bank_account_name],
-        ["Account no", s.bank_account_number],
-        ["Branch code", s.bank_branch_code],
-      ] as [string, string | null | undefined][]
-    ).filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
+    const banking = bankingRows(s);
     if (owed && banking.length) {
-      for (const [k, v] of banking) {
-        p.text(k, SIDE, 9, { colour: GREY });
-        p.text(v, SIDE + 80, 9);
-        p.y += 12;
+      for (const rows of banking) {
+        for (const [k, v] of rows) {
+          p.text(k, SIDE, 9, { colour: GREY });
+          p.text(v, SIDE + 80, 9);
+          p.y += 12;
+        }
+        p.y += 6;
       }
-      p.y += 6;
     }
     if (sheet.kind === "delivery") {
       // What the customer is actually signing: quantities and condition. The

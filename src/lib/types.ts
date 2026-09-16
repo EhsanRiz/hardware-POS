@@ -293,6 +293,14 @@ export interface Register {
   created_at: string;
 }
 
+/** One of the shop's accounts, as a document prints it. */
+export interface BankAccount {
+  bank_name: string;
+  account_name: string;
+  account_number: string;
+  branch_code: string;
+}
+
 /** Shop details for the invoice header, read from the database. */
 export interface ShopSettings {
   shop_name: string;
@@ -307,11 +315,13 @@ export interface ShopSettings {
    * Where the money goes. Printed when a slip leaves the shop with the amount
    * still owed — an EFT or account invoice with no account number on it makes
    * the customer phone up before they can pay.
+   *
+   * A list since 0103, and only the accounts the shop puts on documents: an
+   * EFT within a bank clears the same day and between banks it does not, so a
+   * customer shown their own bank pays sooner. An account a shop keeps to
+   * itself never leaves the server, so a till cannot print it by accident.
    */
-  bank_name?: string | null;
-  bank_account_name?: string | null;
-  bank_account_number?: string | null;
-  bank_branch_code?: string | null;
+  bank_accounts: BankAccount[];
   /**
    * The small print. `receipt_terms` ends every till slip (returns, special
    * orders, warranty); `quote_terms` ends every quote (validity, stock).

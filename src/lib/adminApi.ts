@@ -249,6 +249,54 @@ export async function adminSaveSettings(
   if (error) throw error;
 }
 
+/**
+ * One of the shop's bank accounts, as the settings screen edits it.
+ *
+ * `on_documents` is the half that is not about filing: a shop often keeps a
+ * second account for its own reasons, and that one has no business on a
+ * customer's invoice. Only accounts with this on are ever sent to a till.
+ */
+export interface EditableBankAccount {
+  bank_name: string;
+  account_name: string;
+  account_number: string;
+  branch_code: string;
+  on_documents: boolean;
+}
+
+/**
+ * Every account, including the ones kept off documents — which is the only
+ * place they can be seen at all.
+ */
+export async function fetchBankAccounts(pin: string): Promise<EditableBankAccount[]> {
+  const { data, error } = await supabase.rpc("pos_admin_bank_accounts", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
+  if (error) throw error;
+  return (data ?? []) as EditableBankAccount[];
+}
+
+/**
+ * Write the list whole.
+ *
+ * The screen edits rows and then saves, so the list it holds is the answer:
+ * sending all of it means a row removed on screen is a row removed in the
+ * shop, with no separate call to forget and no way for the two to disagree
+ * halfway through. Order is kept — a shop puts its main account first and
+ * means it.
+ */
+export async function saveBankAccounts(
+  pin: string, accounts: EditableBankAccount[]
+): Promise<void> {
+  const { error } = await supabase.rpc("pos_admin_save_bank_accounts", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_accounts: accounts,
+  });
+  if (error) throw error;
+}
+
 /** Staff roster for this shop. Names, phones, roles — never PINs. */
 export interface StaffUser {
   id: string;
@@ -444,11 +492,6 @@ export interface ShopDetails {
   currency: string;
   registration_number: string;
   email: string;
-  /** Where an EFT or account customer actually sends the money. */
-  bank_name: string;
-  bank_account_name: string;
-  bank_account_number: string;
-  bank_branch_code: string;
   /** The small print at the foot of a till slip, and of a quote. */
   receipt_terms: string;
   quote_terms: string;

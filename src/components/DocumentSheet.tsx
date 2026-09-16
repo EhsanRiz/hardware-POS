@@ -2,6 +2,7 @@ import { money } from "../lib/money";
 import { useDocFit } from "../lib/docFit";
 import { fmtDate } from "../lib/dates";
 import { imageSrc } from "../lib/images";
+import { bankingRows } from "../lib/banking";
 import { shopSettings } from "../lib/settings";
 import { SHEET_PRICED, SHEET_TITLE, shopReach, shopWhere, type Sheet } from "../lib/sheet";
 import InnovaMark from "./InnovaMark";
@@ -54,12 +55,9 @@ export default function DocumentSheet({
   // invoice is, and sending one without bank details is asking twice.
   const owed = (sheet.kind === "invoice" && !sheet.paidWith)
     || (sheet.kind === "statement" && sheet.total > 0);
-  const banking = [
-    ["Bank", s.bank_name],
-    ["Account name", s.bank_account_name],
-    ["Account no", s.bank_account_number],
-    ["Branch code", s.bank_branch_code],
-  ].filter(([, v]) => (v ?? "").trim() !== "") as [string, string][];
+  // Every account the shop puts on documents: a customer paying from the same
+  // bank has the money in the same day, and between banks it is two.
+  const banking = bankingRows(s);
 
   const [sent, setSent] = useState<SendOutcome | null>(null);
   // The mark has to be bytes before anybody clicks: a PDF built inside a click
@@ -287,15 +285,15 @@ export default function DocumentSheet({
                 {sheet.note && <p className="doc-note">{sheet.note}</p>}
                 {terms.trim() && <p className="doc-terms">{terms.trim()}</p>}
                 {/* Where to pay, on an invoice that leaves owing. */}
-                {owed && banking.length > 0 && (
-                  <table className="doc-bank">
+                {owed && banking.map((rows, i) => (
+                  <table className="doc-bank" key={i}>
                     <tbody>
-                      {banking.map(([k, v]) => (
+                      {rows.map(([k, v]) => (
                         <tr key={k}><th>{k}</th><td>{v}</td></tr>
                       ))}
                     </tbody>
                   </table>
-                )}
+                ))}
                 {/* A builder signs this and sends it back, and the signed page
                     is the order. It is the whole reason a quote wants to be
                     A4 rather than a curl of till roll. */}

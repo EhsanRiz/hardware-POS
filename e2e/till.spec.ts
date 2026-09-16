@@ -1758,12 +1758,11 @@ test("an EFT slip says where to pay, and a cash slip does not", async ({ page })
   // customer had to phone the shop before they could settle. Cash slips still
   // say nothing: that customer has already paid, and the shop's account number
   // does not belong on a hundred till slips a day.
-  Object.assign(be.orgSettings, {
-    bank_name: "First National Bank",
-    bank_account_name: "Ladybrand Hardware CC",
-    bank_account_number: "62012345678",
-    bank_branch_code: "250655",
-  });
+  be.bankAccounts = [{
+    id: "bank1", bank_name: "First National Bank",
+    account_name: "Ladybrand Hardware CC", account_number: "62012345678",
+    branch_code: "250655", on_documents: true,
+  }];
 
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
@@ -1798,13 +1797,14 @@ test("the shop's banking details are editable and reach the next invoice", async
   await openManage(page);
   await page.getByRole("button", { name: /^Shop$/ }).click();
 
-  await page.getByLabel("Bank", { exact: true }).fill("Capitec");
-  await page.getByLabel("Account number").fill("1051234567");
-  await page.getByLabel("Branch code").fill("470010");
+  await page.getByRole("button", { name: "Add another account" }).click();
+  await page.getByLabel("Bank 1", { exact: true }).fill("Capitec");
+  await page.getByLabel("Account number 1").fill("1051234567");
+  await page.getByLabel("Branch code 1").fill("470010");
   await page.getByRole("button", { name: /^Save$/ }).click();
 
-  await expect.poll(() => be.orgSettings.bank_account_number).toBe("1051234567");
-  expect(be.orgSettings.bank_branch_code).toBe("470010");
+  await expect.poll(() => be.bankAccounts[0]?.account_number).toBe("1051234567");
+  expect(be.bankAccounts[0]?.branch_code).toBe("470010");
 
   // The rate is shown, not offered as a box: it is national, and the table it
   // comes from is shared by every shop on this system.
@@ -6091,10 +6091,10 @@ test("an account sale prints as a full A4 tax invoice, with where to pay on it",
     phone: "051 924 0000", is_trade: false, credit_limit: 25000,
     balance: 0, available: 25000,
   });
-  Object.assign(be.orgSettings, {
-    bank_name: "FNB", bank_account_name: "5 Star Hardware",
-    bank_account_number: "62012345678", bank_branch_code: "250655",
-  });
+  be.bankAccounts = [{
+    id: "bank1", bank_name: "FNB", account_name: "5 Star Hardware",
+    account_number: "62012345678", branch_code: "250655", on_documents: true,
+  }];
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
@@ -6127,7 +6127,10 @@ test("an account sale prints as a full A4 tax invoice, with where to pay on it",
 });
 
 test("a cash sale's A4 invoice says how it was paid, and does not print the banking", async ({ page }) => {
-  Object.assign(be.orgSettings, { bank_name: "FNB", bank_account_number: "62012345678" });
+  be.bankAccounts = [{
+    id: "bank1", bank_name: "FNB", account_name: "", account_number: "62012345678",
+    branch_code: "", on_documents: true,
+  }];
   await pairAndSignIn(page, USERS.employee.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
   await page.keyboard.press("Enter");
@@ -10292,4 +10295,105 @@ test("a phone can find a quote and send it without going back to the shop", asyn
   expect(await phone.evaluate(() => document.documentElement.scrollWidth))
     .toBeLessThanOrEqual(390);
   await phoneContext.close();
+});
+
+test("a shop banks in two places, and the customer can pay into either", async ({ page }) => {
+  // Not a filing preference: an EFT within a bank clears the same day and
+  // between banks it takes two, so a customer shown their own bank pays the
+  // shop sooner. A shop that lists one account is asking half its customers
+  // to wait, and then chasing them for it.
+  be.bankAccounts = [
+    { id: "b1", bank_name: "First National Bank", account_name: "Ladybrand Hardware CC",
+      account_number: "62012345678", branch_code: "250655", on_documents: true },
+    { id: "b2", bank_name: "Capitec Business", account_name: "Ladybrand Hardware CC",
+      account_number: "1051234567", branch_code: "470010", on_documents: true },
+    // The shop's own, which a customer must never be handed.
+    { id: "b3", bank_name: "Standard Bank", account_name: "Savings",
+      account_number: "00099988877", branch_code: "051001", on_documents: false },
+  ];
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^EFT$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+
+  const slip = page.locator("#print-area");
+  await expect(slip).toContainText("PAYMENT DETAILS");
+  await expect(slip).toContainText("62012345678");
+  await expect(slip).toContainText("1051234567");
+  await expect(slip).toContainText("Capitec Business");
+  // One heading over both, not two blocks each announcing themselves.
+  expect((await slip.innerText()).match(/PAYMENT DETAILS/g)?.length).toBe(1);
+  // And the account the shop keeps to itself is nowhere near the counter —
+  // the till was never sent it, so it cannot be printed by accident.
+  await expect(slip).not.toContainText("00099988877");
+  await expect(slip).not.toContainText("Standard Bank");
+});
+
+test("the account a shop keeps to itself never leaves the settings screen", async ({ page }) => {
+  be.bankAccounts = [
+    { id: "b1", bank_name: "First National Bank", account_name: "Ladybrand Hardware CC",
+      account_number: "62012345678", branch_code: "250655", on_documents: true },
+    { id: "b2", bank_name: "Standard Bank", account_name: "Savings",
+      account_number: "00099988877", branch_code: "051001", on_documents: false },
+  ];
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+
+  // Here it is visible, because here is where it is edited.
+  await expect(page.getByLabel("Account number 2")).toHaveValue("00099988877");
+  await expect(page.getByLabel("Show account 2 on invoices and quotes")).not.toBeChecked();
+  await expect(page.getByLabel("Show account 1 on invoices and quotes")).toBeChecked();
+});
+
+test("an account taken off the screen is an account the shop no longer has", async ({ page }) => {
+  // Saving sends the list whole, so there is no second call to forget a row
+  // and no way for the screen and the shop to disagree halfway through.
+  be.bankAccounts = [
+    { id: "b1", bank_name: "First National Bank", account_name: "Ladybrand Hardware CC",
+      account_number: "62012345678", branch_code: "250655", on_documents: true },
+    { id: "b2", bank_name: "Capitec Business", account_name: "Ladybrand Hardware CC",
+      account_number: "1051234567", branch_code: "470010", on_documents: true },
+  ];
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await expect(page.getByLabel("Account number 1")).toHaveValue("62012345678");
+
+  await page.getByRole("button", { name: "Remove account 1" }).click();
+  await page.getByRole("button", { name: /^Save$/ }).click();
+
+  await expect.poll(() => be.bankAccounts.length).toBe(1);
+  expect(be.bankAccounts[0].account_number).toBe("1051234567");
+});
+
+test("a save cannot delete the accounts it never managed to read", async ({ page }) => {
+  // The list is sent WHOLE — that is what makes removing a row work — and the
+  // screen starts with an empty one. So anything that leaves it empty when it
+  // should not be is an instruction to delete every account the shop has.
+  // Two ways in: a read that fails, and a read that lands after somebody has
+  // already started typing in a different field.
+  be.bankAccounts = [
+    { id: "b1", bank_name: "First National Bank", account_name: "Ladybrand Hardware CC",
+      account_number: "62012345678", branch_code: "250655", on_documents: true },
+  ];
+  be.bankReadFails = true;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Shop$/ }).click();
+  await expect(page.getByText("Could not read the bank accounts")).toBeVisible();
+  // Nothing to edit, because there is nothing safe to send.
+  await expect(page.getByRole("button", { name: "Add another account" })).toBeDisabled();
+
+  // A perfectly ordinary edit to something else, saved.
+  await page.getByLabel("Phone").fill("051 924 1111");
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await expect.poll(() => be.orgSettings.phone).toBe("051 924 1111");
+
+  // And the account is still there.
+  expect(be.bankAccounts).toHaveLength(1);
+  expect(be.bankAccounts[0].account_number).toBe("62012345678");
 });

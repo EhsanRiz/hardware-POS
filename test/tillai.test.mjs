@@ -69,6 +69,9 @@ console.log("--- what is forbidden, and what only sounds like it ---");
 check("the buying price", forbidden("cost"), true);
 check("its cousins", forbidden("unit_cost") && forbidden("cost_price"), true);
 check("the bank account", forbidden("bank_account_number"), true);
+// 0103 renamed it, and a denylist that still names the old shape is a
+// denylist that stopped working the day the column moved.
+check("and the list it became", forbidden("bank_accounts"), true);
 check("an account balance", forbidden("balance"), true);
 check("but not the delivery charge printed on every quote", forbidden("delivery_cost"), false);
 

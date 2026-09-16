@@ -212,10 +212,9 @@ export async function fetchSettings(): Promise<ShopSettings> {
     currency: row?.currency ?? "R",
     registration_number: row?.registration_number ?? "",
     email: row?.email ?? "",
-    bank_name: row?.bank_name ?? "",
-    bank_account_name: row?.bank_account_name ?? "",
-    bank_account_number: row?.bank_account_number ?? "",
-    bank_branch_code: row?.bank_branch_code ?? "",
+    // A list, and an empty one rather than undefined: every caller counts it
+    // to decide whether to print a heading at all.
+    bank_accounts: Array.isArray(row?.bank_accounts) ? row.bank_accounts : [],
     receipt_terms: row?.receipt_terms ?? "",
     quote_terms: row?.quote_terms ?? "",
     logo_url: row?.logo_url ?? "",

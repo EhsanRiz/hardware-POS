@@ -1,6 +1,7 @@
 import type { CashSession } from "./cashup";
 import type { DayClose } from "./reports";
 import { CURRENCY, slipWidth } from "./config";
+import { bankingRows } from "./banking";
 import { formatPhone } from "./phone";
 import { shopSettings } from "./settings";
 import type {
@@ -438,22 +439,26 @@ export function buildReceiptText(
   return out.join("\n");
 }
 
-/** The shop's account, for somebody who still has to pay it. */
+/**
+ * The shop's accounts, for somebody who still has to pay it.
+ *
+ * Every account the shop puts on documents, in the order it entered them.
+ * A customer paying from the same bank has the money in by the afternoon;
+ * between banks it is two days, which is two days of the shop chasing it.
+ */
 function bankingBlock(out: string[]): void {
-  const s = settings();
-  const rows: [string, string][] = [
-    ["Bank", s.bank_name ?? ""],
-    ["Account name", s.bank_account_name ?? ""],
-    ["Account no", s.bank_account_number ?? ""],
-    ["Branch code", s.bank_branch_code ?? ""],
-  ];
-  const filled = rows.filter(([, v]) => v.trim() !== "");
+  const accounts = bankingRows(settings());
   // Nothing set is not a heading with nothing under it.
-  if (filled.length === 0) return;
+  if (accounts.length === 0) return;
   out.push("");
   out.push(divider());
   out.push(bold("PAYMENT DETAILS"));
-  for (const [label, value] of filled) out.push(lineItem(label, value));
+  accounts.forEach((rows, i) => {
+    // A blank line between them, so two accounts do not read as eight lines
+    // of one. Not before the first, which already follows the heading.
+    if (i > 0) out.push("");
+    for (const [label, value] of rows) out.push(lineItem(label, value));
+  });
 }
 
 /**
