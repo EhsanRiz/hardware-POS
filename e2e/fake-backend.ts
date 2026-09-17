@@ -137,7 +137,7 @@ export const USERS = {
   // 0104: the Helper role — nothing from the role, only what was ticked. The
   // stock room and the shelf, and NOT the till. As above, the permissions
   // here are the effective set, which for a helper is exactly the ticks.
-  storeman: { pin: "888888", phone: "+27820000032", row: { id: "u4", name: "Thabo", role: "helper", phone: "+27820000032", email: null, permissions: ["manage_inventory","shelf_capture"] } },
+  storeman: { pin: "888888", phone: "+27820000032", row: { id: "u4", name: "Kagiso", role: "helper", phone: "+27820000032", email: null, permissions: ["manage_inventory","shelf_capture"] } },
 };
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
@@ -317,7 +317,7 @@ export class Backend {
       last_code_error: null },
     // 0104: a Helper. The role grants nothing, so these two ticks are the
     // whole of what he can do — the stock room and the shelf, and not the till.
-    { id: "u4", name: "Thabo", phone: "+27820000032", role: "helper",
+    { id: "u4", name: "Kagiso", phone: "+27820000032", role: "helper",
       status: "active", active: true, permissions: ["manage_inventory", "shelf_capture"],
       discount_limit_percent: null, discount_limit_amount: null,
       last_code_error: null },

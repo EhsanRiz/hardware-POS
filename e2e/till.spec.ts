@@ -503,7 +503,7 @@ test.describe("sign-in on a phone", () => {
 
     // Every name is on screen without scrolling, and nothing spills sideways.
     const names = page.locator(".login-who button");
-    await expect(names).toHaveCount(3);
+    await expect(names).toHaveCount(4);
     for (const box of await names.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().bottom))) {
       expect(box).toBeLessThanOrEqual(844);
     }
@@ -2602,6 +2602,12 @@ async function openManage(
       await gate.locator(`button:text-is("${d}")`).first().click();
     }
   }
+  // Waited for by the SCREEN, not by a heading called "Manage" — the gate
+  // renders one of those too (ManagerPinModal's own title), so a test that
+  // waits for the heading is satisfied while the door is still shut. It won
+  // that race while the gate made one round trip to prove the PIN and lost it
+  // the day a second was added.
+  await expect(screen).toBeVisible();
 }
 
 /**

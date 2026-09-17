@@ -1380,7 +1380,14 @@ export default function POS() {
             if (!user) throw new Error("Sign in first.");
             if (!isOnline()) {
               const who = await findByPinOffline(entered);
-              if (!who || who.id !== user.id) {
+              // Three different things, said as three different sentences: a
+              // PIN this device has never seen, a PIN that belongs to somebody
+              // else, and your own PIN opening nothing. Collapsing them loses
+              // the one a person can act on.
+              if (!who) {
+                throw new Error("That PIN is not known on this device.");
+              }
+              if (who.id !== user.id) {
                 throw new Error("That is not your PIN.");
               }
               if (!canAny(who, [...BACK_OFFICE])) {
