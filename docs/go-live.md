@@ -341,7 +341,49 @@ device and check the shop they are shown:
 4. **Driver on a phone.** Gets Deliveries and Look it up, and nothing else.
 5. **Manager on a phone.** Approvals arrive; the bell carries them; the parked
    sale from (1) can be approved from the phone without going to the counter.
+6. **Somebody else's PIN.** On the Storeman's session, open Manage and enter
+   the *manager's* PIN. It must be refused — "That is not your PIN." A manager
+   who wants the back office at her till signs in as himself.
 
 What to watch for: a menu row that opens and then refuses is a bug, not a
 safeguard — `lib/menu.ts` is supposed to hide what a person cannot do, and the
 RPC behind it re-checks anyway. Either half failing is worth knowing.
+
+### What the first run of this step found
+
+Worth reading before running it again, because all four were found in ten
+minutes of looking at one real screen, and none of them could have appeared
+while everything was driven as Owner — `can()` short-circuits for an admin.
+
+A Helper holding exactly `manage_inventory` and `shelf_capture` was stored
+correctly and the server refused everything it should. **The permission model
+was never wrong. Four separate screens were**, and two of them disagreed with
+each other.
+
+- **She landed on the Sell screen.** `take_payments` is not hers and the
+  tender button refuses, so she could scan a whole basket together and find
+  that out at the end. A non-seller starts on Deliveries now, with the Sell tab
+  shut the way Quotes and Accounts already were.
+- **She was offered a Manage button into an empty room.** It asked for
+  `manage_catalogue OR manage_inventory OR shelf_capture`, but
+  `manage_inventory` opens nothing in Manage — the Stock room is a screen on
+  the till — and the Shelf tab needs a lens the counter machine has not got.
+  Two lists that could disagree, and did. There is one now
+  (`lib/menu.ts`, `backOfficeTabs`): the tabs are drawn from it and the button
+  is whether it is empty.
+- **An empty tab list fell through to the catalogue.** `?? "catalogue"` handed
+  her a catalogue with a **New product** button, every count reading nought
+  because the server refused each call with her PIN. Gone; an empty back
+  office says so in words.
+- **The back office took anybody's PIN.** The modal said "Enter your PIN" and
+  did not check whose it was: it proved the PIN with a call the *signed-in*
+  person was entitled to make, then carried that PIN into every call inside.
+  A storeman who knew the manager's PIN got the manager's back office on her
+  own session — her screen, his authority — and with the catalogue fallback
+  above, a New product button that would have worked. It is checked against
+  the signed-in person now, online and off.
+
+The lesson for the rest of this rehearsal: **the database holding the line is
+not the same as the screen being right.** Every one of these showed a door
+that the server would have slammed. Sign in as each person and look at what
+they are offered, not only at what happens when they try it.
