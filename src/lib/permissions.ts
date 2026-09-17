@@ -25,7 +25,7 @@ export const PERMISSIONS = [
 ] as const;
 
 export type PermKey = (typeof PERMISSIONS)[number]["key"];
-export type RoleKey = "admin" | "manager" | "employee";
+export type RoleKey = "admin" | "manager" | "employee" | "helper";
 
 /**
  * What a role is called on screen.
@@ -39,6 +39,10 @@ export const ROLE_TITLE: Record<RoleKey, string> = {
   admin: "Owner",
   manager: "Manager",
   employee: "Counter",
+  // 0104: somebody who starts with nothing. The boxes below a role only ever
+  // ADD, so a person on the Counter role can always take money however few
+  // are ticked — which is not what a shop means by "he only does deliveries".
+  helper: "Helper",
 };
 
 /** The title for a role, tolerating a value the client has not heard of. */
@@ -68,7 +72,65 @@ export const ROLE_DEFAULTS: Record<RoleKey, PermKey[]> = {
     "shelf_capture",
   ],
   employee: ["take_payments", "apply_discount"],
+  // Nothing. Everything a helper has is something somebody ticked.
+  helper: [],
 };
+
+/**
+ * The jobs a shop actually hires for.
+ *
+ * A role and a list of permissions is the truth, and it is also sixteen boxes
+ * and three radio buttons to get right for every new person — which is how a
+ * driver ends up able to refund a sale because somebody ticked the wrong row
+ * on a Friday. These are the sets worth starting from, named the way the shop
+ * names them. They are a starting point and not a cage: the role and every box
+ * stay editable afterwards.
+ *
+ * Storeman, Buyer and Driver are Helpers on purpose. As Counter they would
+ * carry the till whatever was ticked.
+ */
+export interface StaffPreset {
+  key: string;
+  label: string;
+  blurb: string;
+  role: RoleKey;
+  /** Ticked on top of whatever the role already grants. */
+  extras: PermKey[];
+}
+
+export const STAFF_PRESETS: StaffPreset[] = [
+  {
+    key: "cashier", label: "Cashier", role: "employee", extras: [],
+    blurb: "Rings up sales and takes payment.",
+  },
+  {
+    key: "supervisor", label: "Supervisor", role: "employee",
+    extras: ["approve_discount", "void_refund", "manage_customers"],
+    blurb: "Senior at the counter: clears a colleague's discount, takes goods back.",
+  },
+  {
+    key: "storeman", label: "Storeman", role: "helper",
+    extras: ["manage_inventory", "shelf_capture"],
+    blurb: "Receives deliveries, counts stock, photographs the shelf. Does not sell.",
+  },
+  {
+    key: "driver", label: "Driver", role: "helper", extras: [],
+    blurb: "Deliveries and looking an item up. Nothing else.",
+  },
+  {
+    key: "buyer", label: "Buyer", role: "helper",
+    extras: ["manage_purchasing", "view_cost_prices", "view_reports"],
+    blurb: "Orders from suppliers and sees what things cost.",
+  },
+  {
+    key: "manager", label: "Manager", role: "manager", extras: [],
+    blurb: "Runs the floor: stock, prices, accounts, cash-up, approvals.",
+  },
+  {
+    key: "owner", label: "Owner", role: "admin", extras: [],
+    blurb: "Everything, including staff and shop settings.",
+  },
+];
 
 // Permissions that only an admin may grant.
 export const ADMIN_LEVEL_PERMS: PermKey[] = ["manage_staff", "manage_settings"];

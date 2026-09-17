@@ -8,6 +8,7 @@
 // PIN against, because a PIN alone identifies nobody in a multi-tenant system.
 import { requireToken } from "./api";
 import { API_BASE, ownOrigin, supabase } from "./supabase";
+import type { RoleKey } from "./permissions";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "./types";
 
 export async function adminListProducts(pin: string): Promise<AdminProduct[]> {
@@ -302,7 +303,7 @@ export interface StaffUser {
   id: string;
   name: string;
   phone: string;
-  role: "admin" | "manager" | "employee";
+  role: RoleKey;
   status: "invited" | "active" | "disabled";
   active: boolean;
   permissions: string[];
@@ -405,7 +406,7 @@ export async function adminInviteUser(
   pin: string,
   name: string,
   phone: string,
-  role: "admin" | "manager" | "employee" = "employee",
+  role: RoleKey = "employee",
   permissions: string[] = []
 ): Promise<StaffUser> {
   const { data, error } = await supabase.rpc("pos_admin_invite_user", {
@@ -435,7 +436,7 @@ export async function adminUpdateUser(
   id: string,
   patch: {
     name?: string;
-    role?: "admin" | "manager" | "employee";
+    role?: RoleKey;
     permissions?: string[];
     active?: boolean;
     /**

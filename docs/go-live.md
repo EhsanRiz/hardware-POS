@@ -269,9 +269,15 @@ role with the listed permissions added.
 | **Manager** | manager | the role's own set | runs the floor: approves discounts, cashes up, orders |
 | **Supervisor** | employee | `approve_discount`, `void_refund`, `manage_customers` | senior hand at the counter — can clear a colleague's discount without fetching the manager |
 | **Cashier** | employee | — | the till: `take_payments`, `apply_discount` come with the role |
-| **Storeman** | employee | `manage_inventory`, `shelf_capture` | receives deliveries, counts stock, photographs shelf items |
-| **Buyer** | employee | `manage_purchasing`, `view_cost_prices`, `view_reports` | places the orders and sees what things cost |
-| **Driver** | employee | — | Deliveries and Look it up need no permission at all |
+| **Storeman** | **helper** | `manage_inventory`, `shelf_capture` | receives deliveries, counts stock, photographs shelf items |
+| **Buyer** | **helper** | `manage_purchasing`, `view_cost_prices`, `view_reports` | places the orders and sees what things cost |
+| **Driver** | **helper** | — | Deliveries and Look it up need no permission at all |
+
+These are in the app, not only in this document: **Manage → Staff** asks "What
+do they do?" above the role, and pressing a job sets the role and ticks its
+boxes. Everything below stays editable — a starting point, not a cage. It is
+on the manager's phone as well as the till, because a manager hiring somebody
+is in the aisle, not at the counter.
 
 Two things worth knowing before these are handed out.
 
@@ -280,19 +286,26 @@ supervisor can fix a price or a barcode without being shown the shop's
 margins. Keep it that way: it is the difference between trusting somebody with
 the shelf and trusting them with the business.
 
-**Nobody can be given *less* than a cashier.** The `employee` role carries
-`take_payments` and `apply_discount`, the boxes only add, so a Storeman and a
-Driver can both ring up a sale. A phone cannot sell — the database refuses a
-sale on a personal register — so in practice this needs physical access to a
-till. It is still not what the shop means when it says "he only does
-deliveries".
+**Nobody could be given *less* than a cashier — fixed in 0104/0105.** The
+`employee` role carries `take_payments` and `apply_discount`, and the boxes
+only add, so a Storeman and a Driver could both ring up a sale. A phone cannot
+sell — the database refuses a sale on a personal register — so it needed
+physical access to a till, which is not nothing, but it is not what a shop
+means when it says "he only does deliveries".
 
-The fix is a fourth role that starts with nothing, so every permission is a
-deliberate tick: Owner / Manager / Counter / **Helper**. `user_role` is a
-Postgres enum, and `alter type ... add value` cannot be used in the same
-migration that adds it — so that is two numbered files, not one. Not a
-blocker for going live; it is the difference between a role model that
-describes the shop and one the shop has to work around.
+**Helper** starts with nothing at all, so every permission such a person has
+is one somebody deliberately ticked. Two migrations rather than one:
+`user_role` is a Postgres enum and a new value cannot be USED in the
+transaction that adds it — put both in one file and the apply fails with
+"unsafe use of new value of enum type".
+
+Worth knowing what was found on the way. `role_default_permissions` read
+`when 'admin' … when 'manager' … else array['take_payments','apply_discount']`
+— so *anything* that was not admin or manager got the till. A fourth role
+added to the enum would have fallen into that `else` and been handed the two
+permissions it exists precisely to withhold, silently, with no error anywhere.
+Every role is named now and an unknown one gets nothing, which is the safe
+direction for a list that will grow again.
 
 ## 3. Staff, PINs and permissions — in progress
 
@@ -304,12 +317,15 @@ On the till, as Owner, Manage → Staff. Add four people (a real mobile number
 each — the invitation is an SMS, and a number that does not receive it is a
 person who cannot sign in):
 
-| Name | Role | Tick as well |
+| Name | Press this job | What it sets |
 |---|---|---|
-| a Supervisor | Counter | Approve discounts, Void & refund, Manage customer accounts |
-| a Cashier | Counter | nothing |
-| a Storeman | Counter | Adjust stock & receive goods, Photograph & record shelf items |
-| a Driver | Counter | nothing |
+| a Supervisor | **Supervisor** | Counter, plus approve discounts, void & refund, manage customers |
+| a Cashier | **Cashier** | Counter |
+| a Storeman | **Storeman** | Helper, plus stock and shelf |
+| a Driver | **Driver** | Helper, nothing else |
+
+One press each — the picker sets the role and the boxes. Check the sentence
+under the buttons matches the person you mean before you save.
 
 Then, and this is the actual test — **sign in as each of them** on a real
 device and check the shop they are shown:
@@ -320,7 +336,9 @@ device and check the shop they are shown:
    no Reports, no Cash-up, no Staff.
 3. **Storeman on a phone.** Gets Stock and Shelf on the menu, and neither
    Reports nor Approvals. Can receive a delivery and count stock; is never
-   shown a cost price.
+   shown a cost price. **And cannot sell** — take a Storeman to a till and
+   there should be no way to ring anything up. That is the Helper role, and it
+   is the one boundary that did not exist before today.
 4. **Driver on a phone.** Gets Deliveries and Look it up, and nothing else.
 5. **Manager on a phone.** Approvals arrive; the bell carries them; the parked
    sale from (1) can be approved from the phone without going to the counter.

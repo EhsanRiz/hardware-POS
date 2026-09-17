@@ -1,0 +1,21 @@
+-- Somebody who only does deliveries.
+--
+-- Three roles have carried the shop so far: Owner, Manager, Counter. The
+-- permission boxes in Manage → Staff ADD to what a role already grants and
+-- cannot take any of it away, and 'employee' grants take_payments and
+-- apply_discount. So the man who walks the shelf with a phone, and the man who
+-- drives the bakkie, have both been able to ring up a sale. A phone cannot
+-- sell — sales_not_on_a_phone (0074) sees to that — so it has needed physical
+-- access to a till, which is not nothing, but it is not what a shop means when
+-- it says "he only does deliveries".
+--
+-- 'helper' starts with nothing at all, so every permission such a person has
+-- is one somebody deliberately ticked.
+--
+-- ON ITS OWN, and this is the whole reason for a migration that adds one line:
+-- a new enum value cannot be USED in the transaction that adds it. Put the
+-- value and the function that returns it in one file and the apply fails —
+-- "unsafe use of new value of enum type" — which is the same shape of trap as
+-- a defaulted argument leaving two signatures behind (CLAUDE.md).
+
+alter type user_role add value if not exists 'helper';

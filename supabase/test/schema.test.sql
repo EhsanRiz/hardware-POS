@@ -1252,6 +1252,74 @@ begin
     'and editing the phone number does not lose the bank account');
 end $$;
 
+-- 0104/0105: a role that starts with nothing ----------------------------------
+--
+-- The permission boxes ADD to a role and cannot take any of it away, and
+-- 'employee' carries take_payments. So the man who walks the shelf and the man
+-- who drives the bakkie could both ring up a sale. A helper carries nothing,
+-- and everything he has is something somebody ticked.
+
+do $$
+declare v_tok text; v_helper uuid; v_prod uuid; v_price numeric; v_perms text[];
+begin
+  select token into v_tok from till;
+  select id, price_retail into v_prod, v_price from public.products
+   where active and price_retail > 0 order by price_retail desc limit 1;
+
+  perform assert_eq(public.role_default_permissions('helper'::user_role),
+    array[]::text[], 'a helper starts with nothing at all');
+  -- The old function sent everything that was not admin or manager to the
+  -- till, by way of an else. A new role would have landed there silently.
+  perform assert_eq(public.role_default_permissions('employee'::user_role),
+    array['take_payments','apply_discount'],
+    'and the counter still starts where it always did');
+
+  select id into v_helper from public.pos_admin_invite_user(
+    v_tok, '1234', 'Thabo the driver', '+27820000077',
+    'helper'::user_role, array[]::text[]);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('9876', gen_salt('bf')) where id = v_helper;
+
+  select public.effective_permissions(u) into v_perms
+    from public.app_users u where u.id = v_helper;
+  perform assert_eq(coalesce(array_length(v_perms, 1), 0), 0,
+    'and the role grants him none');
+
+  -- The whole point: he cannot take money.
+  perform assert_refuses(
+    format($q$select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object('product_id', %L, 'qty', 1)),
+      p_payment_method => 'cash',
+      p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', %L)))$q$,
+      v_tok, v_helper, v_prod, v_price),
+    'a helper cannot ring up a sale');
+
+  -- And what he IS given, he holds — the stock room, and nothing beside it.
+  perform public.pos_admin_update_user(
+    v_tok, '1234', v_helper, p_permissions => array['manage_inventory']);
+  select public.effective_permissions(u) into v_perms
+    from public.app_users u where u.id = v_helper;
+  perform assert(  'manage_inventory' = any(v_perms),
+    'a helper given the stock room has it');
+  perform assert(not ('take_payments' = any(v_perms)),
+    'and still cannot take a payment');
+  perform assert(not ('view_cost_prices' = any(v_perms)),
+    'nor see what the shop pays');
+
+  -- A counter hand, by contrast, carries the till whatever else is ticked —
+  -- which is why the helper role had to exist rather than be a set of boxes.
+  perform public.pos_admin_update_user(
+    v_tok, '1234', v_helper, p_role => 'employee'::user_role,
+    p_permissions => array['manage_inventory']);
+  select public.effective_permissions(u) into v_perms
+    from public.app_users u where u.id = v_helper;
+  perform assert('take_payments' = any(v_perms),
+    'the counter role brings the till with it, boxes or no boxes');
+
+  perform public.pos_admin_delete_user(v_tok, '1234', v_helper);
+end $$;
+
 -- 0103: a shop banks in more than one place -----------------------------------
 --
 -- An EFT within a bank clears the same day and between banks it does not, so

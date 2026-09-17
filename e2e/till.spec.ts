@@ -10493,3 +10493,82 @@ test("a sale rings all the way through without the policy refusing anything", as
   expect(reported, "the page reported no policy violation").toEqual([]);
   expect(refused, "and the console logged none").toEqual([]);
 });
+
+test("a person is hired into a job, not into sixteen boxes", async ({ page }) => {
+  // A role plus sixteen permissions is the truth and it is also sixteen
+  // chances to get somebody's Friday wrong — which is how a driver ends up
+  // able to refund a sale.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Staff", exact: true }).click();
+  await page.getByRole("button", { name: /Add|Invite/ }).first().click();
+
+  await page.getByLabel("Staff name").fill("Thabo Phakisi");
+  await page.getByLabel("Staff mobile number").fill("082 555 0101");
+  await page.getByRole("button", { name: "Driver", exact: true }).click();
+
+  // The job says what it means, in the shop's own words.
+  await expect(page.getByText(/Deliveries and looking an item up/)).toBeVisible();
+  // And it is the Helper role underneath — the one that starts with nothing.
+  await expect(page.getByRole("button", { name: "Driver", exact: true }))
+    .toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: /^(Save|Add)/ }).last().click();
+
+  // What actually reached the shop: a helper, holding nothing.
+  await expect.poll(() => be.staff.find((s) => s.name === "Thabo Phakisi")?.role)
+    .toBe("helper");
+  expect(be.staff.find((s) => s.name === "Thabo Phakisi")?.permissions).toEqual([]);
+});
+
+test("a storeman gets the stock room and not the till", async ({ page }) => {
+  // The point of the Helper role: on Counter these permissions would arrive
+  // with take_payments attached, whatever was ticked.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Staff", exact: true }).click();
+  await page.getByRole("button", { name: /Add|Invite/ }).first().click();
+  await page.getByLabel("Staff name").fill("Sipho Dlamini");
+  await page.getByLabel("Staff mobile number").fill("082 555 0102");
+  await page.getByRole("button", { name: "Storeman", exact: true }).click();
+  await page.getByRole("button", { name: /^(Save|Add)/ }).last().click();
+
+  await expect.poll(() => be.staff.find((s) => s.name === "Sipho Dlamini")?.role)
+    .toBe("helper");
+  const saved = be.staff.find((s) => s.name === "Sipho Dlamini")!;
+  expect([...saved.permissions].sort()).toEqual(["manage_inventory", "shelf_capture"]);
+  // Not the till, and not the shop's margins.
+  expect(saved.permissions).not.toContain("take_payments");
+  expect(saved.permissions).not.toContain("view_cost_prices");
+});
+
+test("the jobs are on the manager's phone too, and fit it", async ({ page }) => {
+  // Staff is where a manager hires somebody, and a manager is not at the
+  // counter — they are in the aisle with a phone. A picker that only works at
+  // 1280px is a picker they will not use.
+  // A personal register is what makes it a phone to the SERVER; the viewport
+  // is what makes it a phone to the layout. Both, or this checks a picker on
+  // a 1280px screen and calls it a phone.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await openManageOnPhone(page, "Staff");
+  await page.getByRole("button", { name: /Add|Invite/ }).first().click();
+
+  await page.getByLabel("Staff name").fill("Naledi Mokoena");
+  await page.getByLabel("Staff mobile number").fill("082 555 0103");
+  const driver = page.getByRole("button", { name: "Driver", exact: true });
+  await expect(driver).toBeVisible();
+  await driver.click();
+  await expect(driver).toHaveAttribute("aria-pressed", "true");
+
+  // Every job is reachable without the page scrolling sideways.
+  for (const job of ["Cashier", "Supervisor", "Storeman", "Buyer", "Manager"]) {
+    await expect(page.getByRole("button", { name: job, exact: true })).toBeVisible();
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390);
+
+  await page.getByRole("button", { name: /^(Save|Add)/ }).last().click();
+  await expect.poll(() => be.staff.find((s) => s.name === "Naledi Mokoena")?.role)
+    .toBe("helper");
+});

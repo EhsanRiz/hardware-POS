@@ -15,12 +15,22 @@ import {
   ADMIN_LEVEL_PERMS,
   PERMISSIONS,
   ROLE_DEFAULTS,
+  STAFF_PRESETS,
   type PermKey,
   type RoleKey,
 } from "../../lib/permissions";
 import type { AdminProduct, User } from "../../lib/types";
 
+/** Two sets of permissions, however they happen to be ordered. */
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && [...a].sort().join() === [...b].sort().join();
+}
+
 const ROLES: { key: RoleKey; label: string; blurb: string }[] = [
+  // Nothing at all until something is ticked. The boxes below a role only
+  // ADD, so anyone on Counter can take money however few are ticked — this is
+  // the role for a driver, a shelf hand, a buyer.
+  { key: "helper", label: "Helper", blurb: "Starts with nothing. Give them only what they need." },
   { key: "employee", label: "Counter", blurb: "Sells and takes payment." },
   { key: "manager", label: "Manager", blurb: "Runs the shop floor: stock, prices, accounts, cash-up." },
   { key: "admin", label: "Owner", blurb: "Everything, including staff and shop settings." },
@@ -729,6 +739,15 @@ function StaffEditor({
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const fromRole = useMemo(() => new Set(ROLE_DEFAULTS[role]), [role]);
+  /**
+   * What is ticked BEYOND the role — which is what a job is, and the only
+   * thing a preset can be compared against. Comparing the whole grant list
+   * would make Cashier and Helper-with-the-till-ticked look like the same job.
+   */
+  const beyondRole = useMemo(
+    () => grants.filter((g) => !fromRole.has(g)),
+    [grants, fromRole]
+  );
 
   function toggle(k: PermKey) {
     setGrants((g) => (g.includes(k) ? g.filter((x) => x !== k) : [...g, k]));
@@ -813,6 +832,47 @@ function StaffEditor({
               </span>
             </label>
           )}
+
+          {/* The job first, the details under it.
+              A role plus sixteen boxes is the truth and it is also sixteen
+              chances to get somebody's Friday wrong. Pressing one of these
+              sets the role and ticks the boxes that go with it; everything
+              below stays editable, so this is a starting point and not a
+              cage. */}
+          <fieldset>
+            <legend className="text-sm text-stone-600 mb-1">What do they do?</legend>
+            <div className="flex flex-wrap gap-2">
+              {STAFF_PRESETS.map((preset) => {
+                const locked = preset.role === "admin" && !isAdmin;
+                const on = role === preset.role && sameSet(beyondRole, preset.extras);
+                return (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    disabled={locked || self}
+                    title={preset.blurb}
+                    aria-pressed={on}
+                    className={`px-3 py-1.5 rounded-full border text-sm ${
+                      on
+                        ? "border-colophon bg-gold-100 font-medium"
+                        : "border-stone-300 hover:bg-stone-50"
+                    } ${locked || self ? "opacity-40" : ""}`}
+                    onClick={() => {
+                      setRole(preset.role);
+                      setGrants([...preset.extras]);
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-stone-500 mt-1">
+              {STAFF_PRESETS.find(
+                (x) => x.role === role && sameSet(beyondRole, x.extras)
+              )?.blurb ?? "Set by hand — the role and the boxes below say what they can do."}
+            </p>
+          </fieldset>
 
           <fieldset>
             <legend className="text-sm text-stone-600 mb-1">Role</legend>
