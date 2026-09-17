@@ -10562,7 +10562,7 @@ test("the jobs are on the manager's phone too, and fit it", async ({ page }) => 
   await expect(driver).toHaveAttribute("aria-pressed", "true");
 
   // Every job is reachable without the page scrolling sideways.
-  for (const job of ["Cashier", "Supervisor", "Storeman", "Buyer", "Manager"]) {
+  for (const job of ["Cashier", "Supervisor", "Storeman", "Manager"]) {
     await expect(page.getByRole("button", { name: job, exact: true })).toBeVisible();
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth))

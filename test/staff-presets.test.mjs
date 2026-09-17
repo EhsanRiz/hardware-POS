@@ -36,7 +36,6 @@ const can = (key, perm) => holds(key).has(perm);
 // take_payments however few boxes were ticked, because the boxes only add.
 check("a driver cannot take money", can("driver", "take_payments"), false);
 check("nor can a storeman", can("storeman", "take_payments"), false);
-check("nor a buyer", can("buyer", "take_payments"), false);
 check("and a driver holds nothing whatsoever", holds("driver").size, 0);
 
 // And the counter still is the counter.
@@ -58,12 +57,15 @@ check("a storeman receives goods", can("storeman", "manage_inventory"), true);
 check("and photographs the shelf", can("storeman", "shelf_capture"), true);
 check("without being shown a cost price", can("storeman", "view_cost_prices"), false);
 
-// The buyer is the one job below manager that is meant to see cost.
-check("a buyer orders from suppliers", can("buyer", "manage_purchasing"), true);
-check("and sees what things cost", can("buyer", "view_cost_prices"), true);
+// Nobody below Manager buys. Ordering from suppliers is the manager's job in a
+// shop this size, and they already hold it.
+check("no job below manager orders from suppliers",
+  ["cashier", "supervisor", "storeman", "driver"].filter((k) => can(k, "manage_purchasing")), []);
+check("and none of them is shown what the shop pays",
+  ["cashier", "supervisor", "storeman", "driver"].filter((k) => can(k, "view_cost_prices")), []);
 
 // Nobody but the owner administers the shop.
-for (const key of ["cashier", "supervisor", "storeman", "driver", "buyer", "manager"]) {
+for (const key of ["cashier", "supervisor", "storeman", "driver", "manager"]) {
   check(`${key} cannot manage staff`, can(key, "manage_staff"), false);
   check(`${key} cannot change the shop's settings`, can(key, "manage_settings"), false);
 }

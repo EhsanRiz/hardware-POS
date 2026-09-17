@@ -86,8 +86,12 @@ export const ROLE_DEFAULTS: Record<RoleKey, PermKey[]> = {
  * names them. They are a starting point and not a cage: the role and every box
  * stay editable afterwards.
  *
- * Storeman, Buyer and Driver are Helpers on purpose. As Counter they would
- * carry the till whatever was ticked.
+ * Storeman and Driver are Helpers on purpose. As Counter they would carry the
+ * till whatever was ticked.
+ *
+ * There is no Buyer. Ordering from suppliers is the manager's job in a shop
+ * this size, and the manager already holds manage_purchasing — a button
+ * nobody is hired into only makes the other six harder to choose between.
  */
 export interface StaffPreset {
   key: string;
@@ -116,11 +120,6 @@ export const STAFF_PRESETS: StaffPreset[] = [
   {
     key: "driver", label: "Driver", role: "helper", extras: [],
     blurb: "Deliveries and looking an item up. Nothing else.",
-  },
-  {
-    key: "buyer", label: "Buyer", role: "helper",
-    extras: ["manage_purchasing", "view_cost_prices", "view_reports"],
-    blurb: "Orders from suppliers and sees what things cost.",
   },
   {
     key: "manager", label: "Manager", role: "manager", extras: [],

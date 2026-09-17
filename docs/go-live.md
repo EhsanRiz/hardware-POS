@@ -270,7 +270,6 @@ role with the listed permissions added.
 | **Supervisor** | employee | `approve_discount`, `void_refund`, `manage_customers` | senior hand at the counter — can clear a colleague's discount without fetching the manager |
 | **Cashier** | employee | — | the till: `take_payments`, `apply_discount` come with the role |
 | **Storeman** | **helper** | `manage_inventory`, `shelf_capture` | receives deliveries, counts stock, photographs shelf items |
-| **Buyer** | **helper** | `manage_purchasing`, `view_cost_prices`, `view_reports` | places the orders and sees what things cost |
 | **Driver** | **helper** | — | Deliveries and Look it up need no permission at all |
 
 These are in the app, not only in this document: **Manage → Staff** asks "What
