@@ -252,6 +252,41 @@ beside it returned 200 on all 78 calls.
 Both sides have to be set from one generated value, in one go, or the two
 drift again.
 
+## Shipped is not running
+
+A fix that is deployed is not a fix the counter has, and the gap between them
+is however long it takes somebody to press a button.
+
+The till is a PWA registered with `registerType: "prompt"`. It deliberately
+does **not** update itself: a till that reloads in the middle of a sale loses
+the cart in front of a customer, and only the cashier knows whether this
+second is between sales. So it checks for a new version every five minutes —
+and on focus, on visibility, and on coming back online — and when one is
+waiting it puts **`↻ Update`** in the header and leaves it there.
+
+Until somebody presses it, the counter is running the build it was running
+before. This caught us: a PIN fix was merged, deployed, and confirmed on the
+live origin by the smoke check, and the shop still had the old behaviour
+twenty minutes later because the window had been open since morning.
+
+**To make a till take a new build now:** press `↻ Update` in the top bar. If
+it is not showing, bring the window to the front — that triggers a check — or
+close and reopen the installed app.
+
+**What this means on install day.** Three separate things have to be true, and
+only the first two are visible from here:
+
+| | How it is known |
+|---|---|
+| The build is deployed | CI's deploy job |
+| The live origin serves it | the smoke check, `scripts/smoke.mjs` |
+| **The till is running it** | somebody pressed `↻ Update` |
+
+There is no telemetry for the third. When a fix matters — a wrong price, a
+refused payment — say so to whoever is at the counter rather than assuming the
+shop has it. And when testing a fix, update the device first: otherwise the
+bug you are looking at is one that no longer exists.
+
 ## Who does what
 
 Three roles exist in the database (`user_role`: admin, manager, employee) and
