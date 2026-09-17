@@ -57,3 +57,32 @@ export const supabase = createClient(API_BASE, anonKey, {
   },
   global: { fetch: fetchWithTimeout },
 });
+
+/**
+ * A storage URL, brought back to the till's own origin.
+ *
+ * Signed URLs are the one thing that escaped the rule above. `createSignedUrl`
+ * hands back an absolute address on the Supabase host, and the browser then
+ * fetches it directly — the archived quotation, and the pages of a filed
+ * supplier document. That is a third-party request from a shop counter, which
+ * is precisely what this file exists to avoid: an ad blocker, an antivirus
+ * web-shield or a mall's Wi-Fi filter eats it and the shop sees a document
+ * that will not open, or worse, one silently rebuilt from today's letterhead.
+ *
+ * The Worker already proxies /storage/, and the signature travels in the query
+ * string, so the same URL works perfectly well pointed at our own origin. It
+ * is also what lets the Content-Security-Policy say connect-src 'self' and
+ * mean it.
+ *
+ * Anything that is not an http(s) storage URL is handed back untouched.
+ */
+export function ownOrigin(url: string): string {
+  if (!/^https?:/i.test(url)) return url;
+  try {
+    const u = new URL(url);
+    if (!u.pathname.startsWith("/storage/")) return url;
+    return `${API_BASE}${u.pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+}

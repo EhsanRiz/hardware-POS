@@ -12,7 +12,7 @@
 import { registerToken } from "./device";
 import { cacheGet, cacheSet } from "./localCache";
 import { isNetworkError } from "./offline";
-import { API_BASE, supabase } from "./supabase";
+import { API_BASE, ownOrigin, supabase } from "./supabase";
 import type { SaleRow } from "./sales";
 import type {
   LoginCandidate,
@@ -943,7 +943,11 @@ export async function archivedQuotePdfUrl(quoteId: string): Promise<string | nul
   });
   const out = (await res.json()) as { ok?: boolean; url?: string | null };
   if (!out.ok) throw new Error("That document could not be opened.");
-  return out.url ?? null;
+  // Through our own origin: a signed URL points at the Supabase host, and a
+  // counter is exactly where a third-party request gets eaten (supabase.ts).
+  // Fetching it direct also meant the kept document quietly failed and the
+  // till rebuilt one on today's letterhead — the wrong page, looking right.
+  return out.url ? ownOrigin(out.url) : null;
 }
 
 // --- Deliveries (0061) -------------------------------------------------------

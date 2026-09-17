@@ -1190,8 +1190,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       return respond(404, { ok: false, message: "Unknown quote" });
     }
     if (b.action === "get") {
+      // A signed URL on the storage host, which is what createSignedUrl hands
+      // back. It used to answer with the data: URL itself — bytes where the
+      // shop gets an address — and that lie hid the whole of ownOrigin: the
+      // till fetched a third-party URL in production and a same-origin one
+      // here, and no test could tell.
       const kept = be.archivedQuotes[id];
-      return respond(200, { ok: true, url: kept ?? null });
+      return respond(200, {
+        ok: true,
+        url: kept ? `https://e2e.supabase.co/storage/v1/object/sign/quotes/${id}.pdf?token=signed` : null,
+      });
     }
     if (be.archivedQuotes[id]) {
       return respond(200, { ok: true, path: `org1/quotes/${id}.pdf`, stored: false });
@@ -1224,10 +1232,15 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     const doc = be.supplierDocs.find((d) => d.id === b.document_id);
     if (!doc) return respond(404, { ok: false, message: "Document not found" });
     if (b.action === "sign") {
+      // Signed URLs on the storage host, as createSignedUrls hands back. The
+      // browser fetches each one; see the storage route below.
       return respond(200, {
         ok: true,
         pages: be.supplierPages.filter((pg) => pg.document_id === doc.id)
-          .map((pg) => ({ page_no: pg.page_no, mime: pg.mime, url: pg.data })),
+          .map((pg) => ({
+            page_no: pg.page_no, mime: pg.mime,
+            url: `https://e2e.supabase.co/storage/v1/object/sign/supplier/${doc.id}/${pg.page_no}?token=signed`,
+          })),
       });
     }
     const m = /^data:(image\/(?:jpeg|png|webp)|application\/pdf);base64,./.exec(String(b.file ?? ""));
@@ -1243,6 +1256,34 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
   // 0087: the invitation SMS. Sent by the auth function (where the SMS
   // secret lives) on the manager's register token and PIN, through the two
   // RPCs the migration adds; the refusals below are theirs, word for word.
+  // The storage bucket a signed URL points at. The till rewrites such a URL
+  // onto its own origin before fetching it (lib/supabase.ts, ownOrigin), and
+  // the Worker proxies /storage/ — so what arrives here is /api/storage/...
+  // on localhost. Matching both spellings is deliberate: if the rewrite ever
+  // stopped happening the request would still be served, so the tests that
+  // care assert the origin rather than leaning on this route to fail.
+  await page.route("**/storage/v1/object/sign/**", async (route: Route) => {
+    if (be.offline) return route.abort("internetdisconnected");
+    const url = new URL(route.request().url());
+    const quote = /\/storage\/v1\/object\/sign\/quotes\/([^/?]+)\.pdf$/.exec(url.pathname);
+    const page_ = /\/storage\/v1\/object\/sign\/supplier\/([^/]+)\/([0-9]+)$/.exec(url.pathname);
+    const dataUrl = quote
+      ? be.archivedQuotes[quote[1]]
+      : page_
+      ? be.supplierPages.find(
+          (pg) => pg.document_id === page_[1] && pg.page_no === Number(page_[2])
+        )?.data
+      : undefined;
+    if (!dataUrl) return route.fulfill({ status: 404, body: "" });
+    const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl);
+    if (!m) return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({
+      status: 200,
+      contentType: m[1],
+      body: Buffer.from(m[2], "base64"),
+    });
+  });
+
   await page.route("**/functions/v1/auth", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
     let b: Record<string, unknown> = {};

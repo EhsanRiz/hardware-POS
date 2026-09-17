@@ -7,7 +7,7 @@
 // much as an address: it tells the server WHICH shop's staff list to check the
 // PIN against, because a PIN alone identifies nobody in a multi-tenant system.
 import { requireToken } from "./api";
-import { API_BASE, supabase } from "./supabase";
+import { API_BASE, ownOrigin, supabase } from "./supabase";
 import type { AdminProduct, Category, StockMovement, UnitOfMeasure } from "./types";
 
 export async function adminListProducts(pin: string): Promise<AdminProduct[]> {
@@ -931,7 +931,12 @@ export async function uploadSupplierPage(
 /** The pages of a document, as URLs the browser may open for a few minutes. */
 export async function signSupplierPages(pin: string, documentId: string): Promise<SupplierPage[]> {
   const out = await supplierDocumentCall({ action: "sign", pin, document_id: documentId });
-  return (out.pages as SupplierPage[]) ?? [];
+  // Through our own origin, as the archived quotation is: these are signed
+  // URLs on the Supabase host, and the browser fetches each one to hand it to
+  // the reader (supabase.ts, ownOrigin).
+  return ((out.pages as SupplierPage[]) ?? []).map((p) => ({
+    ...p, url: p.url ? ownOrigin(p.url) : p.url,
+  }));
 }
 
 // --- Reading a supplier's document (0056) ------------------------------------

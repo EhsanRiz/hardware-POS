@@ -8819,15 +8819,34 @@ test("one slow probe does not put the till offline; two misses do, and one answe
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 
-  // One miss: the till stays online, and the miss is re-checked soon. The
-  // pause is so the miss has been judged before "still Online" is read.
+  // One miss: the till stays online, and the miss is re-checked soon.
+  //
+  // Watched as two facts together rather than as a wall-clock pause. The
+  // heartbeat probes every fifteen seconds on its own account, so a fixed
+  // wait can have a SECOND genuine miss land inside it — at which point the
+  // till is right to go offline and the test is wrong to be surprised. That
+  // is what made this flake, on this server and worse on the old one, and
+  // CI's one retry was hiding it. The rule itself is pinned exactly in
+  // test/offline.test.mjs; what is being checked here is the wiring.
+  //
+  // Sticky on purpose: once Offline has been seen while a single miss stands,
+  // this can never go on to pass. A poll that merely waits for the good
+  // answer would sail past the bad one.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => asked, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
-  await page.waitForTimeout(1500);
-  await expect(status).toContainText("Online");
-  const afterFirst = asked;
-  // The second miss lands within a few seconds, not at the next heartbeat.
-  await expect.poll(() => asked, { timeout: 10_000 }).toBeGreaterThan(afterFirst);
+  let tooSoon = false;
+  await expect
+    .poll(
+      async () => {
+        if (!tooSoon && asked <= 1 && (await status.innerText()).includes("Offline")) {
+          tooSoon = true;
+        }
+        if (tooSoon) return "offline on a single miss";
+        return asked > 1 ? "a second miss landed" : "still online";
+      },
+      { timeout: 15_000 }
+    )
+    .toBe("a second miss landed");
   await expect(status).toContainText("Offline", { timeout: 10_000 });
 
   // One answer, and it is back: the line does not have to prove itself twice.
