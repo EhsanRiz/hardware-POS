@@ -18,7 +18,7 @@ fake sale in anybody's real books.
 |---|------|-------|
 | 1 | Production is what the migrations say it is | **passed** — 2026-09-16 |
 | 2 | Shop settings: name, VAT, address, receipt footer | **passed, with four fixes** — 2026-09-16 |
-| 3 | Staff, PINs and permissions — including the sets nobody has signed in as | not started |
+| 3 | Staff, PINs and permissions — including the sets nobody has signed in as | **in progress** |
 | 4 | Devices: till paired, phone paired, both installed as apps | not started |
 | 5 | Catalogue: real items, real barcodes, real prices | not started |
 | 6 | Opening stock: start tracking, receive, count | not started |
@@ -189,3 +189,142 @@ different field, because the page had one "has this been touched" flag for
 everything on it. The accounts now track their own, nothing is offered to edit
 until the read has come back, and a save with no read behind it writes
 nothing. There is a test for the failing read.
+
+
+## The deploy that said it had happened
+
+Step 2's work shipped, and the smoke check written in step 1 went red on its
+first real run. Everything about the *content* was right — the live page named
+the build, both assets byte-identical, both service workers matching, the
+Worker answering `/api/`. What was wrong was the headers.
+
+Cloudflare's asset server answers any request matching a built file and never
+invokes the Worker for it. So a page load gets `public/_headers`, and
+`withSecurityHeaders()` in `worker/index.ts` runs only for `/api/`,
+`/storage/` and deep links that match no file. **The Content-Security-Policy
+written in the Worker had never been in force on a till.** Neither had HSTS.
+Nothing noticed, because no suite had ever looked at a live response.
+
+Three things came out of fixing it, in rising order of importance.
+
+**The headers themselves.** `public/_headers` now carries the full set,
+matching the Worker's so the two agree whichever path a request takes.
+`X-Frame-Options` was `SAMEORIGIN` and is now `DENY` — a till that can be
+framed can be clickjacked into taking a payment.
+
+**`Permissions-Policy` said `camera=()`.** That forbids the shop's own page
+from opening a lens, and the camera *is* the barcode scanner on a phone and
+the viewfinder on the Shelf screen. Safari ignores the header on a top-level
+document, which is why an iPhone kept scanning and nobody reported it. An
+Android phone would have been refused. It is `camera=(self)` now.
+
+**A customer's quotation could be silently rebuilt.** Turning the policy on
+broke two tests, and they were right to break. `createSignedUrl` hands back an
+absolute address on the Supabase host, and the browser fetched it directly —
+the archived quotation, and the pages of a filed supplier document. When that
+fetch fails, the code catches it and rebuilds the quotation *from today's
+settings*: a document that looks right and is not the one the customer was
+sent. This needed no attacker and no CSP — an ad blocker, an antivirus
+web-shield or a mall's Wi-Fi filter would do it, which is exactly the failure
+`supabase.ts` was written to avoid for every other request. Signed URLs were
+the exception nobody noticed. They go through the till's own origin now
+(`ownOrigin`), where the Worker already proxies `/storage/`.
+
+And the durable half: the browser suite ran against `vite preview`, which sets
+no headers at all. It runs against `scripts/serve-dist.mjs` now, which applies
+`public/_headers` — so all 324 tests execute under the shop's own policy, and
+a build that breaks under it fails on a branch instead of at a counter.
+
+Confirmed on the live origin by CI run 216:
+
+    ok   the app's security headers are on the live response
+           all four present
+    https://till.innovaearth.com is serving this build.
+
+### Still not sending: the nightly digest
+
+Yesterday 04:00 returned **503** — no secret configured. Today 04:00 returned
+**403** — a secret configured, and a caller sending something different. So
+Supabase has it and the Worker does not; `worker/index.ts` sends
+`env.DIGEST_SECRET ?? ""`, which is what a 403 looks like. The push sweep
+beside it returned 200 on all 78 calls.
+
+Both sides have to be set from one generated value, in one go, or the two
+drift again.
+
+## Who does what
+
+Three roles exist in the database (`user_role`: admin, manager, employee) and
+are shown as Owner, Manager and Counter. Permissions are per person and
+**add** to what the role already grants; the role's own are shown ticked and
+cannot be unticked.
+
+That is enough for a shop of three and not enough for a shop of eight, so
+these are the sets to hire into. Everything below Manager is the `employee`
+role with the listed permissions added.
+
+| Preset | Role | Added to the role | Who they are |
+|---|---|---|---|
+| **Owner** | admin | everything, always | whoever's money it is |
+| **Manager** | manager | the role's own set | runs the floor: approves discounts, cashes up, orders |
+| **Supervisor** | employee | `approve_discount`, `void_refund`, `manage_customers` | senior hand at the counter — can clear a colleague's discount without fetching the manager |
+| **Cashier** | employee | — | the till: `take_payments`, `apply_discount` come with the role |
+| **Storeman** | employee | `manage_inventory`, `shelf_capture` | receives deliveries, counts stock, photographs shelf items |
+| **Buyer** | employee | `manage_purchasing`, `view_cost_prices`, `view_reports` | places the orders and sees what things cost |
+| **Driver** | employee | — | Deliveries and Look it up need no permission at all |
+
+Two things worth knowing before these are handed out.
+
+**`view_cost_prices` is deliberately separate from `manage_catalogue`.** A
+supervisor can fix a price or a barcode without being shown the shop's
+margins. Keep it that way: it is the difference between trusting somebody with
+the shelf and trusting them with the business.
+
+**Nobody can be given *less* than a cashier.** The `employee` role carries
+`take_payments` and `apply_discount`, the boxes only add, so a Storeman and a
+Driver can both ring up a sale. A phone cannot sell — the database refuses a
+sale on a personal register — so in practice this needs physical access to a
+till. It is still not what the shop means when it says "he only does
+deliveries".
+
+The fix is a fourth role that starts with nothing, so every permission is a
+deliberate tick: Owner / Manager / Counter / **Helper**. `user_role` is a
+Postgres enum, and `alter type ... add value` cannot be used in the same
+migration that adds it — so that is two numbered files, not one. Not a
+blocker for going live; it is the difference between a role model that
+describes the shop and one the shop has to work around.
+
+## 3. Staff, PINs and permissions — in progress
+
+Every screen so far has been driven as Owner, and `can()` short-circuits for
+an admin: **no permission boundary has actually been exercised.** This step is
+about the boundaries, not the screens.
+
+On the till, as Owner, Manage → Staff. Add four people (a real mobile number
+each — the invitation is an SMS, and a number that does not receive it is a
+person who cannot sign in):
+
+| Name | Role | Tick as well |
+|---|---|---|
+| a Supervisor | Counter | Approve discounts, Void & refund, Manage customer accounts |
+| a Cashier | Counter | nothing |
+| a Storeman | Counter | Adjust stock & receive goods, Photograph & record shelf items |
+| a Driver | Counter | nothing |
+
+Then, and this is the actual test — **sign in as each of them** on a real
+device and check the shop they are shown:
+
+1. **Cashier on the till.** Sells. Manage is not offered at all. A discount
+   past their limit parks the sale for approval rather than going through.
+2. **Supervisor on the till.** Clears that parked sale. Can refund. Still sees
+   no Reports, no Cash-up, no Staff.
+3. **Storeman on a phone.** Gets Stock and Shelf on the menu, and neither
+   Reports nor Approvals. Can receive a delivery and count stock; is never
+   shown a cost price.
+4. **Driver on a phone.** Gets Deliveries and Look it up, and nothing else.
+5. **Manager on a phone.** Approvals arrive; the bell carries them; the parked
+   sale from (1) can be approved from the phone without going to the counter.
+
+What to watch for: a menu row that opens and then refuses is a bug, not a
+safeguard — `lib/menu.ts` is supposed to hide what a person cannot do, and the
+RPC behind it re-checks anyway. Either half failing is worth knowing.
