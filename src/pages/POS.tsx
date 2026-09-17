@@ -1331,8 +1331,25 @@ export default function POS() {
           title="Stock"
           subtitle="Enter your PIN to open the stock room"
           onApprove={async (entered) => {
-            // Proved against the server by the cheapest inventory call; fails
-            // loudly on a wrong PIN or a missing permission.
+            // WHOSE PIN, for the same reason as the back office below: this
+            // says "enter YOUR PIN" and proved only that the PIN belonged to
+            // SOMEBODY with the inventory right. A storeman who knew the
+            // manager's PIN opened the stock room with it, and every call
+            // inside then ran as him.
+            //
+            // The four other PIN modals in this app are the opposite case and
+            // must stay that way — "a manager's PIN" on a discount, a return,
+            // a parked sale, a voided payment. Those exist precisely so that
+            // somebody else can approve. The subtitle is the difference.
+            //
+            // signIn resolves one person against one PIN, and falls back to
+            // this device's own credentials when the line is down, so the rule
+            // holds either way.
+            if (!user) throw new Error("Sign in first.");
+            const who = await signIn(user.id, entered);
+            if (!who) throw new Error("That is not your PIN.");
+            // Then the permission, as before: the cheapest inventory call,
+            // which fails loudly on a PIN that is yours but opens nothing.
             await stockMovements(entered, 1);
             setStockPin(entered);
             remember("stock", entered);

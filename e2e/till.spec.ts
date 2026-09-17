@@ -10665,3 +10665,31 @@ test("the back office asks for YOUR PIN, and means it", async ({ page }) => {
   }
   await expect(page.locator(".admin-screen")).toBeVisible();
 });
+
+test("the stock room asks for YOUR PIN too, not just any that would open it", async ({ page }) => {
+  // Reported from the shop the same day as the back office: the storeman
+  // tapped Stock, was asked for a PIN, entered the manager's, and was let in.
+  // It proved only that the PIN belonged to SOMEBODY holding the inventory
+  // right — and every call inside then ran as him.
+  await pairAndSignIn(page, USERS.storeman.pin);
+  const nav = page.getByRole("navigation", { name: "Sections" });
+  await nav.getByRole("button", { name: "Stock", exact: true }).click();
+
+  const gate = page.getByRole("dialog", { name: "Stock" });
+  await expect(gate).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(gate.getByText(/not your PIN/i)).toBeVisible();
+  // Still shut: the stock room never opened on somebody else's credentials.
+  await expect(nav.getByRole("button", { name: "Stock", exact: true }))
+    .not.toHaveAttribute("aria-current", "page");
+
+  // Her own opens it — the room is hers, it is the borrowed key that is not.
+  for (const d of USERS.storeman.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(nav.getByRole("button", { name: "Stock", exact: true }))
+    .toHaveAttribute("aria-current", "page");
+});
+

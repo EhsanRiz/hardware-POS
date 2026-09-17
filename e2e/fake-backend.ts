@@ -140,6 +140,31 @@ export const USERS = {
   storeman: { pin: "888888", phone: "+27820000032", row: { id: "u4", name: "Kagiso", role: "helper", phone: "+27820000032", email: null, permissions: ["manage_inventory","shelf_capture"] } },
 };
 
+/**
+ * Who this PIN belongs to, and whether they hold a permission.
+ *
+ * The fake checked `p_pin !== USERS.manager.pin` in three dozen places, which
+ * was true enough while the manager was the only person with any right at all.
+ * It is a lie now, and it is the exact lie that hides a per-person PIN check:
+ * a gate that should ask WHOSE pin it is, and a gate that only asks whether
+ * the PIN opens anything, look identical to a fake where one PIN opens
+ * everything and no other opens a thing.
+ *
+ * Used by the inventory calls so far. The rest still compare against the
+ * manager's PIN, and will keep hiding this class of fault until they are
+ * moved over too.
+ */
+export function pinHolder(pin: unknown) {
+  return Object.values(USERS).find((u) => u.pin === String(pin ?? "")) ?? null;
+}
+
+/** null when allowed, or the server's own refusal. */
+export function pinLacks(pin: unknown, perm: string): string | null {
+  const who = pinHolder(pin);
+  if (!who) return "Invalid PIN";
+  return who.row.permissions.includes(perm) ? null : `Not permitted: ${perm}`;
+}
+
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
 export const REGISTER_TOKEN = "test-register-token";
 /** A second till's token, already paired: set on the device, not typed. */
@@ -2350,7 +2375,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       }
       case "rpc/pos_receive_stock": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        {
+          const no = pinLacks(body.p_pin, "manage_inventory");
+          if (no) return fail(no);
+        }
         const lines = (body.p_lines as { product_id: string; qty: number }[]) ?? [];
         const starting = body.p_start_tracking === true;
         if (!lines.length) return fail("Nothing to receive");
@@ -2381,7 +2409,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       }
       case "rpc/pos_stock_movements":
         if (!tokenOk) return fail("Register not paired or revoked");
-        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        {
+          const no = pinLacks(body.p_pin, "manage_inventory");
+          if (no) return fail(no);
+        }
         return json(be.stockMoves.map((m, i) => ({
           at: new Date().toISOString(), product_id: m.product_id,
           product_name: PRODUCTS.find((x) => x.id === m.product_id)?.name ?? "?",
@@ -2391,7 +2422,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         })).reverse().slice(0, Number(body.p_limit ?? 100)));
       case "rpc/pos_admin_adjust_stock": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted: manage_inventory");
+        {
+          const no = pinLacks(body.p_pin, "manage_inventory");
+          if (no) return fail(no);
+        }
         const prod = PRODUCTS.find((x) => x.id === body.p_product_id);
         if (!prod || prod.stock_qty == null) return fail("Product not found");
         const newQty = Number(body.p_new_qty);
