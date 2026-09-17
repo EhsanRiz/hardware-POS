@@ -8838,7 +8838,16 @@ test("one slow probe does not put the till offline; two misses do, and one answe
   await expect
     .poll(
       async () => {
-        if (!tooSoon && asked <= 1 && (await status.innerText()).includes("Offline")) {
+        // The count on BOTH sides of the read, and the sample thrown away if
+        // it moved. Reading the banner is a round trip to the browser, and the
+        // second miss can land inside it — so testing the count first and
+        // trusting the text that arrives afterwards blames one miss for what
+        // two did. That is what made this fail in a full run and pass six
+        // times on its own: under load the round trip is slower and the
+        // window is wider. A race, in the test written to fix a race.
+        const before = asked;
+        const seen = await status.innerText();
+        if (!tooSoon && before === asked && asked <= 1 && seen.includes("Offline")) {
           tooSoon = true;
         }
         if (tooSoon) return "offline on a single miss";
