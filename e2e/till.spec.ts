@@ -10581,3 +10581,81 @@ test("the jobs are on the manager's phone too, and fit it", async ({ page }) => 
   await expect.poll(() => be.staff.find((s) => s.name === "Naledi Mokoena")?.role)
     .toBe("helper");
 });
+
+test("a storeman is not shown a till she cannot use, nor a door into an empty room", async ({ page }) => {
+  // Found in the shop, on a real counter machine. A Helper holding only the
+  // stock room and the shelf was landed on the Sell screen, offered a Manage
+  // button, and — because the back office had no tabs for her at all — given
+  // a catalogue with a New product button, every count reading nought because
+  // the server refused each call with her PIN. The database held the line and
+  // every screen drew the door anyway.
+  //
+  // No camera, because that is the machine it happened on: a PinnPOS
+  // all-in-one. It matters — the Shelf tab is the one thing a storeman HAS in
+  // the back office, and without a lens there is nothing in there at all.
+  await withCamera(page, false);
+  await pairAndSignIn(page, USERS.storeman.pin);
+
+  // Where she lands: her work, not the counter.
+  const nav = page.getByRole("navigation", { name: "Sections" });
+  await expect(nav.getByRole("button", { name: "Deliveries", exact: true }))
+    .toHaveAttribute("aria-current", "page");
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveCount(0);
+
+  // The counter is shown as shut, the way Quotes and Accounts already were.
+  await expect(nav.getByRole("button", { name: "Sell", exact: true })).toBeDisabled();
+  await expect(nav.getByRole("button", { name: "Quotes", exact: true })).toBeDisabled();
+  // And the stock room, which IS hers, is not.
+  await expect(nav.getByRole("button", { name: "Stock", exact: true })).toBeEnabled();
+
+  // No Manage button: this counter machine has no camera, so the Shelf tab is
+  // not offered, and manage_inventory opens nothing in the back office — the
+  // Stock room is a screen on this till. The door would open on nothing.
+  await expect(page.getByRole("button", { name: /^Manage$/ })).toHaveCount(0);
+});
+
+test("the same storeman on a device with a lens does get her one section", async ({ page }) => {
+  // The other half, and the reason this is gated on what is INSIDE rather
+  // than on the role: her Manage is the camera. Refusing her outright would
+  // be as wrong as offering her a catalogue.
+  await withCamera(page, true);
+  await pairAndSignIn(page, USERS.storeman.pin);
+
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  for (const d of USERS.storeman.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".admin-screen")).toBeVisible();
+
+  // One section, and it is hers. Not a catalogue she cannot load.
+  await expect(page.getByRole("button", { name: "Shelf", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Catalogue", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New product" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Staff", exact: true })).toHaveCount(0);
+});
+
+test("the back office asks for YOUR PIN, and means it", async ({ page }) => {
+  // The modal has always said "Enter your PIN to open the back office" and did
+  // not check whose it was: it proved the PIN with a call the signed-in person
+  // was entitled to make, then carried that PIN into every call inside. A
+  // storeman who knew the manager's PIN got the manager's back office on her
+  // own session — the screen hers, the authority his.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  await expect(gate).toBeVisible();
+
+  // Somebody else's PIN. Correct, current, and not this person's.
+  for (const d of USERS.employee.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(gate.getByText(/not your PIN/i)).toBeVisible();
+  await expect(page.locator(".admin-screen")).toHaveCount(0);
+
+  // Their own opens it.
+  for (const d of USERS.manager.pin.split("")) {
+    await gate.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".admin-screen")).toBeVisible();
+});

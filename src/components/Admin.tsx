@@ -17,7 +17,7 @@ import { useOnline } from "../lib/offline";
 import { imageSrc } from "../lib/images";
 import { money } from "../lib/format";
 import { can } from "../lib/permissions";
-import { menuItems } from "../lib/menu";
+import { backOfficeTabs, menuItems, type TabKey } from "../lib/menu";
 import AppMenu from "./AppMenu";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
@@ -52,19 +52,9 @@ import Buying from "./admin/Buying";
 import Suppliers from "./admin/Suppliers";
 import TillAILog from "./admin/TillAILog";
 
-export type TabKey =
-  | "catalogue"
-  | "import"
-  | "shelf"
-  | "suppliers"
-  | "buying"
-  | "sales"
-  | "approvals"
-  | "cashup"
-  | "reports"
-  | "tillai"
-  | "staff"
-  | "shop";
+// The list itself lives in lib/menu, so the till's Manage button and this
+// screen's tabs cannot disagree about whether there is anything in here.
+export type { TabKey };
 
 /**
  * The back office.
@@ -100,59 +90,24 @@ export default function Admin({
   // What this is running on. A phone gets card layouts and a shorter list of
   // sections; the till keeps the tables it was designed for.
   const phone = deviceKind() === "personal";
-  const tabs = useMemo(() => {
-    const t: { key: TabKey; label: string }[] = [];
-    // Catalogue and Bulk import were unconditional, which was harmless while
-    // everybody who could open Manage held manage_catalogue. The shelf grant
-    // ends that: somebody whose only right is photographing shelves must not
-    // be shown a catalogue screen that would only refuse them.
-    if (can(user, "manage_catalogue")) {
-      t.push({ key: "catalogue", label: "Catalogue" });
-      // Bulk import is a CSV file picker and a column-mapping table. That is
-      // desktop work, and offering it on a phone only wastes a tap.
-      if (!phone) t.push({ key: "import", label: "Bulk import" });
-    }
-    // Photographing a shelf needs a lens. The shop's counter machine is a
-    // PinnPOS all-in-one with no camera in it, so this was a tab that could
-    // only ever say no — while the same screen sat one tap away on the phone,
-    // which is where the work actually happens. Gated on the CAMERA and not on
-    // the device's kind: a counter running on an iPad keeps it.
-    if (camera && (can(user, "shelf_capture") || can(user, "manage_catalogue"))) {
-      t.push({ key: "shelf", label: "Shelf" });
-    }
-    if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
-    // The drawer of supplier paperwork, for whoever does the buying.
-    if (can(user, "manage_purchasing")) t.push({ key: "suppliers", label: "Suppliers" });
-    // Ordering, and what is owed for it. Its own tab rather than a corner of
-    // Suppliers: filing a supplier's paperwork and deciding what to buy are
-    // done by the same person at completely different moments.
-    if (can(user, "manage_purchasing")) t.push({ key: "buying", label: "Buying" });
-    // ON THE PHONE ONLY, and the clue was always in the description: issuing a
-    // code is something a manager does standing in a bank queue with a phone to
-    // their ear. The whole point of the code is that they are NOT at the till —
-    // a manager standing at the counter types their PIN into the discount
-    // dialog and no code exists. So a till was offering a screen whose reason
-    // for existing is the till not being there.
-    if (deviceKind() === "personal" && can(user, "approve_discount")) {
-      t.push({ key: "approvals", label: "Approvals" });
-    }
-    // Cash-up stays on a phone, but as history only: counting a drawer needs
-    // the cash in hand (see CashUp). What a manager wants from away is
-    // whether last night closed clean.
-    if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
-    if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
-    if (can(user, "view_reports")) t.push({ key: "tillai", label: "TillAI" });
-    if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
-    // The shop's address, VAT number and printer width: set once, on a
-    // keyboard, and never from an aisle.
-    if (can(user, "manage_settings") && !phone) t.push({ key: "shop", label: "Shop" });
-    return t;
-  }, [user, camera, phone]);
+  const tabs = useMemo(
+    () => (user ? backOfficeTabs(user, { camera, phone }) : []),
+    [user, camera, phone]
+  );
 
   // The first tab this person may actually open — a shelf-only user's Manage
   // is the camera, not a catalogue that would refuse to load.
-  const [tab, setTab] = useState<TabKey>(
-    initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : tabs[0]?.key ?? "catalogue"
+  // The first tab this person may actually open — a shelf-only user's Manage
+  // is the camera, not a catalogue that would refuse to load.
+  //
+  // There is no "catalogue" fallback any more. It was reached exactly when
+  // somebody had NO tabs at all — a storeman on a camera-less counter — and it
+  // handed them a catalogue screen with a New product button, every count
+  // reading nought because the server refused each call with their PIN. The
+  // door is not offered now (hasBackOffice), and if one is somehow opened on
+  // an empty list the room says so rather than guessing.
+  const [tab, setTab] = useState<TabKey | null>(
+    initialTab && tabs.some((t) => t.key === initialTab) ? initialTab : tabs[0]?.key ?? null
   );
   // On a phone the tabs live behind a burger (see the header); this is it.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -414,7 +369,7 @@ export default function Admin({
               ? menuItems(user, camera)
               : tabs.map((t) => ({ key: t.key, label: t.label, kind: "tab" as const, perms: [] }))
           }
-          current={tab}
+          current={tab ?? undefined}
           onClose={() => setMenuOpen(false)}
           onPick={(item) => {
             setMenuOpen(false);
@@ -708,6 +663,22 @@ export default function Admin({
       {tab === "staff" && <StaffAdmin user={user} pin={pin} products={products} />}
 
       {tab === "shop" && <ShopSettings pin={pin} />}
+
+      {/* Nothing in here for this person. Reached only if the door was opened
+          on an empty list, which the till no longer does — said plainly rather
+          than left as a blank screen, and never by falling back to a section
+          they have no right to. */}
+      {tab === null && (
+        <div className="p-6">
+          <p className="text-stone-700">
+            There is nothing in the back office for you on this device.
+          </p>
+          <p className="text-sm text-stone-500 mt-1">
+            Your work is on the till itself — the Stock room, Deliveries, and
+            looking an item up.
+          </p>
+        </div>
+      )}
 
       {editing && (
         <ProductEditor

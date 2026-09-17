@@ -34,7 +34,7 @@ import {
   shelfLookup,
   stockMovements,
 } from "../lib/adminApi";
-import { findByPinOffline } from "../lib/auth";
+import { findByPinOffline, signIn } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { enqueueAction, listQueue } from "../lib/queue";
 import { commitDocNumber, peekDocNumber, topUpAllDocNumbers, topUpDocNumbers } from "../lib/docNumbers";
@@ -72,6 +72,8 @@ import type {
 
 import Accounts from "../components/accounts/Accounts";
 import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quotes";
+import { useCamera } from "../lib/useCamera";
+import { hasBackOffice } from "../lib/menu";
 import Stock from "../components/stock/Stock";
 import Admin, { type TabKey } from "../components/Admin";
 import PhoneHome from "../components/PhoneHome";
@@ -218,9 +220,22 @@ export default function POS() {
   // Which section fills the frame. Sell is home; the others swap the counter
   // for the debtors book or the stock room. Deliberately NOT a route: an
   // in-progress sale must survive a glance at an account or a shelf.
+  //
+  // Sell is home for whoever may sell. A storeman cannot: take_payments is not
+  // theirs, the tender button refuses, and landing them on the counter let
+  // them scan a basket together and find out at the end. They start where
+  // their work is.
+  // Whether this device has a lens. Manage's Shelf tab is the whole back
+  // office for some people, and a counter machine without a camera has none.
+  const camera = useCamera();
   const [section, setSection] = useState<
     "sell" | "accounts" | "stock" | "quotes" | "deliveries"
-  >("sell");
+  //
+  // Deliveries and not the stock room, though a storeman's work is in both:
+  // the stock room asks for a PIN of its own on the way in, and a screen that
+  // greets somebody with a keypad is not a landing. Stock is one tap away in
+  // the header.
+  >(() => (can(user, "take_payments") ? "sell" : "deliveries"));
 
   /** A cart line as it is parked, and back. */
   const toParkedLines = (ls: CartLine[]): ParkedLine[] =>
@@ -1270,8 +1285,15 @@ export default function POS() {
       online={online}
       pending={pending}
       failed={failed}
-      canManage={canAny(user, ["manage_catalogue", "manage_inventory", "shelf_capture"])}
+      // From the SAME list the back office draws its tabs from (lib/menu).
+      // These were two lists and they disagreed: this one asked for
+      // manage_inventory, which opens nothing in Manage — the Stock room is a
+      // screen on this till. A storeman on a counter machine with no camera
+      // was shown a door into an empty room, and the room then defaulted to
+      // the catalogue.
+      canManage={!!user && hasBackOffice(user, { camera, phone: kind === "personal" })}
       section={section}
+      canSell={can(user, "take_payments")}
       canAccounts={can(user, "take_payments")}
       canQuotes={can(user, "take_payments")}
       canStock={can(user, "manage_inventory")}
@@ -1342,15 +1364,38 @@ export default function POS() {
             // for signing in (the same hashes, the same check): the door
             // opens, and each screen inside says what it cannot show. The
             // server still checks the PIN on every call once the line is back.
+            //
+            // WHOSE PIN. This modal says "enter your PIN" and did not check
+            // that it was: it proved the PIN by making a call the SIGNED-IN
+            // person was entitled to, then held that PIN for every call
+            // inside. So a storeman who knew the manager's PIN got the
+            // manager's back office on her own session — the screen her, the
+            // authority his. Nothing about that was deliberate; the label had
+            // said the rule all along.
+            //
+            // It is checked against this person and no other. A manager who
+            // wants the back office at somebody else's till signs in as
+            // himself, which is the honest version of what he was doing.
+            // Nobody is at this till, so nothing opens.
+            if (!user) throw new Error("Sign in first.");
             if (!isOnline()) {
               const who = await findByPinOffline(entered);
-              if (!who || !canAny(who, [...BACK_OFFICE])) {
-                throw new Error("That PIN is not known on this device, or opens nothing in the back office.");
+              if (!who || who.id !== user.id) {
+                throw new Error("That is not your PIN.");
               }
-            } else if (can(user, "manage_catalogue")) await adminListProducts(entered);
-            else if (can(user, "shelf_capture")) await shelfLookup(entered, "0");
-            else if (can(user, "manage_purchasing")) await purchasingSuppliers(entered);
-            else await approvalCodes(entered);
+              if (!canAny(who, [...BACK_OFFICE])) {
+                throw new Error("That PIN opens nothing in the back office.");
+              }
+            } else {
+              const who = await signIn(user.id, entered);
+              if (!who) throw new Error("That is not your PIN.");
+              // Then the same proof as before, so a PIN that is right but
+              // opens nothing still fails here rather than inside.
+              if (can(user, "manage_catalogue")) await adminListProducts(entered);
+              else if (can(user, "shelf_capture")) await shelfLookup(entered, "0");
+              else if (can(user, "manage_purchasing")) await purchasingSuppliers(entered);
+              else await approvalCodes(entered);
+            }
             setAdminPin(entered);
             remember("admin", entered);
             setAskAdminPin(false);

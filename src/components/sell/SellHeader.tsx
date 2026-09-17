@@ -22,6 +22,7 @@ export default function SellHeader({
   failed,
   canManage,
   section = "sell",
+  canSell = true,
   canAccounts = false,
   canQuotes = false,
   canStock = false,
@@ -42,6 +43,8 @@ export default function SellHeader({
   /** Which section is on screen; drives the highlighted tab. */
   section?: "sell" | "accounts" | "stock" | "quotes" | "deliveries";
   /** Whether this user may open Accounts at all. */
+  /** Whether this person may take money at all. */
+  canSell?: boolean;
   canAccounts?: boolean;
   /** Whether this user may open Quotes (same right as selling). */
   canQuotes?: boolean;
@@ -89,6 +92,8 @@ export default function SellHeader({
       <nav className="sell-nav" aria-label="Sections">
         <button
           aria-current={section === "sell" ? "page" : undefined}
+          disabled={!canSell}
+          title={canSell ? undefined : "Needs the take-payments permission"}
           onClick={() => onSection?.("sell")}
         >
           Sell

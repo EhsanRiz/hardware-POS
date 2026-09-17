@@ -60,7 +60,82 @@ export function menuItems(user: User, camera: boolean): MenuItem[] {
   });
 }
 
-/** Whether this person can open anything at all behind the PIN. */
-export function hasBackOffice(user: User): boolean {
-  return ITEMS.some((i) => i.kind === "tab" && i.perms.some((p) => can(user, p)));
+/** A section of Manage. Lives here because two screens must agree on the list. */
+export type TabKey =
+  | "catalogue" | "import" | "shelf" | "sales" | "suppliers" | "buying"
+  | "approvals" | "cashup" | "reports" | "tillai" | "staff" | "shop";
+
+/**
+ * The sections of Manage this person may actually open, on THIS device.
+ *
+ * One list, read by the back office to draw its tabs and by the till to decide
+ * whether to offer the Manage button at all. They were two lists and they
+ * disagreed: the button asked for manage_catalogue OR manage_inventory OR
+ * shelf_capture, and manage_inventory opens nothing in here — Stock is a
+ * screen on the till, not a section of Manage. So a storeman on a counter
+ * machine with no camera was shown a door into an empty room, and the room
+ * then defaulted to the catalogue.
+ */
+export function backOfficeTabs(
+  user: User,
+  where: { camera: boolean; phone: boolean }
+): { key: TabKey; label: string }[] {
+  const t: { key: TabKey; label: string }[] = [];
+  // Catalogue and Bulk import were unconditional, which was harmless while
+  // everybody who could open Manage held manage_catalogue. The shelf grant
+  // ends that: somebody whose only right is photographing shelves must not
+  // be shown a catalogue screen that would only refuse them.
+  if (can(user, "manage_catalogue")) {
+    t.push({ key: "catalogue", label: "Catalogue" });
+    // Bulk import is a CSV file picker and a column-mapping table. That is
+    // desktop work, and offering it on a phone only wastes a tap.
+    if (!where.phone) t.push({ key: "import", label: "Bulk import" });
+  }
+  // Photographing a shelf needs a lens. The shop's counter machine is a
+  // PinnPOS all-in-one with no camera in it, so this was a tab that could
+  // only ever say no — while the same screen sat one tap away on the phone,
+  // which is where the work actually happens. Gated on the CAMERA and not on
+  // the device's kind: a counter running on an iPad keeps it.
+  if (where.camera && (can(user, "shelf_capture") || can(user, "manage_catalogue"))) {
+    t.push({ key: "shelf", label: "Shelf" });
+  }
+  if (can(user, "view_reports")) t.push({ key: "sales", label: "Sales" });
+  // The drawer of supplier paperwork, for whoever does the buying.
+  if (can(user, "manage_purchasing")) t.push({ key: "suppliers", label: "Suppliers" });
+  // Ordering, and what is owed for it. Its own tab rather than a corner of
+  // Suppliers: filing a supplier's paperwork and deciding what to buy are
+  // done by the same person at completely different moments.
+  if (can(user, "manage_purchasing")) t.push({ key: "buying", label: "Buying" });
+  // ON THE PHONE ONLY, and the clue was always in the description: issuing a
+  // code is something a manager does standing in a bank queue with a phone to
+  // their ear. The whole point of the code is that they are NOT at the till —
+  // a manager standing at the counter types their PIN into the discount
+  // dialog and no code exists. So a till was offering a screen whose reason
+  // for existing is the till not being there.
+  if (where.phone && can(user, "approve_discount")) {
+    t.push({ key: "approvals", label: "Approvals" });
+  }
+  // Cash-up stays on a phone, but as history only: counting a drawer needs
+  // the cash in hand (see CashUp). What a manager wants from away is
+  // whether last night closed clean.
+  if (can(user, "cash_management")) t.push({ key: "cashup", label: "Cash-up" });
+  if (can(user, "view_reports")) t.push({ key: "reports", label: "Reports" });
+  if (can(user, "view_reports")) t.push({ key: "tillai", label: "TillAI" });
+  if (can(user, "manage_staff")) t.push({ key: "staff", label: "Staff" });
+  // The shop's address, VAT number and printer width: set once, on a
+  // keyboard, and never from an aisle.
+  if (can(user, "manage_settings") && !where.phone) t.push({ key: "shop", label: "Shop" });
+  return t;
+}
+
+/**
+ * Whether there is anything at all behind the PIN for this person, here.
+ *
+ * The button and the room answer from the same list, so a door that opens on
+ * nothing cannot exist.
+ */
+export function hasBackOffice(
+  user: User, where: { camera: boolean; phone: boolean }
+): boolean {
+  return backOfficeTabs(user, where).length > 0;
 }

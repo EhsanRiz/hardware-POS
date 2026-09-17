@@ -134,6 +134,10 @@ export const USERS = {
   // server, permissions here are the EFFECTIVE set — role defaults plus the
   // one grant — because that is what pos_login returns.
   shelf: { pin: "777777", phone: "+27820000031", row: { id: "u3", name: "Nomsa", role: "employee", phone: "+27820000031", email: null, permissions: ["take_payments","apply_discount","shelf_capture"] } },
+  // 0104: the Helper role — nothing from the role, only what was ticked. The
+  // stock room and the shelf, and NOT the till. As above, the permissions
+  // here are the effective set, which for a helper is exactly the ticks.
+  storeman: { pin: "888888", phone: "+27820000032", row: { id: "u4", name: "Thabo", role: "helper", phone: "+27820000032", email: null, permissions: ["manage_inventory","shelf_capture"] } },
 };
 
 /** The token pos_pair_register hands out; every token-scoped RPC must carry it. */
@@ -309,6 +313,12 @@ export class Backend {
       last_code_error: null },
     { id: "u3", name: "Nomsa", phone: "+27820000031", role: "employee",
       status: "active", active: true, permissions: ["shelf_capture"],
+      discount_limit_percent: null, discount_limit_amount: null,
+      last_code_error: null },
+    // 0104: a Helper. The role grants nothing, so these two ticks are the
+    // whole of what he can do — the stock room and the shelf, and not the till.
+    { id: "u4", name: "Thabo", phone: "+27820000032", role: "helper",
+      status: "active", active: true, permissions: ["manage_inventory", "shelf_capture"],
       discount_limit_percent: null, discount_limit_amount: null,
       last_code_error: null },
   ];
@@ -4104,7 +4114,10 @@ export async function signInOnSecondTill(page: Page, pin = USERS.employee.pin) {
   await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
-  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  // The header, not the scan box: somebody who may not take payments does not
+  // land on the counter at all, and waiting for a till they will never be
+  // shown would hang until the timeout.
+  await page.getByRole("button", { name: /Sign out/i }).first().waitFor();
 }
 
 export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
@@ -4121,7 +4134,10 @@ export async function pairAndSignIn(page: Page, pin = USERS.employee.pin) {
   await page.getByRole("button", { name: new RegExp(`^${person.row.name}\\b`) }).click();
   await page.waitForSelector('button:text-is("1")');
   for (const d of pin.split("")) await page.locator(`button:text-is("${d}")`).first().click();
-  await page.waitForSelector('input[placeholder*="Scan barcode"]');
+  // The header, not the scan box: somebody who may not take payments does not
+  // land on the counter at all, and waiting for a till they will never be
+  // shown would hang until the timeout.
+  await page.getByRole("button", { name: /Sign out/i }).first().waitFor();
 }
 
 /**
