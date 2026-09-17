@@ -9644,11 +9644,24 @@ test("tapping a number selects it, so the next key replaces it", async ({ page }
   await expect(qty).toBeVisible();
   await expect(qty).not.toHaveValue("");
   await qty.click();
-  const picked = await qty.evaluate((el: HTMLInputElement) => ({
-    from: el.selectionStart, to: el.selectionEnd, len: el.value.length,
-  }));
-  expect(picked.from, "the whole figure is picked out").toBe(0);
-  expect(picked.to).toBe(picked.len);
+  // Waited for, not read in the same breath as the click. The select is
+  // deliberately deferred by one frame (lib/numberFields) so the browser's own
+  // caret placement cannot win — a mouseup collapses a selection made during
+  // focus — and reading it immediately is a race the test loses on a fast
+  // page. It lost it once here, on the run that moved the suite onto a server
+  // that answers quicker.
+  await expect
+    .poll(
+      () =>
+        qty.evaluate(
+          (el: HTMLInputElement) =>
+            el.value.length > 0 &&
+            el.selectionStart === 0 &&
+            el.selectionEnd === el.value.length
+        ),
+      { timeout: 5_000, message: "the whole figure is picked out" }
+    )
+    .toBe(true);
   // So one keystroke replaces it rather than joining it.
   await page.keyboard.type("7");
   await expect(qty).toHaveValue("7");
