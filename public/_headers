@@ -1,8 +1,37 @@
+# The headers the shop is actually served.
+#
+# THIS FILE, not worker/index.ts, is what a browser gets for a page load.
+# Cloudflare's asset server answers any request that matches a built file and
+# never invokes the Worker for it — so withSecurityHeaders() runs only for the
+# /api/ and /storage/ paths that reach the Worker, and the Content-Security-
+# Policy written there was never in force on a till. Nothing noticed, because
+# no suite had ever looked at a live response; the deploy smoke check
+# (scripts/smoke.mjs) found it on its first run.
+#
+# Kept in step with the Worker's own set, and the browser suite now runs
+# against a server that applies this file (scripts/serve-dist.mjs), so a build
+# that breaks under this policy fails there rather than at a counter.
 /*
-  X-Frame-Options: SAMEORIGIN
+  # Where a page may load anything from. 'self' throughout: the till talks to
+  # Supabase through the Worker on its own origin (/api/), so nothing legitimate
+  # is cross-origin. script-src without 'unsafe-inline' is the line that matters
+  # — it is what makes an injected <script> inert.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  # Not SAMEORIGIN. Nothing here is ever framed, and a till that can be put in
+  # an iframe can be clickjacked into taking a payment.
+  X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: geolocation=(), microphone=(), camera=()
+  # A year, subdomains included. A till on a shop's wifi is exactly the thing
+  # an attacker on the same network downgrades to http and reads.
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  # camera=(self), NOT camera=(). This file said camera=() — which forbids the
+  # shop's own page from opening a lens, and the camera IS the barcode scanner
+  # on a phone and the Shelf screen's viewfinder. Safari ignores
+  # Permissions-Policy on a top-level document, which is why an iPhone kept
+  # scanning and nothing was ever reported; a Chrome phone would have been
+  # refused.
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()
 
 # Vite fingerprints these, so they can be cached forever.
 /assets/*

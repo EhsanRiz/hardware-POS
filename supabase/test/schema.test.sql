@@ -4567,6 +4567,31 @@ begin
       v_tok_b, v_mgr_b, v_prod_a, v_price),
     'a till cannot sell another shop''s product');
 
+  -- 0103: where a shop's money goes. Bank details are the single most useful
+  -- thing to steal off a neighbour on a shared system, and the accounts moved
+  -- to a table of their own — so the isolation is asserted here rather than
+  -- assumed to have come along with the row.
+  select count(*) into v_n from public.pos_admin_bank_accounts(v_tok_b, '246810');
+  perform assert_eq(v_n::int, 0, 'a new shop sees none of the first shop''s accounts');
+  select jsonb_array_length(bank_accounts) into v_n
+    from public.pos_org_settings(v_tok_b);
+  perform assert_eq(v_n::int, 0, 'and its documents carry none of them either');
+  -- The first shop still has its own, so the nought above is isolation and
+  -- not an empty table.
+  select count(*) into v_n from public.pos_admin_bank_accounts(v_tok_a, '1234');
+  perform assert(v_n > 0, 'while the first shop still has an account to protect');
+
+  -- Writing, too: the second shop saving its own list must not touch the
+  -- first's. The list is sent whole and deletes what is not in it, so a
+  -- save that reached across shops would empty a neighbour's.
+  perform public.pos_admin_save_bank_accounts(v_tok_b, '246810', jsonb_build_array(
+    jsonb_build_object('bank_name', 'Nedbank', 'account_name', 'Other Shop',
+      'account_number', '1234567890', 'branch_code', '198765')));
+  select count(*) into v_n from public.pos_admin_bank_accounts(v_tok_a, '1234');
+  perform assert(v_n > 0, 'the first shop''s account survives the second shop saving its own');
+  select count(*) into v_n from public.pos_admin_bank_accounts(v_tok_b, '246810');
+  perform assert_eq(v_n::int, 1, 'and the second shop has exactly what it saved');
+
   -- And the token itself: a wrong token opens nothing, so a shop cannot be
   -- read by anyone who does not hold one of its tills.
   perform assert_hidden(

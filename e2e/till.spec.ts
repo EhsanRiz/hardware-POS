@@ -10397,3 +10397,67 @@ test("a save cannot delete the accounts it never managed to read", async ({ page
   expect(be.bankAccounts).toHaveLength(1);
   expect(be.bankAccounts[0].account_number).toBe("62012345678");
 });
+
+test("the shop is served its own security headers, not a weaker set", async ({ page }) => {
+  // These are what a browser actually gets. worker/index.ts sets an identical
+  // set, but Cloudflare's asset server answers any request matching a built
+  // file WITHOUT invoking the Worker — so for a page load public/_headers is
+  // the whole story, and the policy in the Worker was never in force on a
+  // till. The deploy smoke check found it; this keeps it found.
+  const res = await page.goto("/");
+  const h = res!.headers();
+
+  const csp = h["content-security-policy"] ?? "";
+  // The line that matters: no 'unsafe-inline' on scripts is what makes an
+  // injected <script> inert.
+  expect(csp).toContain("default-src 'self'");
+  expect(csp).toContain("script-src 'self'");
+  expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
+  expect(csp).toContain("frame-ancestors 'none'");
+  expect(csp).toContain("object-src 'none'");
+
+  // Not SAMEORIGIN: a till that can be framed can be clickjacked into taking
+  // a payment.
+  expect(h["x-frame-options"]).toBe("DENY");
+  expect(h["x-content-type-options"]).toBe("nosniff");
+  expect(h["strict-transport-security"]).toContain("max-age=");
+
+  // camera=(self), not camera=(). The camera IS the barcode scanner on a
+  // phone and the viewfinder on the Shelf screen, and camera=() forbids the
+  // shop's own page from opening one. Safari ignores this header on a
+  // top-level document, which is why an iPhone kept working and nothing was
+  // ever reported — a Chrome phone would have been refused.
+  expect(h["permissions-policy"]).toContain("camera=(self)");
+});
+
+test("a sale rings all the way through without the policy refusing anything", async ({ page }) => {
+  // The suite now runs under the shop's real Content-Security-Policy, so this
+  // is the check that the policy and the app agree. A violation is reported to
+  // the page rather than thrown, so it has to be collected deliberately —
+  // otherwise the till simply does less and every assertion still passes.
+  const refused: string[] = [];
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (e) => {
+      const w = window as unknown as { __csp?: string[] };
+      w.__csp ??= [];
+      w.__csp.push(`${e.violatedDirective} blocked ${e.blockedURI}`);
+    });
+  });
+  page.on("console", (m) => {
+    if (/content security policy/i.test(m.text())) refused.push(m.text());
+  });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(page.locator("#print-area")).toContainText("Cement");
+  await page.getByLabel("Close").click();
+
+  const reported = await page.evaluate(
+    () => (window as unknown as { __csp?: string[] }).__csp ?? []
+  );
+  expect(reported, "the page reported no policy violation").toEqual([]);
+  expect(refused, "and the console logged none").toEqual([]);
+});

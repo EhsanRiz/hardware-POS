@@ -62,8 +62,14 @@ export default defineConfig({
     },
   ],
 
+  // Served the way Cloudflare serves it, public/_headers and all — NOT `vite
+  // preview`, which sets none of the shop's headers. That difference is how a
+  // Content-Security-Policy sat in worker/index.ts, never reached a live
+  // response, and left the whole suite green: nothing it ran under had a
+  // policy at all. A build that breaks under the shop's own CSP now fails
+  // here instead of at a counter.
   webServer: {
-    command: "npm run build:e2e && npx vite preview --port 4173",
+    command: "npm run build:e2e && node scripts/serve-dist.mjs 4173",
     url: "http://localhost:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
