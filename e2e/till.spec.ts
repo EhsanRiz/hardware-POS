@@ -9057,10 +9057,17 @@ test("Manage with the line down says so in words, and a wrong PIN is refused in 
  */
 test("the till numbers its own invoices from a block it reserved, with the line down too", async ({ page }) => {
   await pairAndSignIn(page);
-  // Signed in, the till asked for its blocks: twenty-five invoice numbers
-  // and twenty-five delivery-note numbers, from where the shop's sequence stood.
+  // Signed in, the till asked for its blocks: a block of invoice numbers and
+  // a block of delivery-note numbers, from where the shop's sequence stood.
+  //
+  // The 50 is BLOCK_SIZE in lib/docNumbers.ts, pinned here on purpose: what
+  // this test is about is that a block was reserved AND STARTS WHERE THE
+  // SHOP'S SEQUENCE STOOD, which is the part a wrong size would hide. The
+  // size itself, and that it never exceeds what the server will give, are
+  // held in test/doc-numbers.test.mjs — so moving BLOCK_SIZE is meant to
+  // fail here and be read, not silently pass.
   await expect.poll(() => be.reservations.filter((r) => r.type === "sale").length).toBe(1);
-  expect(be.reservations.find((r) => r.type === "sale")).toMatchObject({ from: 1, to: 25 });
+  expect(be.reservations.find((r) => r.type === "sale")).toMatchObject({ from: 1, to: 50 });
   await expect.poll(() => be.reservations.filter((r) => r.type === "delivery").length).toBe(1);
 
   // Online: the till's number, and the server kept it.
