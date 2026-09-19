@@ -8049,6 +8049,29 @@ test("a phone with no sensor is never offered a face", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
 });
 
+test("the Face ID switch is on the phone's menu wherever it is opened", async ({ page }) => {
+  // It shipped on the home's menu only, so opening the burger from inside a
+  // section showed no switch and it read as missing. AppMenu's own note says
+  // it is rendered from lib/menu precisely so the home and Manage "can never
+  // drift into offering different lists" — and a footer on one of them is
+  // that drift. This is the guard that was missing.
+  await fakeAuthenticator(page);
+  // Phone-sized: inside Manage the burger that opens this menu is itself
+  // under `sm`, so on a wide viewport there is nothing to press.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  // On the home's menu.
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await expect(page.getByText(/Enable Face or Touch ID/i)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // And on the menu as it is opened from inside a section.
+  await openManageOnPhone(page, "Catalogue");
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await expect(page.getByText(/Enable Face or Touch ID/i)).toBeVisible();
+});
+
 test("Face ID can be turned off again from the same menu", async ({ page }) => {
   // The half an offer at a lock screen could never have: somebody changing
   // their mind, or handing the phone on. Off means the lock asks for the PIN

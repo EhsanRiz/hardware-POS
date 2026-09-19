@@ -19,6 +19,7 @@ import { money } from "../lib/format";
 import { can } from "../lib/permissions";
 import { backOfficeTabs, menuItems, type TabKey } from "../lib/menu";
 import AppMenu from "./AppMenu";
+import BiometricSwitch from "./BiometricSwitch";
 import { fmtQty } from "../lib/receipt";
 import type { AdminProduct, Category, UnitOfMeasure, User } from "../lib/types";
 
@@ -380,6 +381,13 @@ export default function Admin({
           // Somebody stuck at "PIN not set" must be visible from here, or a
           // closed menu is where that problem goes to hide.
           badges={staffWaiting > 0 ? { staff: `${staffWaiting} waiting` } : {}}
+          // The same switch the home's menu carries. It was on the home alone
+          // to begin with, which made the app's ONE menu into two that differ
+          // by where you opened it — the exact drift AppMenu's own note says
+          // it exists to prevent. A phone only: a till is shared and watched,
+          // and one person's face is not a door onto a machine several people
+          // work all day.
+          footer={phone && user ? <BiometricSwitch user={user} /> : undefined}
         />
       )}
 
