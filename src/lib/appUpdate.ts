@@ -30,13 +30,31 @@ const READY = "pos:update-ready";
 const CHECK_EVERY_MS = 5 * 60 * 1000;
 
 let apply: ((reload?: boolean) => Promise<void>) | null = null;
+/**
+ * That a newer app is waiting — the fact, which persists, as against READY,
+ * which is only the nudge that announces it.
+ *
+ * Latched by listening for READY rather than beside each dispatch, so there is
+ * ONE path and the suite walks it. A test cannot stage a genuine service
+ * worker, so it fires the event; if the latch were set only next to the real
+ * dispatches, every test would leave it false and a screen that reads the
+ * latch could be broken with the suite still green.
+ */
 let waiting = false;
+/**
+ * Whether there is a REAL worker sitting there to be activated, which is a
+ * different question from whether to draw the button. A test fires the event
+ * and no worker exists; applyUpdate must then plainly reload rather than wait
+ * on a promise for something that was never there.
+ */
+let workerWaiting = false;
 
 export function startUpdateWatch(): void {
   if (typeof window === "undefined") return;
+  window.addEventListener(READY, () => { waiting = true; });
   apply = registerSW({
     onNeedRefresh() {
-      waiting = true;
+      workerWaiting = true;
       window.dispatchEvent(new Event(READY));
     },
     onRegisteredSW(_url, registration) {
@@ -62,7 +80,7 @@ export function startUpdateWatch(): void {
       // The waiting worker may already be sitting there from a previous
       // visit: registerSW only announces one it saw arrive.
       if (registration.waiting) {
-        waiting = true;
+        workerWaiting = true;
         window.dispatchEvent(new Event(READY));
       }
     },
@@ -82,13 +100,37 @@ export function applyUpdate(): void {
   // No waiting worker to activate (a dev build, a browser that refused one, or
   // a version that landed before this tab registered): a plain reload still
   // fetches the new files rather than doing nothing at all.
-  if (apply && waiting) void apply(true);
+  if (apply && workerWaiting) void apply(true);
   else window.location.reload();
 }
 
+/**
+ * Whether a newer app is waiting, for whoever is drawing the button.
+ *
+ * THE LATCH IS THE ANSWER, NOT THE EVENT, and this is the whole of the fix.
+ * READY is dispatched once, when the worker arrives. A component that mounts
+ * afterwards hears nothing — so it must ask `waiting`, which remembers.
+ *
+ * The till never noticed, because SellHeader mounts when the sell screen opens
+ * and is still mounted on Friday: the deploy lands mid-session, into a
+ * component that is already there. The phone is the opposite shape. PhoneHome
+ * is the fallback branch — it unmounts for Deliveries, Quotes, the stock room,
+ * Look it up, and the away lock — and an installed app is opened from the home
+ * screen fresh every time, which is the case that loses. onRegisteredSW finds
+ * the worker already waiting from last time and fires READY at module load,
+ * before React has rendered anything at all; PhoneHome then mounts into a
+ * signal that has already been and gone, and the owner is told to press a
+ * button that is not on their screen.
+ *
+ * Both the initial value AND the effect read it, because they close different
+ * halves of the same gap: the lazy init covers an event fired before this
+ * mounted, and the effect covers one fired between the render and the listener
+ * being attached.
+ */
 export function useUpdateReady(): boolean {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(() => waiting);
   useEffect(() => {
+    if (waiting) setReady(true);
     const on = () => setReady(true);
     window.addEventListener(READY, on);
     return () => window.removeEventListener(READY, on);

@@ -9004,6 +9004,62 @@ test("and the phone says it too, since it goes just as stale", async ({ page }) 
 });
 
 /*
+ * Reported from the shop: "I see the update on till not on the phone."
+ *
+ * Both tests above fire the signal at a screen that is ALREADY THERE, which is
+ * the one arrangement that worked, and they were green over a phone that never
+ * showed the button. What they never staged is the signal arriving while
+ * PhoneHome does not exist — and on a phone that is the normal case, not the
+ * edge one.
+ *
+ * PhoneHome is the fallback branch: it unmounts for Deliveries, Quotes, the
+ * stock room, Look it up and the away lock. READY is dispatched once and does
+ * not repeat, so a screen that mounts afterwards hears nothing. The till never
+ * met this because SellHeader mounts when the sell screen opens and is still
+ * mounted on Friday; the deploy lands underneath a component that is sitting
+ * there to catch it. Worse on a cold start, which is how an installed app is
+ * always opened: onRegisteredSW finds the worker already waiting from last
+ * time and fires READY at module load, before React has rendered anything.
+ *
+ * So the fact has to outlive the announcement. These two hold that.
+ */
+test("a newer app announced while the phone is locked is still offered when it opens", async ({ page }) => {
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await expect(page.locator(".phone-home-head")).toBeVisible();
+
+  // Put away first, so PhoneHome is gone when the news arrives — the cold
+  // start in miniature, and the commonest path on a phone in a pocket.
+  await putAway(page, 90);
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
+
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+
+  // The owner was told to press Update. It has to be on the screen they open.
+  await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
+});
+
+test("and it is still offered after the phone has been off to another screen", async ({ page }) => {
+  // The other half of the same fault, and the one the owner would hit first:
+  // the button appears, they go and do something, and it is gone when they
+  // come back — with nothing having been updated.
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
+  await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await page.getByRole("menuitem", { name: /Look it up/i }).click();
+  await expect(page.getByPlaceholder(/Scan a barcode/i)).toBeVisible();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Update/ })).toBeVisible();
+});
+
+/*
  * The line is not the work.
  *
  * A driver signs the page at a gate with no signal; the till loses the shop's
