@@ -85,7 +85,9 @@ import FailedSales from "../components/FailedSales";
 import TillAI from "../components/TillAI";
 import PairRegister from "../components/PairRegister";
 import ManagerPinModal from "../components/ManagerPinModal";
-import { biometricForget } from "../lib/biometric";
+import {
+  biometricAvailable, biometricEnrolled, biometricForget, biometricVerify,
+} from "../lib/biometric";
 import { BACK_OFFICE, forgetPins, ownerProved, recall, remember } from "../lib/unlock";
 import { buildNotices, fetchNotices, type Notice, type NoticeCounts } from "../lib/notices";
 import CustomerPicker from "../components/sell/CustomerPicker";
@@ -386,6 +388,29 @@ export default function POS() {
   // A phone that has been put away asks for its owner's PIN again. The
   // till does not: it is watched, shared, and takes money all day.
   const [locked, unlock] = useAwayLock(kind === "personal");
+  /**
+   * Whether this handset can be asked for a face, checked once.
+   *
+   * Feeds the two doors that ask for YOUR OWN PIN — the back office and the
+   * stock room. They ask again when lib/unlock's ten minutes lapse, and on a
+   * phone the PIN they want is still in memory from sign-in: the same six
+   * digits, the same person, proved against the server when they were typed.
+   * So a face stands in for retyping them, exactly as it does at the away
+   * lock. A reload clears sessionPin and the keypad is the only way through,
+   * which is right.
+   *
+   * Never fed to the four doors that ask for somebody ELSE'S PIN.
+   */
+  const [hasSensor, setHasSensor] = useState(false);
+  useEffect(() => {
+    if (kind !== "personal") return;
+    let gone = false;
+    void biometricAvailable().then((ok) => !gone && setHasSensor(ok));
+    return () => { gone = true; };
+  }, [kind]);
+  const faceCanOpen =
+    kind === "personal" && hasSensor && sessionPin != null && user != null &&
+    biometricEnrolled(user.id);
 
   /**
    * What needs somebody (lib/notices, 0100).
@@ -1351,6 +1376,18 @@ export default function POS() {
         <ManagerPinModal
           title="Stock"
           subtitle="Enter your PIN to open the stock room"
+          onResume={
+            faceCanOpen && user && sessionPin
+              ? async () => {
+                  if (!(await biometricVerify(user.id))) return false;
+                  setStockPin(sessionPin);
+                  remember("stock", sessionPin);
+                  setAskStockPin(false);
+                  setPhoneScreen("stock");
+                  return true;
+                }
+              : undefined
+          }
           onApprove={async (entered) => {
             // WHOSE PIN, for the same reason as the back office below: this
             // says "enter YOUR PIN" and proved only that the PIN belonged to
@@ -1388,6 +1425,19 @@ export default function POS() {
         <ManagerPinModal
           title="Manage"
           subtitle="Enter your PIN to open the back office"
+          onResume={
+            faceCanOpen && user && sessionPin
+              ? async () => {
+                  if (!(await biometricVerify(user.id))) return false;
+                  // The same PIN this phone was signed in with, so the door
+                  // opens on what ownerProved already trusts it for.
+                  setAdminPin(sessionPin);
+                  remember("admin", sessionPin);
+                  setAskAdminPin(false);
+                  return true;
+                }
+              : undefined
+          }
           onApprove={async (entered) => {
             // Proved against the server by a first call this signer is
             // actually entitled to make — the catalogue for catalogue

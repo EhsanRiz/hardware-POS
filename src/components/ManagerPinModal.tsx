@@ -8,6 +8,20 @@ interface Props {
   subtitle?: string;
   onApprove: (pin: string) => Promise<void>;
   onCancel: () => void;
+  /**
+   * A face or a finger instead of retyping, where that is honestly available.
+   *
+   * Offered only by the doors that ask for YOUR OWN PIN on a phone you have
+   * already signed into — the back office and the stock room. Never by the
+   * four that ask for SOMEBODY ELSE'S: a discount, a return, a parked sale, a
+   * voided payment all exist precisely so another person approves, and this
+   * phone's owner's face is not that person. Passing it is the caller's
+   * decision for that reason; the modal only draws what it is given.
+   *
+   * Returns false when the phone refused, said no, or was cancelled, and the
+   * keypad below carries on as before.
+   */
+  onResume?: () => Promise<boolean>;
 }
 
 // Modal shown when an employee's discounted sale needs a manager to release it.
@@ -16,6 +30,7 @@ export default function ManagerPinModal({
   subtitle,
   onApprove,
   onCancel,
+  onResume,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +69,24 @@ export default function ManagerPinModal({
             already knows, and a screen that needs the server will say so.
           </p>
         )}
+        {onResume && (
+          <button
+            className="btn-primary w-full mb-3"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              const ok = await onResume();
+              setBusy(false);
+              // Nothing said on a refusal: cancelling the phone's prompt is
+              // somebody choosing the keypad, and it is right underneath.
+              if (!ok) return;
+            }}
+          >
+            Unlock with Face ID or fingerprint
+          </button>
+        )}
+
         <PinPad onSubmit={handle} busy={busy} />
         {error && (
           <p className="mt-3 text-red-600 font-medium text-center" role="alert">

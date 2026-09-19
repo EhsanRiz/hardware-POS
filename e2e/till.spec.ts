@@ -8072,6 +8072,60 @@ test("the Face ID switch is on the phone's menu wherever it is opened", async ({
   await expect(page.getByText(/Enable Face or Touch ID/i)).toBeVisible();
 });
 
+test("a face opens the back office when the ten minutes have lapsed", async ({ page }) => {
+  // The door asks again when lib/unlock's hold expires, and on a phone the
+  // PIN it wants is still in memory from sign-in. A face stands in for
+  // retyping the same six digits — which is what somebody who turned Touch ID
+  // on expects of it, and what it did not do at first.
+  await fakeAuthenticator(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await turnOnFaceId(page);
+
+  // Make the door ask: the hold is in memory and a reload is what clears it.
+  // The session survives one (it is cached), the proved PINs do not.
+  await page.reload();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await page.getByRole("menuitem", { name: "Catalogue", exact: true }).click();
+  const gate = page.getByRole("dialog", { name: "Manage" });
+  await expect(gate).toBeVisible();
+  // A reload also clears sessionPin, so there is nothing to resume and the
+  // keypad is the only way through. That is the rule, asserted rather than
+  // assumed — it is the half that keeps a stolen handset shut.
+  await expect(gate.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
+});
+
+test("the doors that want somebody else's PIN never offer a face", async ({ page }) => {
+  // The line this must not cross. A discount over a cashier's limit, a
+  // return, a parked sale, a voided payment: those exist so ANOTHER person
+  // approves. This phone's owner's face is not that person, and offering it
+  // there would turn a second pair of eyes into a formality.
+  await fakeAuthenticator(page);
+  await handOverToSam(page);
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  await expect(approval).toBeVisible();
+  await expect(approval.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
+  // And nowhere else on this screen either, so it cannot arrive by another
+  // route while this assertion passes.
+  await expect(page.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
+
+  // The manager's PIN still releases it, which is the behaviour this door
+  // exists for and must not have been disturbed.
+  for (const d of USERS.manager.pin.split("")) {
+    await approval.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(approval).toHaveCount(0);
+});
+
 test("Face ID can be turned off again from the same menu", async ({ page }) => {
   // The half an offer at a lock screen could never have: somebody changing
   // their mind, or handing the phone on. Off means the lock asks for the PIN
