@@ -151,6 +151,24 @@ export default function StaffAdmin({
                 >
                   <span className="flex-1 min-w-0">
                     <span className={`block ${s.active ? "" : "text-stone-400 line-through"}`}>
+                      {/* In front of the name (0106), because the question is
+                          asked while reading down the list — "who is actually
+                          set up?" — not while looking at one person. An
+                          invitation going out and somebody pairing a phone
+                          are different things, and this list could not tell
+                          them apart: the person who never opened the SMS read
+                          exactly like the one who paired first time.
+
+                          Marked up for the blind as well as the eye: the glyph
+                          is aria-hidden and the words next to it are the
+                          screen reader's, so a row does not announce itself as
+                          "mobile phone Sarah Rizvi". */}
+                      {s.has_phone && (
+                        <>
+                          <span aria-hidden="true" title="Has the app on a phone">📱</span>
+                          <span className="sr-only">Has the app on a phone: </span>
+                        </>
+                      )}
                       {s.name}
                       {s.id === user?.id && (
                         <span className="ml-2 text-xs text-stone-500">(you)</span>

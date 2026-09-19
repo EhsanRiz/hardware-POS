@@ -290,7 +290,18 @@ export default function ProductEditor({
 
             <Field
               label={isNew ? "Opening stock" : "On hand"}
-              hint={isNew ? "Blank = don't track stock." : undefined}
+              // Greyed after creation on purpose: stock moves through the
+              // ledger so the balance can always be explained. That is right,
+              // and it said nothing at all about where to go instead — a
+              // manager who scanned an item on the shelf found the figure
+              // locked and reasonably concluded it could not be set.
+              hint={
+                isNew
+                  ? "Blank = don't track stock."
+                  : f.stock_qty == null
+                    ? "Not counted yet — see below."
+                    : "Changed by the stock count below."
+              }
             >
               <input
                 inputMode="decimal"
@@ -398,6 +409,25 @@ export default function ProductEditor({
               — until this is ticked and priced, the till will not show it
             </span>
           </label>
+
+          {/* Never counted: the case a shelf scan leaves behind. The editor
+              said nothing here at all — no count box, because there is no
+              balance to correct, and a locked figure above it. So the item
+              read as broken. It is not: it sells perfectly well untracked
+              (apply_stock only moves rows WHERE stock_qty is not null), and
+              Receive is what starts counting it. A stock count cannot, and
+              says so from the server in words nobody can act on:
+              "Stock is not tracked for X". */}
+          {!isNew && f.stock_qty == null && (
+            <div className="rounded-xl bg-stone-50 p-3">
+              <div className="text-sm font-medium">Stock is not counted for this item</div>
+              <p className="text-xs text-stone-500 mt-1">
+                It still sells, and nothing is deducted. To start counting it,
+                book it in on <strong>Stock → Receive a delivery</strong> — what
+                arrives becomes the first count. A stock count cannot start it.
+              </p>
+            </div>
+          )}
 
           {/* Stock is only changed through a counted adjustment, so the movement
               ledger can always explain the balance. */}

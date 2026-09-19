@@ -330,6 +330,19 @@ export interface StaffUser {
    */
   invite_sent_at?: string | null;
   invite_send_error?: string | null;
+  /**
+   * Whether this person has the app paired on a phone of their own (0106).
+   *
+   * An invitation going out is not the same as somebody setting the phone up,
+   * and the staff list could not tell the two apart — a person who never
+   * opened the SMS looked exactly like one who paired on the first try. True
+   * when an ACTIVE personal register is assigned to them, so unpairing a
+   * device takes the phone back off the name.
+   *
+   * Optional because the rows pos_admin_invite_user and pos_admin_update_user
+   * return do not carry it.
+   */
+  has_phone?: boolean;
 }
 
 /**

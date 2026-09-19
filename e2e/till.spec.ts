@@ -7769,6 +7769,72 @@ test("Look it up answers price, stock and bin with the line down", async ({ page
   await expect(page.getByText(/as the phone last saw it/i)).toBeVisible();
 });
 
+test("an item that was never counted says how to start counting it", async ({ page }) => {
+  // Wood Glue is what the Shelf screen leaves behind: priced, never counted,
+  // stock_qty null. The editor greys On hand after creation — right, because
+  // stock moves through the ledger — and for this item it then showed nothing
+  // at all: no count box either, because there is no balance to correct. So
+  // the figure read as unreachable and a manager reasonably concluded the
+  // item was broken. It is not; Receive is what starts it.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Wood Glue 500ml" }).first().click();
+
+  await expect(page.getByText("Stock is not counted for this item")).toBeVisible();
+  await expect(page.getByText(/Receive a delivery/)).toBeVisible();
+  // And the locked field points at it rather than sitting there mute.
+  await expect(page.getByText("Not counted yet — see below.")).toBeVisible();
+});
+
+test("an item that IS counted offers the count, not the receiving advice", async ({ page }) => {
+  // The other half: a tracked item must keep its count box and must NOT be
+  // told to go and receive something. Without this the first test would pass
+  // on an editor that gave every product the same notice.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Padlock 50mm Brass" }).first().click();
+
+  await expect(page.getByText(/Stock count — currently/)).toBeVisible();
+  await expect(page.getByText("Stock is not counted for this item")).toHaveCount(0);
+  await expect(page.getByText("Changed by the stock count below.")).toBeVisible();
+});
+
+test("the staff list says who has actually got the app on a phone", async ({ page }) => {
+  // An invitation going out is not somebody pairing a phone, and this list
+  // could not tell them apart: the person who never opened the SMS read
+  // exactly like the one who paired first time. Sam has a phone; Nomsa does
+  // not, and is the control — without her the test would pass on a screen
+  // that marked everybody.
+  be.registers.push({
+    id: "reg-sam-phone", token: "sam-phone-token", name: "Sam phone",
+    kind: "personal", assigned_to: "u2", active: true,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+
+  const sam = page.locator("li", { hasText: "Sam" }).first();
+  const nomsa = page.locator("li", { hasText: "Nomsa" }).first();
+  await expect(sam).toContainText("Has the app on a phone");
+  await expect(nomsa).not.toContainText("Has the app on a phone");
+});
+
+test("a phone that was unpaired stops showing against the name", async ({ page }) => {
+  // Unpairing leaves the row and sets it inactive (0007, 0016) rather than
+  // deleting it, so "has a personal register" and "has a phone" are not the
+  // same question. This is the half that would still pass if the predicate
+  // forgot `active`.
+  be.registers.push({
+    id: "reg-sam-phone", token: "sam-phone-token", name: "Sam phone",
+    kind: "personal", assigned_to: "u2", active: false,
+  });
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Staff$/ }).click();
+  await expect(page.locator("li", { hasText: "Sam" }).first())
+    .not.toContainText("Has the app on a phone");
+});
+
 test("a manager issues a code for somebody's phone from the staff list", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("button", { name: /^Manage$/ }).click();

@@ -397,10 +397,18 @@ export class Backend {
   registers: {
     id: string; token: string; name: string;
     kind: "till" | "personal"; assigned_to: string | null;
+    /**
+     * Unpairing sets this false and LEAVES the row (0007, 0016) rather than
+     * deleting it. Modelled because 0106 reads it: a device that was unpaired
+     * has to stop showing a phone against its owner's name, and a fake that
+     * simply dropped the row could not tell that rule from one that only
+     * checked whether a personal register existed at all.
+     */
+    active: boolean;
   }[] = [
-    { id: "reg1", token: REGISTER_TOKEN, name: "Front Counter", kind: "till", assigned_to: null },
+    { id: "reg1", token: REGISTER_TOKEN, name: "Front Counter", kind: "till", assigned_to: null, active: true },
     // A second till in the same shop, for what is shared between tills.
-    { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null },
+    { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null, active: true },
   ];
   /** Live enrolment codes, as device_enrolments holds them minus the hashing. */
   enrolments: {
@@ -3975,7 +3983,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const name =
           String(body.p_device_name ?? "").trim() || `${owner.name}'s phone`;
         be.registers.push({
-          id, token, name, kind: "personal", assigned_to: owner.id,
+          id, token, name, kind: "personal", assigned_to: owner.id, active: true,
         });
         return json([{
           register_id: id, token, user_id: owner.id, user_name: owner.name,
@@ -4026,6 +4034,15 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           ...s,
           invite_sent_at: s.invite_sent_at ?? null,
           invite_send_error: s.invite_send_error ?? null,
+          // 0106, computed the same way the migration does it: an ACTIVE
+          // personal register assigned to them. Derived from the registers
+          // this fake already keeps rather than stored beside the roster,
+          // because two places holding "has a phone" is how one of them goes
+          // stale — and the one the test reads would not be the one pairing
+          // updates.
+          has_phone: be.registers.some(
+            (r) => r.kind === "personal" && r.assigned_to === s.id && r.active
+          ),
         })));
 
       case "rpc/pos_admin_invite_user": {

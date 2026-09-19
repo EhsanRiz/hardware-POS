@@ -6266,4 +6266,71 @@ begin
   reset role;
 end $$;
 
+-- 0106: who has actually got the app on a phone ------------------------------
+--
+-- An invitation going out is not somebody pairing a phone, and the roster
+-- could not tell the two apart. has_phone is an ACTIVE personal register
+-- assigned to them, so unpairing takes the phone back off the name — which is
+-- the whole point of unpairing it.
+
+do $$
+declare v_tok text; v_org uuid; v_new uuid; v_has boolean; v_reg uuid;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  select id into v_new from public.pos_admin_invite_user(
+    v_tok, '1234', 'Phoneless Thabo', '+27820000106', 'employee'::user_role,
+    array[]::text[]);
+
+  -- Invited is not paired. This is the distinction the column exists for.
+  select u.has_phone into v_has
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_has is false, 'an invitation sent is not a phone paired');
+
+  -- A phone of their own.
+  insert into public.registers (org_id, name, token_hash, kind, assigned_to, active)
+  values (v_org, 'Thabo phone', 'hash-0106', 'personal', v_new, true)
+  returning id into v_reg;
+
+  select u.has_phone into v_has
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_has, 'a paired personal device shows against the name');
+
+  -- Unpaired: the row stays and goes inactive (0007, 0016), and the phone
+  -- must come back off the name.
+  update public.registers set active = false where id = v_reg;
+  select u.has_phone into v_has
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_has is false, 'an unpaired device is not a phone');
+
+  -- The two ways this column could have answered the wrong question — "is any
+  -- register theirs" (every cashier's till is) and "is there a personal
+  -- device" (whose?) — cannot arise: the schema refuses both shapes, so the
+  -- predicate does not have to carry them. Asserted rather than assumed,
+  -- because that is the reason it is safe to keep it this simple.
+  perform assert_refuses(
+    format('update public.registers set kind = ''till'' where id = %L', v_reg),
+    'a till cannot belong to a person');
+  perform assert_refuses(
+    format('update public.registers set assigned_to = null where id = %L', v_reg),
+    'a personal device cannot be nobody''s');
+
+  -- Somebody else's phone is not theirs. The only shape left that could go
+  -- wrong, so it is the one worth driving.
+  update public.registers set active = true, assigned_to =
+    (select id from public.app_users where org_id = v_org and id <> v_new limit 1)
+   where id = v_reg;
+  select u.has_phone into v_has
+    from public.pos_admin_list_users(v_tok, '1234') u where u.id = v_new;
+  perform assert(v_has is false, 'a colleague''s phone is not theirs');
+
+  -- Dropped and recreated, so the old signature must not be standing beside
+  -- the new one (CLAUDE.md).
+  perform assert_eq((select count(*)::int from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'pos_admin_list_users'), 1,
+    'one signature for pos_admin_list_users');
+end $$;
+
 select 'all database tests passed' as result;
