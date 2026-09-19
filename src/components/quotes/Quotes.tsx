@@ -8,8 +8,12 @@ import {
   type QuoteSummary,
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import { cacheGet, cacheSet } from "../../lib/localCache";
+import { isNetworkError, useOnline } from "../../lib/offline";
+import {
+  cachedLines, ITEMS_KEY, LIST_KEY, rememberLines, type ItemsCache,
+} from "../../lib/quoteCache";
 import { money } from "../../lib/money";
-import { useOnline } from "../../lib/offline";
 import { printReceipt } from "../../lib/print";
 import { buildQuoteText } from "../../lib/receipt";
 import { shopSettings, vatRate } from "../../lib/settings";
@@ -36,6 +40,23 @@ import { documentFileName } from "../../lib/pdf";
  * drift is shown BEFORE the sale is rung, because honouring a two-day-old
  * quote is the shop's decision to make and it can only make it seeing the
  * difference.
+ *
+ * WHY THE LIST IS CACHED. Every other list the counter opens — the catalogue,
+ * the customers, the deliveries, this till's own parked sales — draws from
+ * localStorage first and refreshes behind it. This one did not, so opening
+ * Quotes was a blank table until a round trip came back, and tapping a row was
+ * a second one with the panel deliberately blanked. On a shop's line that is
+ * the better part of a second of nothing, twice, while a customer waits at the
+ * counter to be told about their own quote.
+ *
+ * WHAT THE CACHE MAY NOT DO. A quote is a promise at a price, and the list
+ * says which promises are still open. A cached row can therefore be wrong in
+ * the one direction that matters: a quote somebody else converted or cancelled
+ * still reads "open" here. So the cache is READ-ONLY. Recalling, cancelling,
+ * emailing and building a PDF are all gated on the line already, and stay
+ * that way; with the line down the list says in words that it is the last one
+ * seen rather than the shop's current truth. The keys and the bound are in
+ * lib/quoteCache.ts, where they can be tested without a browser.
  */
 export default function Quotes({
   user,
@@ -51,7 +72,11 @@ export default function Quotes({
   onRecall?: (quote: QuoteSummary, lines: QuoteLine[]) => void;
 }) {
   const online = useOnline();
-  const [quotes, setQuotes] = useState<QuoteSummary[] | null>(null);
+  // The last list the line gave, so the counter has something to read while
+  // the fresh one is on its way — and something at all when it never comes.
+  const [quotes, setQuotes] = useState<QuoteSummary[] | null>(() =>
+    cacheGet<QuoteSummary[] | null>(LIST_KEY, null)
+  );
   /** How the last emailed quote went out, when it needed saying. */
   const [sent, setSent] = useState<SendOutcome | null>(null);
   /** The quote whose PDF is being fetched and built, if any. */
@@ -70,9 +95,13 @@ export default function Quotes({
   const load = useCallback(async () => {
     setError(null);
     try {
-      setQuotes(await listQuotes());
+      const rows = await listQuotes();
+      setQuotes(rows);
+      cacheSet(LIST_KEY, rows);
     } catch (e) {
-      setError(errorMessage(e, "Could not load the quotes"));
+      // With the line down the cached list stands and says so; only a real
+      // refusal from the server is an error worth putting on the screen.
+      if (!isNetworkError(e)) setError(errorMessage(e, "Could not load the quotes"));
     }
   }, []);
 
@@ -99,10 +128,24 @@ export default function Quotes({
   useEffect(() => {
     if (!viewing) return;
     let cancelled = false;
-    setViewLines(null);
+    // Whatever this device read last time, at once — an empty panel that
+    // fills in half a second reads as a broken quote to somebody holding one.
+    // A fetch still goes out behind it, so a stale line is corrected in place.
+    const remembered = cachedLines(cacheGet<ItemsCache>(ITEMS_KEY, {}), viewing.id);
+    setViewLines(remembered);
     quoteItems(viewing.id)
-      .then((l) => !cancelled && setViewLines(l))
-      .catch((e) => !cancelled && setError(errorMessage(e, "Could not open that quote")));
+      .then((l) => {
+        if (cancelled) return;
+        setViewLines(l);
+        cacheSet(ITEMS_KEY, rememberLines(cacheGet<ItemsCache>(ITEMS_KEY, {}), viewing.id, l));
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        // Nothing remembered and no line is the one case with nothing to show.
+        if (!isNetworkError(e) || !remembered) {
+          setError(errorMessage(e, "Could not open that quote"));
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -273,8 +316,13 @@ export default function Quotes({
 
       {!online && (
         <p className="acc-note">
-          Quotes need a connection — to give one at the counter, print from the
-          Sell screen.
+          {quotes?.length
+            ? // Naming WHEN it was read is the point: a quote somebody else has
+              // since converted or cancelled still reads "open" in a list off
+              // the disk, and the counter has to know that before it promises
+              // anything on one.
+              "The line is down — this is the last list this till saw, and a quote may have been taken up or cancelled since. Recalling and cancelling need the line."
+            : "Quotes need a connection — to give one at the counter, print from the Sell screen."}
         </p>
       )}
       {error && <p className="acc-note is-bad">{error}</p>}

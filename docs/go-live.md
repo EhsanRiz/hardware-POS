@@ -422,3 +422,94 @@ The lesson for the rest of this rehearsal: **the database holding the line is
 not the same as the screen being right.** Every one of these showed a door
 that the server would have slammed. Sign in as each person and look at what
 they are offered, not only at what happens when they try it.
+
+## What "slow" turned out to be
+
+Reported from the counter before step 3 was finished: the till takes its time
+loading parked sales and quotations. The shop was on a poor line at the time,
+which is most of the answer — but not the interesting part of it.
+
+**The queries are not slow.** `pos_parked_sales` against production, with the
+shop's real rows, plans on `parked_sales_org_idx` and executes in **0.333 ms**.
+Nothing in the database is worth tuning. The performance advisor's 49
+unindexed foreign keys are all INFO and all on tables of a few dozen rows;
+they will matter at a hundred thousand sales and do not matter now.
+
+**The database is in `eu-west-1`.** Ireland to Ladybrand is about 170 ms of
+round trip before the server does any work at all. That is a fixed toll on
+every request, paid again for every request a screen makes in sequence.
+
+**And two screens paid it twice, with nothing on the screen meanwhile.** Every
+other list the counter opens — the catalogue, the customers, the deliveries,
+this till's own parked sales — draws from `localStorage` first and refreshes
+behind it. Quotes did not, and neither did the shop's shared parked list. So
+opening Quotes was a blank table until a round trip returned, and tapping a row
+was a second round trip with the panel deliberately blanked
+(`setViewLines(null)`). The two screens named from the counter were precisely
+the two with no cache. That is not a coincidence and it was not the line.
+
+### What was already right
+
+Worth writing down, because the selling path was never the problem and a
+rewrite would have been the wrong answer:
+
+| | |
+|---|---|
+| Read from disk, refresh behind | catalogue, categories, customers, this till's parked sales, deliveries, stock's catalogue, session, device, notices |
+| Queued and synced | sales (offline invoice numbering from reserved blocks, approval codes, sync-exactly-once), deliveries created, deliveries marked off |
+| Precached by the service worker | the whole app shell; product photographs CacheFirst for 90 days |
+| Covered | 17 browser tests drive the offline paths |
+
+**A cashier at the counter was always fine with the line down. The back
+office never was.** Quotes, the shared parked list, Stock, reports, cash-up
+and accounts are all online-only; Stock cannot be otherwise without a design
+for re-asking the PIN at sync (`HANDOVER.md`).
+
+### Fixed: the two screens that were named
+
+Quotes and the shared parked list now read from disk first, like everything
+else. Three things were deliberate about how:
+
+- **The cache is read-only.** A quote is a promise at a price, and a row off
+  the disk can be wrong in the one direction that matters — a quote somebody
+  else converted or cancelled still reads "open". Recalling, cancelling,
+  emailing and building a PDF already went to the server and still do; taking
+  up a shared parked sale still calls `unparkSale`, which is what decides
+  whether it is still there to take. With the line down the list says in words
+  that it is the last one seen, not the shop's current truth.
+- **The lines are bounded.** `lib/quoteCache.ts` keeps forty quotes' lines and
+  drops the least recently read. localStorage is shared with the catalogue,
+  the customers, the queues and the roster, and a cache that grows by one
+  entry per quote anybody ever opens is a quota error waiting for a busy day.
+  The bound is pure and unit-tested, because a browser test cannot show it.
+- **The rules left the screen.** They sit in `lib/quoteCache.ts` for the same
+  reason `judge()` sits in `offline.ts`.
+
+Guards broken, each turning its own test red and only its own:
+
+| Break | What went red |
+|---|---|
+| the quotes list never reads its cache | "the quotes a till saw are still on the screen with the line down" |
+| the remembered lines forced to null | "a quote already read opens on its lines" — the panel stuck on `Loading…`, which is the exact fault |
+| the shared parked list never reads its cache | "the shop's parked sales are on the till the moment it draws" — the Parked button not even drawn |
+| the forty-quote bound removed | three unit assertions on the bound |
+| re-read no longer moved to the end | the eviction-order assertions |
+
+The browser tests **reload the page** before they look. Without that the
+component's state is still in memory and every one of them would pass with no
+cache at all — the trap `CLAUDE.md` names. They reload with the *server*
+unreachable and the browser still connected, because the suite blocks the
+service worker, so a browser-level offline reload cannot load the app at all.
+
+### Not done, and the reason
+
+**The region was not moved.** `eu-west-1` → somewhere nearer would cut ~170 ms
+to ~25 ms on every request that does leave the building, including the sync
+draining the queue. It is worth doing. It is also not a setting: Supabase binds
+a project to its region at the infrastructure level, so it means a new project
+— new ref, new URL, new anon key — then a restore into it, re-pointing the
+Worker, re-setting every secret, redeploying eleven edge functions, moving the
+storage objects, and every till taking a new build. That is not a
+night-before-install change. Note also that Supabase's edge-function regions
+include no African region at all, so push, the digest and quote-PDF would still
+run from Europe even after the database moved.

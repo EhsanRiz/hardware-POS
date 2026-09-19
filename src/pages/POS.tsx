@@ -102,6 +102,8 @@ const CATALOGUE_KEY = "catalogue.products";
 const CATEGORIES_KEY = "catalogue.categories";
 const CUSTOMERS_KEY = "catalogue.customers";
 const PARKED_KEY = "sell.parked";
+/** The shop's parked sales, as this till last saw them. */
+const SHARED_KEY = "sell.parked.shared";
 /**
  * The sale in progress right now, kept on the device between renders.
  *
@@ -183,7 +185,15 @@ export default function POS() {
     cacheGet<ParkedSale[]>(PARKED_KEY, [])
   );
   // The shop's parked sales (0086): parked on any till, picked up on any.
-  const [shared, setShared] = useState<ParkedSaleRow[]>([]);
+  //
+  // Cached like every other list the counter reads, so a till that has just
+  // been opened — or reloaded mid-morning — shows the baskets waiting the
+  // moment the screen draws, rather than an empty Parked button until the
+  // first poll comes back. Taking one up still goes to the server, which is
+  // what decides whether it is still there to take (unparkSale).
+  const [shared, setShared] = useState<ParkedSaleRow[]>(() =>
+    cacheGet<ParkedSaleRow[]>(SHARED_KEY, [])
+  );
 
   /**
    * A sale that was open when the screen reloaded becomes a parked sale.
@@ -272,7 +282,9 @@ export default function POS() {
       cacheSet(PARKED_KEY, kept);
     }
     try {
-      setShared(await listParkedSales());
+      const rows = await listParkedSales();
+      setShared(rows);
+      cacheSet(SHARED_KEY, rows);
     } catch {
       /* the list stays as it was; the next poll tries again */
     }
@@ -961,6 +973,7 @@ export default function POS() {
       }
       const rest = shared.filter((r) => r.id !== id);
       setShared(rest);
+      cacheSet(SHARED_KEY, rest);
       if (rest.length + parked.length < 2) setShowParked(false);
       void refreshShared();
       return;
@@ -1026,7 +1039,11 @@ export default function POS() {
         discountReason: l.discount_reason ?? null,
       });
     }
-    setShared((prev) => prev.filter((r) => r.id !== id));
+    // Computed out here, not inside the updater: a state updater must be pure,
+    // and this is the same shape as deleteParked above.
+    const rest = shared.filter((r) => r.id !== id);
+    setShared(rest);
+    cacheSet(SHARED_KEY, rest);
     setShowParked(false);
     setParkedFrom({ id: row.id, at: row.parked_at });
     setLines(cart);

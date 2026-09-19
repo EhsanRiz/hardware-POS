@@ -9189,6 +9189,99 @@ test("the deliveries a till saw are still there with the line down, even if the 
   expect((await box.boundingBox())!.width).toBeGreaterThan(240);
 });
 
+/*
+ * Quotes and the shop's parked sales, off the disk.
+ *
+ * Every other list the counter reads draws from localStorage first and
+ * refreshes behind it. These two did not, so both were a blank screen until a
+ * round trip came back — and nothing at all when it did not. A customer
+ * standing at the counter about their own quote is the worst moment for the
+ * screen to be empty.
+ *
+ * Each of these RELOADS before it looks. Without that the component's state
+ * is still in memory and the assertion would hold with no cache at all —
+ * which is the trap CLAUDE.md names: a test that passes for a reason you did
+ * not intend.
+ */
+test("the quotes a till saw are still on the screen with the line down", async ({ page }) => {
+  be.quotes.push({
+    id: "q1", doc_number: "QUO-000031", status: "open", sale_id: null,
+    customer_name: "T. Mokoena", customer_id: null,
+    items: [{ product_id: "p1", qty: 3, unit_price: 115 }],
+  });
+  await pairAndSignIn(page);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "QUO-000031" })).toContainText("T. Mokoena");
+
+  // The line goes, and the till is reloaded onto nothing but its own disk.
+  // The BROWSER stays connected so the app shell still loads (the suite blocks
+  // the service worker); it is the SERVER that is unreachable, which is the
+  // shape of a shop whose line is down and the only way to reload onto cache.
+  be.offline = true;
+  await page.reload();
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 20000 });
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await expect(page.locator("tr.acc-row", { hasText: "QUO-000031" })).toContainText("T. Mokoena");
+  // And it says what it is. A quote somebody else converted still reads open
+  // in a list off the disk, so the counter is told before it promises on one.
+  await expect(page.locator(".acc-note")).toContainText(/last list this till saw/i);
+});
+
+test("a quote already read opens on its lines with the line down, rather than empty", async ({ page }) => {
+  be.quotes.push({
+    id: "q1", doc_number: "QUO-000031", status: "open", sale_id: null,
+    customer_name: "T. Mokoena", customer_id: null,
+    items: [{ product_id: "p1", qty: 3, unit_price: 115 }],
+  });
+  await pairAndSignIn(page);
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  // Read once with the line up: this is what puts the lines on the disk.
+  await page.locator("tr.acc-row", { hasText: "QUO-000031" }).click();
+  const dialog = page.getByRole("dialog", { name: "Quote QUO-000031" });
+  await expect(dialog).toContainText("Cement 42.5N 50kg");
+  await dialog.getByLabel("Close quote").click();
+
+  be.offline = true;
+  await page.reload();
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 20000 });
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Quotes" }).click();
+  await page.locator("tr.acc-row", { hasText: "QUO-000031" }).click();
+  await expect(dialog).toContainText("Cement 42.5N 50kg");
+});
+
+test("the shop's parked sales are on the till the moment it draws, not a poll later", async ({ page }) => {
+  // Parked on ANOTHER till, so this one only ever learns of them from the
+  // list. Two of them: one alone is resumed on the press rather than listed
+  // (POS.tsx, "length === 1"), and that path needs the line.
+  be.parkedSales.push({
+    id: "ps1", parked_at: "2026-01-01T09:00:00Z", register_name: "Till 2",
+    parked_by_name: "Sam", customer_id: null,
+    lines: [{ product_id: "p1", qty: 2 }],
+    discount: 0, discount_reason: null, total: 230,
+  }, {
+    id: "ps2", parked_at: "2026-01-01T09:05:00Z", register_name: "Till 3",
+    parked_by_name: "Sam", customer_id: null,
+    lines: [{ product_id: "p1", qty: 1 }],
+    discount: 0, discount_reason: null, total: 115,
+  });
+  await pairAndSignIn(page);
+  await expect.poll(() => be.calls.filter((c) => c.includes("pos_parked_sales")).length).toBeGreaterThan(0);
+
+  be.offline = true;
+  await page.reload();
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 20000 });
+  // The count is on the button before anything is pressed: the baskets are
+  // known to this till from its own disk, not from a poll that cannot happen.
+  const parkedButton = page.getByRole("button", { name: /Parked/ });
+  await expect(parkedButton).toContainText("2");
+  await parkedButton.click();
+  await expect(page.getByText("Till 2")).toBeVisible();
+});
+
 test("Manage opens with the line down, against the PIN this device already knows", async ({ page }) => {
   // The gate said the back office needs a connection and refused every PIN.
   // The PIN is the same one the device checks for signing in offline, so
