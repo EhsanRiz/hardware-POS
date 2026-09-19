@@ -695,6 +695,13 @@ test("TillAI needs the line, and says so while the till keeps selling", async ({
   await pairAndSignIn(page);
   be.offline = true;
   await page.context().setOffline(true);
+  // Wait for the TILL to have noticed, not just for the line to be cut. The
+  // probe needs two misses before it calls itself offline, and this test used
+  // to open the sheet in the same breath as cutting the line — so it was
+  // racing the probe from birth, and read the panel in its ONLINE state when
+  // the machine was busy enough to lose. Every other offline test here waits
+  // for this banner first; this one never did.
+  await expect(page.locator("header").getByText(/offline/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "TillAI" }).click();
   const sheet = page.getByRole("dialog", { name: "TillAI" });
   await expect(sheet).toContainText(/needs the line/i);
