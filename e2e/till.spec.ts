@@ -7959,6 +7959,119 @@ test("a phone put away asks for its owner's PIN before anything else", async ({ 
   await expect(page.locator(".phone-home-who")).toBeVisible();
 });
 
+/**
+ * Face ID on a phone that was only put in a pocket.
+ *
+ * The fake sits where lib/biometric.ts talks to the browser and nowhere else,
+ * so everything downstream — the offer, the enrolment, the resume, the
+ * fallback — runs for real. `sensor` decides whether the handset has one;
+ * `verdict` is what the face or finger says. What no suite can show is a real
+ * sensor saying yes, which is checked on an actual phone.
+ */
+async function fakeAuthenticator(
+  page: import("@playwright/test").Page,
+  { sensor = true, verdict = true }: { sensor?: boolean; verdict?: boolean } = {}
+) {
+  await page.addInitScript(({ sensor, verdict }) => {
+    const enc = (s: string) => {
+      const b = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+      return b.buffer;
+    };
+    (window as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = {
+      isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(sensor),
+    };
+    const creds = {
+      create: () => Promise.resolve({ rawId: enc("cred-1") }),
+      get: () =>
+        verdict
+          ? Promise.resolve({ rawId: enc("cred-1") })
+          : Promise.reject(new Error("no match")),
+    };
+    Object.defineProperty(navigator, "credentials", { value: creds, configurable: true });
+  }, { sensor, verdict });
+}
+
+/** Turn it on from the phone's menu, which is the only place that can. */
+async function turnOnFaceId(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await page.getByRole("checkbox", { name: /Enable Face or Touch ID/i }).check();
+  await page.keyboard.press("Escape");
+}
+
+test("a face brings back a phone that was only put in a pocket", async ({ page }) => {
+  await fakeAuthenticator(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  // Turned on from the phone's own menu — a choice, made somewhere it can
+  // also be un-made, rather than an offer sprung at a lock screen.
+  await turnOnFaceId(page);
+
+  // Pocket: the face is the way in, and no PIN is typed.
+  await putAway(page, 90);
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await page.getByRole("button", { name: /Unlock with Face ID/i }).click();
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+});
+
+test("a face that does not match leaves the keypad, and the keypad still works", async ({ page }) => {
+  // Wet hands, gloves, bad light, somebody else's face: all the same answer,
+  // and none of them may strand the owner on their own phone.
+  await fakeAuthenticator(page, { verdict: false });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await turnOnFaceId(page);
+
+  await putAway(page, 90);
+  await page.getByRole("button", { name: /Unlock with Face ID/i }).click();
+  // Still locked, and told off for nothing: a refusal is somebody choosing
+  // the keypad. The keypad is what lets them back in.
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+});
+
+test("a phone with no sensor is never offered a face", async ({ page }) => {
+  // Most of the trade's handsets have one; the offer must not appear on the
+  // ones that do not, where pressing it could only fail.
+  await fakeAuthenticator(page, { sensor: false });
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+
+  // Not on the menu to turn on...
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  await expect(page.getByText(/Enable Face or Touch ID/i)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // ...and not on the lock screen to use.
+  await putAway(page, 90);
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
+});
+
+test("Face ID can be turned off again from the same menu", async ({ page }) => {
+  // The half an offer at a lock screen could never have: somebody changing
+  // their mind, or handing the phone on. Off means the lock asks for the PIN
+  // again, which is the state it started in.
+  await fakeAuthenticator(page);
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await turnOnFaceId(page);
+
+  await page.getByRole("button", { name: "Sections" }).last().click();
+  const box = page.getByRole("checkbox", { name: /Enable Face or Touch ID/i });
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await page.keyboard.press("Escape");
+
+  await putAway(page, 90);
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Unlock with Face ID/i })).toHaveCount(0);
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".phone-home-who")).toBeVisible();
+});
+
 test("a phone glanced away from does not lock", async ({ page }) => {
   // Scan a document and Photograph shelf items both send the browser to the
   // camera. A lock that fired on every one of those would be a PIN after every

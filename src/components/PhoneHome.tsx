@@ -8,6 +8,7 @@ import { useShopSettings } from "../lib/settings";
 import InnovaMark from "./InnovaMark";
 import InstallButton from "./InstallButton";
 import AppMenu from "./AppMenu";
+import BiometricSwitch from "./BiometricSwitch";
 import NoticeBell from "./NoticeBell";
 import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
 import { can } from "../lib/permissions";
@@ -127,7 +128,12 @@ export default function PhoneHome({
       </header>
 
       {menuOpen && (
-        <AppMenu items={items} onPick={open} onClose={() => setMenuOpen(false)} />
+        <AppMenu
+          items={items}
+          onPick={open}
+          onClose={() => setMenuOpen(false)}
+          footer={<BiometricSwitch user={user} />}
+        />
       )}
 
       <div className="phone-home-who">

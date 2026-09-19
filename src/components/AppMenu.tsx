@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { MenuItem } from "../lib/menu";
 
 /**
@@ -12,7 +12,7 @@ import type { MenuItem } from "../lib/menu";
  * offering different lists.
  */
 export default function AppMenu({
-  items, current, onPick, onClose, badges = {},
+  items, current, onPick, onClose, badges = {}, footer,
 }: {
   items: MenuItem[];
   /** The destination already open, ticked and not worth tapping. */
@@ -21,6 +21,15 @@ export default function AppMenu({
   onClose: () => void;
   /** A word beside a row, e.g. how many people are waiting on a PIN. */
   badges?: Record<string, string>;
+  /**
+   * Settings for THIS device, under the destinations.
+   *
+   * Not a MenuItem: those are places, drawn from lib/menu so the home and
+   * Manage can never offer different lists, and a switch is neither a place
+   * nor something Manage's tab strip should grow. The phone's home passes
+   * one; Manage passes none.
+   */
+  footer?: ReactNode;
 }) {
   // Escape closes it, as it closes every other overlay here. Without this a
   // menu opened by mistake could only be dismissed by tapping the scrim.
@@ -68,6 +77,7 @@ export default function AppMenu({
             )}
           </button>
         ))}
+        {footer && <div className="border-t border-stone-200 p-3">{footer}</div>}
       </div>
     </div>
   );

@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import InnovaMark from "./InnovaMark";
 import PinPad from "./PinPad";
 import { login } from "../lib/api";
+import {
+  biometricAvailable, biometricEnrolled, biometricVerify,
+} from "../lib/biometric";
 import { isNetworkError } from "../lib/offline";
 import type { User } from "../lib/types";
 
@@ -21,12 +24,28 @@ import type { User } from "../lib/types";
  * is a deliberate line: prices and bins are on the shelf edge anyway, while
  * the back office, the approvals and this person's identity stay behind the
  * PIN whatever the signal is doing.
+ *
+ * FACE ID, WHERE THE SESSION IS STILL THERE. Turned on from the phone's own
+ * menu, not from here — this screen only uses it. Somebody standing at a lock
+ * wanting back into their phone is the worst moment to be setting anything up,
+ * and an offer made only here has nowhere to say no later.
+ * `resumable` is true when the PIN
+ * this phone was opened with is still in memory — the app was never reloaded,
+ * only hidden. Then a face or a finger stands in for typing the same six
+ * digits again, and because that check is local it works in the yard, where
+ * the PIN cannot be proved at all. A reload leaves `resumable` false and the
+ * keypad is the only way back, which is the correct behaviour: there is no
+ * session to resume and no PIN on this device to check one against.
  */
 export default function PhoneLock({
-  user, online, onUnlock, onLookup, onSignOut,
+  user, online, resumable, onResume, onUnlock, onLookup, onSignOut,
 }: {
   user: User;
   online: boolean;
+  /** The PIN that opened this phone is still in memory: only hidden, not reloaded. */
+  resumable: boolean;
+  /** Carry on with that session, no PIN retyped. */
+  onResume: () => void;
   onUnlock: (pin: string) => void;
   /** Read-only escape hatch, offered only when the PIN cannot be proved. */
   onLookup: () => void;
@@ -34,6 +53,27 @@ export default function PhoneLock({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Has this handset got a sensor at all — asked once, not on every render. */
+  const [hasSensor, setHasSensor] = useState(false);
+  const enrolled = biometricEnrolled(user.id);
+
+  useEffect(() => {
+    let gone = false;
+    void biometricAvailable().then((ok) => !gone && setHasSensor(ok));
+    return () => { gone = true; };
+  }, []);
+
+  async function resume() {
+    setBusy(true);
+    setError(null);
+    const ok = await biometricVerify(user.id);
+    setBusy(false);
+    if (ok) onResume();
+    // No error on a refusal: a cancelled prompt is somebody choosing the
+    // keypad, and telling them off for it would be nonsense. A face that did
+    // not match looks the same from here, and the keypad is right there.
+  }
+
 
   async function submit(pin: string) {
     setBusy(true);
@@ -63,6 +103,17 @@ export default function PhoneLock({
         <p className="phone-lock-why">
           This phone was put away. Enter your PIN to carry on.
         </p>
+
+        {/* Above the keypad, because when it is offered it is the way in. */}
+        {resumable && enrolled && hasSensor && (
+          <button
+            className="btn-primary w-full"
+            disabled={busy}
+            onClick={() => void resume()}
+          >
+            Unlock with Face ID or fingerprint
+          </button>
+        )}
 
         <PinPad onSubmit={(pin) => void submit(pin)} busy={busy} />
 

@@ -85,6 +85,7 @@ import FailedSales from "../components/FailedSales";
 import TillAI from "../components/TillAI";
 import PairRegister from "../components/PairRegister";
 import ManagerPinModal from "../components/ManagerPinModal";
+import { biometricForget } from "../lib/biometric";
 import { BACK_OFFICE, forgetPins, ownerProved, recall, remember } from "../lib/unlock";
 import { buildNotices, fetchNotices, type Notice, type NoticeCounts } from "../lib/notices";
 import CustomerPicker from "../components/sell/CustomerPicker";
@@ -1291,6 +1292,9 @@ export default function POS() {
   /** Somebody leaving takes every proved PIN with them. */
   function signOut() {
     forgetPins();
+    // And their face. The next person to hold this handset is not them, and an
+    // enrolment left behind would offer to unlock somebody else's session.
+    if (user) biometricForget(user.id);
     logout();
   }
 
@@ -1502,6 +1506,18 @@ export default function POS() {
         <PhoneLock
           user={user}
           online={online}
+          // The PIN this phone was opened with is still in memory when the app
+          // was only hidden, never reloaded — so there is a session to resume
+          // and a face can stand in for retyping it. A cold start has none,
+          // and the keypad is then the only way back, which is right.
+          resumable={sessionPin != null}
+          onResume={() => {
+            // Nothing is re-proved because nothing changed: the same PIN, the
+            // same person, the same session the phone was already running.
+            // Rolling the doors forward is what typing it would have done.
+            if (sessionPin) ownerProved(user, sessionPin);
+            unlock();
+          }}
           onUnlock={(pin) => {
             setSessionPin(pin);
             // Proved against the server a moment ago, by the same check the
