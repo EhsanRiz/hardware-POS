@@ -384,6 +384,56 @@ What to watch for: a menu row that opens and then refuses is a bug, not a
 safeguard — `lib/menu.ts` is supposed to hide what a person cannot do, and the
 RPC behind it re-checks anyway. Either half failing is worth knowing.
 
+### Proved on the machine: the discount boundary, both ways
+
+Run on the real till against the live shop, 19 September. The Supervisor
+preset did not exist in this shop that morning; Narjis was switched onto it
+from Storeman to test it without burning another mobile number (the invitation
+is an SMS, and there were none spare).
+
+| | |
+|---|---|
+| INV-000051 | Sarah 7.41% over a 3% cap, approved by **E R** (manager) |
+| INV-000052 | Sarah 8.00%, approved by **E R**, reason "Loyal staff" on the line |
+| INV-000053 | Sarah 9.52%, approved by **Narjis** — role `employee` |
+
+INV-000053 is the one that matters. A **Counter** authorised money off a sale
+and the books name her, by id and by name, not her role's default and not a
+manager standing in. `approve_discount` on somebody who is not a manager is a
+permission this shop has never had until now.
+
+And the other direction, which is the one a shop loses money to: **Sarah's own
+PIN was refused** at the same prompt — "That PIN can't approve discounts". She
+holds `apply_discount` and not `approve_discount`, and a cashier clearing her
+own over-limit discount is exactly the fraud the cap exists for. Seen refused
+on the machine, not inferred from the code.
+
+Worth recording how the first two came to name E R. They were run believing
+Narjis had approved them. She had not — the manager's PIN had been typed. That
+was checked rather than assumed before it was called a bug, three ways:
+`resolveApprover` records whoever's PIN resolves (no fallback to a manager and
+a permission check on the way through), and **no two people in the shop share a
+`pin_hash`**, so there is no collision naming the wrong person. The audit trail
+was right and the test had not been run. A screen saying "approved" and the
+books saying who are different claims.
+
+### Found: a discount can be approved with no reason
+
+`discount_reason` lives on the LINE, not on the sale — that is where the
+discount is applied, and INV-000052 carries "Loyal staff" there correctly. The
+sale-level column is for a whole-sale discount, a path this shop has never
+used: every discount ever taken here has been a line discount, and
+`sales.discount_amount` is their sum.
+
+What the line-level field is not is **required**. INV-000051 went through at
+7.41%, over the cashier's cap, needing a manager's PIN — and carries no reason
+on either line. A manager signed off R66.50 and nothing records what for. At
+cash-up that is unexplained margin with no story attached.
+
+Not changed before the install: making a reason mandatory on an override is a
+behaviour change, and the night before a counter goes live is the wrong time
+for one. Written down instead, to be decided on its merits.
+
 ### What the first run of this step found
 
 Worth reading before running it again, because all four were found in ten
