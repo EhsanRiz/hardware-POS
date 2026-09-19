@@ -501,6 +501,27 @@ cache at all — the trap `CLAUDE.md` names. They reload with the *server*
 unreachable and the browser still connected, because the suite blocks the
 service worker, so a browser-level offline reload cannot load the app at all.
 
+### Confirmed at the counter
+
+Deployed in CI run 222, the smoke check green on the live origin, and then the
+part no check here can see: **somebody pressed `↻ Update` on the real till and
+reported that quotes load instantly.** That is the third of the three things —
+deployed, served, RUNNING — and it is the only one that has ever needed a
+person.
+
+What that confirms is the LIST cache. Three things it does not, each of which
+wants thirty seconds at the counter rather than a suite:
+
+- **The lines cache.** Open a quote, close it, open the same one again: the
+  lines should be there at once rather than `Loading…`.
+- **The shared parked list.** The Parked button should carry its count the
+  moment the Sell screen draws, without waiting for a poll.
+- **The read-only rule with the line down**, which is the one that matters for
+  a shop on a weak line. Pull the network: the quote list stays, says in words
+  that it is the last one this till saw, and Recall and Cancel refuse. A quote
+  somebody else has since converted still reads "open" in a list off the disk,
+  and that refusal is what stops it being promised on twice.
+
 ### Not done, and the reason
 
 **The region was not moved.** `eu-west-1` → somewhere nearer would cut ~170 ms
