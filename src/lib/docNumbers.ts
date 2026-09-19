@@ -31,9 +31,28 @@ interface Block {
 }
 
 const KEY = (t: DocType) => `docnums.${t}`;
-/** Reserved a block at a time, topped up once fewer than this remain. */
-export const BLOCK_SIZE = 25;
-export const LOW_WATER = 10;
+/**
+ * Reserved a block at a time, topped up once fewer than this remain.
+ *
+ * Fifty, not twenty-five, because twenty-five is thin for a whole day with
+ * the line down: a shop that takes forty sales falls back to till references
+ * for the last fifteen, and the paper the customer walks out with is then not
+ * the number the invoice ends up carrying.
+ *
+ * Fifty is also the ceiling. pos_reserve_doc_numbers clamps a request to 50
+ * and refuses a till already holding 50 unspent, so asking for more would be
+ * silently trimmed rather than honoured. Topping up below 25 keeps the till
+ * between 25 and 75 and never trips that refusal, since a top-up only ever
+ * happens with at most 24 in hand.
+ *
+ * WHY NOT MORE. next_number advances by the whole block when it is reserved,
+ * spent or not, so every number a till holds and does not use is a permanent
+ * gap in the shop's invoice run — and unpairing a till abandons the lot. On a
+ * VAT-registered book those gaps are what an auditor asks about. Going past
+ * 50 is a migration and an accounting decision, not a constant.
+ */
+export const BLOCK_SIZE = 50;
+export const LOW_WATER = 25;
 
 function blocks(t: DocType): Block[] {
   return cacheGet<Block[]>(KEY(t), []);
