@@ -2506,20 +2506,28 @@ test("the catalogue chips find what is running low and what a gun cannot find", 
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   const rows = page.locator("tbody tr");
-  await expect(rows).toHaveCount(7);
+  // Pinned rather than derived from PRODUCTS.length, and meant to be read when
+  // it fails: what this test is about is the CHIPS dividing the range up, and
+  // the numbers below only mean something against a known whole. Adding the
+  // pipe in 0107 moved this from seven to eight and the assertion caught it,
+  // which is the job. The two chip counts did not move — the pipe carries a
+  // barcode and sits well above its reorder level — and that is the part worth
+  // checking when this next goes red: which of the three numbers changed says
+  // what actually happened to the range.
+  await expect(rows).toHaveCount(8);
 
   // Two below its reorder level of three.
   await page.getByRole("button", { name: /^Low stock \d+$/ }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Twin & Earth 2.5mm 100m");
 
-  // Four of the seven carry no barcode; the cement does, and is not listed.
+  // Four of the eight carry no barcode; the cement does, and is not listed.
   await page.getByRole("button", { name: /^No barcode \d+$/ }).click();
   await expect(rows).toHaveCount(4);
   await expect(page.getByRole("cell", { name: /Cement 42.5N 50kg/ })).toHaveCount(0);
 
   await page.getByRole("button", { name: /^All \d+$/ }).click();
-  await expect(rows).toHaveCount(7);
+  await expect(rows).toHaveCount(8);
 });
 
 test("the catalogue says what its columns mean, and shows the barcode and margin on the row", async ({ page }) => {
