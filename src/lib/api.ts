@@ -242,6 +242,9 @@ export interface CreateSaleInput {
   items: {
     product_id: string;
     qty: number;
+    /** 'pack' or 'unit' — absent means the old behaviour. See migration 0107. */
+    sold_as?: string;
+    unit_price?: number;
     discount_amount?: number;
     discount_percent?: number | null;
     discount_reason?: string | null;
@@ -515,6 +518,12 @@ export async function fixCustomerDetails(
 export interface ParkedLine {
   product_id: string;
   qty: number;
+  /**
+   * Whole or cut. A parked sale that forgot this comes back priced as a whole
+   * length — the customer walked away from a counter with 2.4 m quoted and
+   * would be charged for a 6 m one when the basket was resumed.
+   */
+  sold_as?: string | null;
   discount?: number | null;
   discount_percent?: number | null;
   discount_reason?: string | null;
@@ -744,9 +753,17 @@ export interface QuoteLine {
   /** The promise: what the shop quoted on the day. */
   unit_price: number;
   line_total: number;
-  /** Today's price, so a drift from the promise is visible before the sale. */
+  /**
+   * Today's price, so a drift from the promise is visible before the sale.
+   * Priced against the line's own mode since 0107 — asked the whole-pack price
+   * for a cut line, this would report a jump on a quote that had not moved.
+   */
   price_now: number | null;
   still_sold: boolean;
+  /** Whole or cut, so recalling a quote rings up what was quoted. */
+  sold_as?: string | null;
+  pack_size?: number | null;
+  pack_label?: string | null;
 }
 
 /** Save the cart as a quote. Prices snapshot server-side, same as a sale. */

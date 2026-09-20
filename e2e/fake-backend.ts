@@ -35,6 +35,17 @@ export interface FakeProduct {
   tax_code: string;
   stock_qty: number | null;
   reorder_level: number | null;
+  /**
+   * Sold whole AND cut, at two prices (0107). The fake carries these because
+   * without them a test could only ever sell one way, and "the cut price is
+   * charged" would be a claim about a backend incapable of charging anything
+   * else.
+   */
+  sold_in_packs?: boolean;
+  pack_size?: number | null;
+  pack_label?: string | null;
+  price_cut_retail?: number | null;
+  price_cut_trade?: number | null;
   image_url: string | null;
   /**
    * How many photographs this item has, and what they are.
@@ -104,6 +115,16 @@ export const PRODUCTS: FakeProduct[] = [
   // represent the item that made the till say "no item in the catalogue has
   // that barcode" about an item in the catalogue.
   mk("p7", "SHELF-6001234000091", "6001234000091", "Wood Glue 500ml", "ea", "Each", false, 79, 70, null, null),
+  // Sold both ways: a 6 m length at R180 (R170 trade), or cut at R38 the metre
+  // (R35 trade). 120 m on the shelf, which is twenty lengths. The worked
+  // example is the same one the database tests and lib/packs.ts use, so the
+  // three cannot quietly disagree about what the arithmetic should come to.
+  {
+    ...mk("p8", "PIPE-20", "6001234000107", "Pipe 20mm", "m", "Metre", true,
+          180, 170, 120, 24),
+    sold_in_packs: true, pack_size: 6, pack_label: "6 m length",
+    price_cut_retail: 38, price_cut_trade: 35,
+  },
 ];
 
 function mk(
@@ -189,6 +210,9 @@ export interface RecordedSale {
   items: {
     product_id: string;
     qty: number;
+    /** 0107: whole or cut. Recorded so a test can assert the till sent a MODE
+     *  and not a price — the catalogue decides the money either way. */
+    sold_as?: string;
     /** 0061: the price named at the counter, on an open line only. */
     unit_price?: number;
     discount_amount?: number;
@@ -690,7 +714,16 @@ export class Backend {
     };
   }
 
-  private price(p: FakeProduct, trade: boolean) {
+  /**
+   * Mirrors goods_price (0107): a cut falls down the cut column, including for
+   * trade. Getting this wrong in the fake would make the till's own pricing
+   * look right against a server that charged something else.
+   */
+  private price(p: FakeProduct, trade: boolean, soldAs: string = "pack") {
+    if (soldAs === "unit" && p.sold_in_packs) {
+      if (trade && p.price_cut_trade != null) return p.price_cut_trade;
+      return p.price_cut_retail ?? p.price_retail;
+    }
     return trade && p.price_trade != null ? p.price_trade : p.price_retail;
   }
 
@@ -704,7 +737,7 @@ export class Backend {
 
     const items =
       (body.p_items as {
-        product_id: string; qty: number; unit_price?: number;
+        product_id: string; qty: number; unit_price?: number; sold_as?: string;
         discount_amount?: number; discount_percent?: number | null;
         discount_reason?: string | null;
       }[]) ?? [];
@@ -714,10 +747,29 @@ export class Backend {
       const p = PRODUCTS.find((x) => x.id === it.product_id)
         ?? (it.product_id === DELIVERY_LINE.id ? DELIVERY_LINE : undefined);
       if (!p) throw new Error("Product not available");
-      if (!p.allows_fraction && it.qty !== Math.trunc(it.qty)) {
+      // line_sold_as (0107): absent means whole, and asking for a whole one of
+      // something that does not come in packs is a refusal, not a guess.
+      const soldAs = it.sold_as ?? (p.sold_in_packs ? "pack" : "unit");
+      if (soldAs !== "pack" && soldAs !== "unit") {
+        throw new Error(`A line is sold whole or cut, not "${soldAs}"`);
+      }
+      if (soldAs === "pack" && !p.sold_in_packs) {
+        throw new Error(`${p.name} is not sold as a whole pack`);
+      }
+      const packed = soldAs === "pack" && p.sold_in_packs === true;
+      const baseQty = packed ? it.qty * (p.pack_size ?? 1) : it.qty;
+      // A whole one cannot be split whatever its unit allows: metres divide,
+      // 6 m LENGTHS do not.
+      if (packed && it.qty !== Math.trunc(it.qty)) {
+        throw new Error(
+          `${p.name} is sold as a ${p.pack_label ?? "whole pack"} and cannot be split`
+        );
+      }
+      if (!packed && !p.allows_fraction && it.qty !== Math.trunc(it.qty)) {
         throw new Error(`${p.name} is sold per ${p.unit_name} and cannot be split`);
       }
-      if (p.stock_qty != null && p.stock_qty < it.qty) {
+      // Stock is counted in the base unit, so the comparison is too.
+      if (p.stock_qty != null && p.stock_qty < baseQty) {
         throw new Error(`Not enough stock for ${p.name} (${p.stock_qty} ${p.unit_code} on hand)`);
       }
       // 0061: an open line carries the price the counter named; anything else
@@ -726,7 +778,7 @@ export class Backend {
       // against a fake that is more generous than the database.
       const unit = p.kind === "delivery" && it.unit_price != null
         ? Math.round(it.unit_price * 100) / 100
-        : this.price(p, false);
+        : this.price(p, false, soldAs);
       const line = Math.round(unit * it.qty * 100) / 100;
       // The percentage decides, as it does on the server: a client sending a
       // percentage and a mismatched amount must not get to choose which wins.

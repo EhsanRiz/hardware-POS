@@ -7,6 +7,7 @@
 // server-side but its response was lost on the way back.
 import { useEffect, useState } from "react";
 import { createDelivery, createSale, markDelivered } from "./api";
+import { lineSoldAs, soldBothWays } from "./packs";
 import {
   commitDocNumber, dropDocNumbers, isDocNumberError, peekDocNumber, topUpDocNumbers,
 } from "./docNumbers";
@@ -74,6 +75,11 @@ function itemsPayload(lines: CartLine[]) {
   return lines.map((l) => ({
     product_id: l.product.id,
     qty: l.qty,
+    // Whole or cut, for an item sold both ways. It travels for the same reason
+    // the discount does: a sale queued offline replays hours later, and a line
+    // that forgot it was cut would replay at the length price. Sent only when
+    // the item HAS two ways, so an ordinary line is byte-for-byte what it was.
+    ...(soldBothWays(l.product) ? { sold_as: lineSoldAs(l) } : {}),
     // An open line — delivery, quoted per job — carries the price the counter
     // named. The server honours it only for a product the shop has marked as
     // open, so this cannot reprice a bag of cement.

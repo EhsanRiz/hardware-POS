@@ -68,12 +68,17 @@ import type {
   Product,
   ReceiptItem,
   Sale,
+  SoldAs,
 } from "../lib/types";
 
 import Accounts from "../components/accounts/Accounts";
 import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quotes";
 import { useCamera } from "../lib/useCamera";
 import { hasBackOffice } from "../lib/menu";
+import {
+  defaultSoldAs, lineSoldAs, priceFor as packPrice, soldBothWays,
+  unitLabel as packUnitLabel,
+} from "../lib/packs";
 import Stock from "../components/stock/Stock";
 import Admin, { type TabKey } from "../components/Admin";
 import PhoneHome from "../components/PhoneHome";
@@ -254,6 +259,7 @@ export default function POS() {
   const toParkedLines = (ls: CartLine[]): ParkedLine[] =>
     ls.map((l) => ({
       product_id: l.product.id, qty: l.qty,
+      sold_as: soldBothWays(l.product) ? lineSoldAs(l) : null,
       discount: l.discount ?? null, discount_percent: l.discountPercent ?? null,
       discount_reason: l.discountReason ?? null,
     }));
@@ -558,14 +564,22 @@ export default function POS() {
 
   useEffect(() => () => window.clearTimeout(freshTimer.current), []);
 
+  /**
+   * What one of a line costs, which now depends on HOW it is being bought.
+   *
+   * Takes the line rather than the product, because a product no longer has
+   * one price: pipe is R180 the 6 m length and R38 the metre cut, and only the
+   * line knows which of those this is. lib/packs.ts holds the rule, and the
+   * server holds it again in 0107 — this is what lets the till show and print
+   * the right figure with the line down.
+   */
   const priceOf = useCallback(
-    (p: Product) =>
-      trade && p.price_trade != null ? p.price_trade : p.price_retail,
+    (l: CartLine) => packPrice(l.product, trade, lineSoldAs(l)),
     [trade]
   );
 
   const subtotal = useMemo(
-    () => lines.reduce((sum, l) => sum + priceOf(l.product) * l.qty, 0),
+    () => lines.reduce((sum, l) => sum + priceOf(l) * l.qty, 0),
     [lines, priceOf]
   );
   // What the lines took off themselves, before anything comes off the sale.
@@ -589,9 +603,9 @@ export default function POS() {
     () =>
       lines.map((l) => ({
         qty: l.qty,
-        price: priceOf(l.product),
+        price: priceOf(l),
         discount: l.discount,
-        cap: cartLineCap(l, priceOf(l.product)),
+        cap: cartLineCap(l, priceOf(l)),
       })),
     [lines, priceOf]
   );
@@ -632,19 +646,27 @@ export default function POS() {
     const elsewhere = lines
       .filter((x) => x.product.id !== discountLine)
       .reduce((sum, x) => sum + (x.discount ?? 0), 0);
-    return staffLineCeiling(user, priceOf(l.product) * l.qty, elsewhere + discount);
+    return staffLineCeiling(user, priceOf(l) * l.qty, elsewhere + discount);
   }, [lines, discountLine, user, priceOf, discount]);
 
-  function addProduct(p: Product, qty = 1) {
+  function addProduct(p: Product, qty = 1, soldAs?: SoldAs) {
+    const want = soldAs ?? defaultSoldAs(p);
     setLines((prev) => {
-      const found = prev.find((l) => l.product.id === p.id);
+      // Two ways of buying the same thing are two DIFFERENT lines: a 6 m
+      // length and 2.4 m cut off one are priced differently and add up to
+      // nothing sensible together. Merging them would have silently repriced
+      // whichever was already there.
+      const found = prev.find(
+        (l) => l.product.id === p.id && lineSoldAs(l) === want
+      );
       if (found) {
         // Scanning the same barcode twice means two of them, not two lines.
         return prev.map((l) =>
-          l.product.id === p.id ? { ...l, qty: l.qty + qty } : l
+          l.product.id === p.id && lineSoldAs(l) === want
+            ? { ...l, qty: l.qty + qty } : l
         );
       }
-      return [...prev, { product: p, qty }];
+      return [...prev, { product: p, qty, soldAs: want }];
     });
 
     // The tint decays after ~1.2s: long enough to pull the eye to the new line,
@@ -654,9 +676,13 @@ export default function POS() {
     freshTimer.current = window.setTimeout(() => setFreshId(null), 1200);
   }
 
-  function setQty(productId: string, qty: number) {
+  function setQty(productId: string, qty: number, soldAs?: SoldAs) {
     setLines((prev) =>
-      prev.map((l) => (l.product.id === productId ? { ...l, qty } : l))
+      prev.map((l) =>
+        l.product.id === productId
+          ? { ...l, qty, ...(soldAs ? { soldAs } : {}) }
+          : l
+      )
     );
   }
 
@@ -771,7 +797,11 @@ export default function POS() {
         missing++;
         continue;
       }
-      cart.push({ product, qty: l.qty });
+      cart.push({
+        product, qty: l.qty,
+        soldAs: l.sold_as === "unit" || l.sold_as === "pack"
+          ? l.sold_as : defaultSoldAs(product),
+      });
     }
     setLines(cart);
     setCustomer(customers.find((c) => c.id === q.customer_id) ?? null);
@@ -838,7 +868,10 @@ export default function POS() {
     try {
       const q = await saveQuote(
         user.id,
-        lines.map((l) => ({ product_id: l.product.id, qty: l.qty })),
+        lines.map((l) => ({
+          product_id: l.product.id, qty: l.qty,
+          ...(soldBothWays(l.product) ? { sold_as: lineSoldAs(l) } : {}),
+        })),
         customer?.id ?? null,
         14,
         null,
@@ -1061,6 +1094,8 @@ export default function POS() {
       if (!product) { missing++; continue; }
       cart.push({
         product, qty: l.qty,
+        soldAs: l.sold_as === "unit" || l.sold_as === "pack"
+          ? l.sold_as : defaultSoldAs(product),
         discount: l.discount ?? undefined, discountPercent: l.discount_percent ?? null,
         discountReason: l.discount_reason ?? null,
       });
@@ -1097,14 +1132,17 @@ export default function POS() {
     // Mirror the server's pro-rata discount split so the printed slip and the
     // stored invoice agree line for line.
     return lines.map((l) => {
-      const gross = priceOf(l.product) * l.qty;
+      const gross = priceOf(l) * l.qty;
       const net = gross - (l.discount ?? 0);
       const share = netSubtotal > 0 ? (net * total) / netSubtotal : 0;
       return {
         name: l.product.name,
-        unit_code: l.product.unit_code,
+        // The slip has to say WHICH way it went out: "2 x 6 m length" and
+        // "12 m" are the same pipe and very different money, and a return
+        // cannot be priced off a line that does not say.
+        unit_code: packUnitLabel(l.product, lineSoldAs(l)),
         qty: l.qty,
-        unit_price: priceOf(l.product),
+        unit_price: priceOf(l),
         line_total: Math.round(share * 100) / 100,
         discount_amount: l.discount ?? 0,
         discount_percent: l.discountPercent ?? null,
@@ -1974,11 +2012,15 @@ export default function POS() {
           inSale={
             lines.find((l) => l.product.id === inspecting.product.id)?.qty ?? 0
           }
-          onConfirm={(p, qty) => {
+          inSaleSoldAs={(() => {
+            const l = lines.find((x) => x.product.id === inspecting.product.id);
+            return l ? lineSoldAs(l) : undefined;
+          })()}
+          onConfirm={(p, qty, soldAs) => {
             if (inspecting.mode === "edit") {
-              setQty(p.id, qty);
+              setQty(p.id, qty, soldAs);
             } else {
-              addProduct(p, qty);
+              addProduct(p, qty, soldAs);
               // The query has done its job; leaving it behind pollutes the next
               // scan, and the field must be ready for one.
               setTerm("");
@@ -2079,7 +2121,7 @@ export default function POS() {
         <DiscountModal
           subtotal={(() => {
             const l = lines.find((x) => x.product.id === discountLine);
-            return l ? priceOf(l.product) * l.qty : 0;
+            return l ? priceOf(l) * l.qty : 0;
           })()}
           // The line's own cap. If a blanket discount is already on the sale it
           // takes a share of this line too, and the two together can still land
@@ -2088,7 +2130,7 @@ export default function POS() {
           // covered exactly.
           ceiling={(() => {
             const l = lines.find((x) => x.product.id === discountLine);
-            return l ? cartLineCap(l, priceOf(l.product)) : null;
+            return l ? cartLineCap(l, priceOf(l)) : null;
           })()}
           approvalFreeUpTo={limited ? lineFreeUpTo : undefined}
           onCancel={() => setDiscountLine(null)}

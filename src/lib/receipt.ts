@@ -1,4 +1,5 @@
 import type { CashSession } from "./cashup";
+import { lineSoldAs, unitLabel as packUnitLabel } from "./packs";
 import type { DayClose } from "./reports";
 import { CURRENCY, slipWidth } from "./config";
 import { bankingRows } from "./banking";
@@ -490,7 +491,10 @@ export function cartQuoteLines(lines: CartLine[], trade: boolean): QuoteTextLine
   trade = scrub(trade);
   return lines.map((l) => ({
     name: l.product.name,
-    unit_code: l.product.unit_code,
+    // Which way it is being quoted, for the reason the slip carries it: a
+    // customer holding a quote for "2 Pipe 20mm" cannot tell whether that is
+    // two lengths or two metres, and the two are R360 and R76.
+    unit_code: packUnitLabel(l.product, lineSoldAs(l)),
     qty: l.qty,
     // The price this customer is actually being quoted. It read price_retail
     // regardless, so a trade quote printed retail against every line while the

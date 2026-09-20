@@ -11112,3 +11112,163 @@ test("the stock room asks for YOUR PIN too, not just any that would open it", as
     .toHaveAttribute("aria-current", "page");
 });
 
+
+/*
+ * Sold whole, and sold cut.
+ *
+ * From the counter at 5 Star Hardware: pipe goes out as a 6 m length at one
+ * price and cut to size at another, dearer per metre. Wire is a 25 or 50 m
+ * bundle or however many metres somebody asks for. One item, two prices, and
+ * the cashier picks which as they ring it up.
+ *
+ * The fake carries the same worked example the database tests and
+ * test/packs.test.mjs do — R180 the length, R38 the metre, R170 and R35 for
+ * trade — so the three cannot quietly disagree about the arithmetic.
+ */
+test("pipe rings up whole or cut, and the price follows the tap", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+
+  // A scan is not a choice — it rings straight through, as every scan does,
+  // and lands on the whole length because that is the common sale.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(page.locator(".line-desc")).toHaveText("Pipe 20mm");
+
+  // Opening it offers both ways, each with its own price ON the button: the
+  // cashier is answering "how much is it cut?" out loud while they tap.
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+  await expect(card).toBeVisible();
+  const picker = card.getByRole("group", { name: "How it is sold" });
+  await expect(picker.getByRole("button", { name: /6 m length/ })).toContainText("180.00");
+  await expect(picker.getByRole("button", { name: /Cut to length/ })).toContainText("38.00");
+
+  // Whole is where it starts, and one length is R180.
+  await expect(picker.getByRole("button", { name: /6 m length/ }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect(card).toContainText("per 6 m length");
+
+  // Tapping Cut swaps the price the card is working in.
+  await picker.getByRole("button", { name: /Cut to length/ }).click();
+  await expect(card).toContainText("per Metre");
+  await card.getByLabel("How many Pipe 20mm").fill("2.4");
+  await card.getByRole("button", { name: /Update sale · R.*91\.20/ }).click();
+
+  // 2.4 m at R38 is R91.20 — the cut rate, not the length rate.
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(banner(page)).toHaveCount(0);
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+
+  // And the server was asked for a CUT, not told a price. The till sends the
+  // MODE; the shop's catalogue decides the money. If this ever carried a
+  // unit_price, cutting would have become a second door onto repricing goods
+  // from a till — which 0061 closed deliberately.
+  const sent = be.sales.at(-1)!;
+  expect(sent.items[0].sold_as).toBe("unit");
+  expect(sent.items[0].unit_price).toBeUndefined();
+});
+
+test("a whole length cannot be sold in halves, though its metres divide", async ({ page }) => {
+  // The guard the unit alone gets wrong. Pipe is measured in metres and metres
+  // divide, so allows_fraction is true — but two and a half 6 m LENGTHS is not
+  // an order anybody can pick off a rack. The mode has to overrule the unit.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+
+  // On whole, the field will not take a fraction and rounds what it is given.
+  await card.getByLabel("How many Pipe 20mm").fill("2.5");
+  await card.getByRole("button", { name: /Update sale/ }).click();
+  await expect(page.getByLabel("Quantity of Pipe 20mm")).toHaveValue("3");
+
+  // On cut, 2.5 m is a perfectly ordinary thing to ask for.
+  await page.locator(".line-desc-btn").first().click();
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2.5");
+  await card.getByRole("button", { name: /Update sale · R.*95\.00/ }).click();
+  await expect(page.getByLabel("Quantity of Pipe 20mm")).toHaveValue("2.5");
+});
+
+test("a length and a cut off one are two lines, not one", async ({ page }) => {
+  // Scanning the same barcode twice means two of them, ON THE SAME LINE — that
+  // is the rule for every other item and it is right. But a 6 m length and
+  // 2.4 m cut off one are priced differently and add up to nothing sensible
+  // together, so merging them would silently reprice whichever was there
+  // first. Two ways of buying are two lines.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+
+  // Reached through SEARCH, not by opening the line already in the sale:
+  // a search result adds, opening a line edits. This is somebody ringing up a
+  // second, different thing, which is exactly the case that must not merge.
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe");
+  await page.locator(".result-row").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2");
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+  // One length at R180 and 2 m cut at R38 is R256 — not four of anything.
+  await expect(page.locator(".total-row .fig")).toContainText("256.00");
+});
+
+test("the slip says which way the pipe went out", async ({ page }) => {
+  // "2 x 6 m length" and "12 m" are the same pipe and very different money. A
+  // slip that does not say cannot be used to price a return, and the customer
+  // holding it cannot tell what they bought.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.evaluate(() => localStorage.setItem("pos.printMode", "direct"));
+  // window.print() would block a headless run, so it is counted, not called.
+  // __printed is captured INSIDE it because the component clears the print
+  // area as soon as the browser has taken it — read afterwards it is empty,
+  // and every assertion below would pass over a slip that was never built.
+  await page.addInitScript(() => {
+    (window as unknown as { __prints: number }).__prints = 0;
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    (window as unknown as { __prints: number }).__prints = 0;
+    window.print = () => {
+      const w = window as unknown as { __prints: number; __printed: string };
+      w.__prints += 1;
+      w.__printed = document.querySelector("#print-area")?.textContent ?? "";
+    };
+  });
+
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByLabel("How many Pipe 20mm").fill("2");
+  await card.getByRole("button", { name: /Update sale/ }).click();
+
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-\d+/);
+
+  // Printing is asynchronous — reading __printed straight after the banner
+  // gets an empty string, which would have made every assertion below vacuous.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints))
+    .toBeGreaterThan(0);
+  const printed = await page.evaluate(
+    () => (window as unknown as { __printed?: string }).__printed ?? ""
+  );
+  // Collapsed, because a slip is a fixed-width document and wraps on word
+  // boundaries — the same reason slipWords() exists at the top of this file.
+  // Asserting on the collapsed text is the stronger check anyway: the phrase
+  // only survives it if every word survived whole and in order.
+  const words = printed.replace(/\s+/g, " ");
+  expect(words).toContain("2 6 m length Pipe 20mm");
+  expect(printed).toContain("360.00");
+});

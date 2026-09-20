@@ -38,6 +38,16 @@ export interface ProductInput {
   /** Shelf or bin location — where in the shop the thing physically is. */
   bin?: string | null;
   /**
+   * Sold whole AND cut, at two prices — see lib/packs.ts and migration 0107.
+   * When false the four below are ignored and cleared server-side, so a cut
+   * price cannot survive on an item nothing can sell cut.
+   */
+  sold_in_packs?: boolean;
+  pack_size?: number | null;
+  pack_label?: string | null;
+  price_cut_retail?: number | null;
+  price_cut_trade?: number | null;
+  /**
    * The shop's ceiling on discounting this line, overriding whatever anybody
    * at the till is allowed to give. Null clears it — unlike the picture in
    * 0027, an empty box here means "no cap", because a cap you cannot remove
@@ -71,6 +81,11 @@ export async function adminSaveProduct(
     p_bin: p.bin ?? null,
     p_max_discount_percent: p.max_discount_percent ?? null,
     p_max_discount_amount: p.max_discount_amount ?? null,
+    p_sold_in_packs: p.sold_in_packs ?? false,
+    p_pack_size: p.pack_size ?? null,
+    p_pack_label: p.pack_label ?? null,
+    p_price_cut_retail: p.price_cut_retail ?? null,
+    p_price_cut_trade: p.price_cut_trade ?? null,
   });
   if (error) throw error;
 }

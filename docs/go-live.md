@@ -584,3 +584,48 @@ storage objects, and every till taking a new build. That is not a
 night-before-install change. Note also that Supabase's edge-function regions
 include no African region at all, so push, the digest and quote-PDF would still
 run from Europe even after the database moved.
+
+## Sold whole, and sold cut
+
+Raised at the counter during the installation: pipe goes out as a 6 m length
+and cut to size, at different money. Wire is a 25 m or 50 m bundle, or however
+many metres somebody asks for. Both prices have to be in the system.
+
+Built as one item with two prices rather than two items, because two items
+means two stock counts that do not know about each other — and cutting a
+length would never decrement the count of lengths.
+
+**What the owner sees.** A tick on the item, *Also sold cut to length*, which
+reveals what one whole one is called ("6 m length"), how much is in one, and
+the cut price retail and trade. The two prices already there keep their
+meaning and become the price of a whole one; their labels change to say so.
+
+**What the cashier sees.** Two buttons on the product card with the price on
+each, starting on the whole length because that is the common sale. Tapping
+*Cut to length* swaps the price, relabels the quantity box, and lets it take
+a fraction.
+
+**Three things worth knowing, none of them obvious:**
+
+- **Stock is counted in metres, not lengths.** One pool has to serve both ways
+  of selling. Ticking the box on an item that already has a count changes what
+  that number means, and nothing can work out which it was — twenty lengths
+  and twenty metres are both sensible readings of `20`. The editor says so,
+  with the arithmetic done, and changes nothing by itself.
+
+- **A length and a cut off one are two lines, not one.** Scanning the same
+  barcode twice merges, as it always has. Two different ways of buying do not,
+  because they are priced differently and add to nothing sensible together.
+
+- **The offcut is counted as still in stock.** Cutting 2.4 m off a 6 m length
+  leaves 3.6 m that the system believes is still there. For wire off a drum
+  that is true. For rigid pipe it is true only if the offcut goes back on the
+  rack and gets sold — **and this is the owner's to decide.** If offcuts are
+  scrapped, stock will read high until a count corrects it, and the shop is
+  losing that length every time. Tracking individual offcuts is a much larger
+  feature and no small shop does it; knowing which it is matters more than
+  building it.
+
+Still open, and worth asking before the catalogue fills up: for wire, is a
+50 m bundle cheaper per metre than a 25 m one? That is *tiered pack pricing*,
+a third thing, and it is cheaper to design now than to bolt on later.

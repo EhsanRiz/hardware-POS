@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { money, quantity } from "../../lib/money";
 import { imageSrc } from "../../lib/images";
 import { listProductImages } from "../../lib/adminApi";
-import type { Product } from "../../lib/types";
+import type { Product, SoldAs } from "../../lib/types";
+import {
+  allowsFraction, baseQty, defaultSoldAs, priceFor as packPrice, qtyLabel,
+  soldBothWays, unitLabel,
+} from "../../lib/packs";
 
 /**
  * A closer look at one product, and the place a quantity is decided.
@@ -32,6 +36,7 @@ export default function ProductDetail({
   trade,
   mode,
   inSale,
+  inSaleSoldAs,
   onConfirm,
   onClose,
 }: {
@@ -48,7 +53,9 @@ export default function ProductDetail({
   mode: "add" | "edit";
   /** How many of this product the sale already carries. */
   inSale: number;
-  onConfirm: (p: Product, qty: number) => void;
+  /** How the line already in the sale is being bought, when editing one. */
+  inSaleSoldAs?: SoldAs;
+  onConfirm: (p: Product, qty: number, soldAs: SoldAs) => void;
   onClose: () => void;
 }) {
   const p = product;
@@ -58,13 +65,31 @@ export default function ProductDetail({
     p.reorder_level != null &&
     p.stock_qty > 0 &&
     p.stock_qty <= p.reorder_level;
-  const retail = p.price_retail;
-  const tradePrice = p.price_trade;
-  const charged = trade && tradePrice != null ? tradePrice : retail;
+  /**
+   * Whole, or cut — for the items this shop sells both ways.
+   *
+   * Starts on whole, because that is the common sale and a cashier should not
+   * have to answer a question on every length of pipe. Editing a line already
+   * in the sale starts on whatever that line is, or opening it to change the
+   * quantity would quietly reprice it.
+   */
+  const bothWays = soldBothWays(p);
+  const [soldAs, setSoldAs] = useState<SoldAs>(
+    () => inSaleSoldAs ?? defaultSoldAs(p)
+  );
+  const retail = packPrice(p, false, soldAs);
+  const tradePrice = bothWays
+    ? (soldAs === "unit" ? p.price_cut_trade : p.price_trade)
+    : p.price_trade;
+  const charged = packPrice(p, trade, soldAs);
+  const unitWord = unitLabel(p, soldAs);
 
   // Cut and weighed goods step in halves, whole goods in ones. Constraint 7:
-  // a quantity is a decimal with a unit, never a count.
-  const step = p.allows_fraction ? 0.5 : 1;
+  // a quantity is a decimal with a unit, never a count. A WHOLE one never
+  // steps in halves, whatever its base unit allows — half a 6 m length is not
+  // something anybody can pick off a rack.
+  const fraction = allowsFraction(p, soldAs);
+  const step = fraction ? 0.5 : 1;
   /**
    * Every photograph of this item, primary first.
    *
@@ -110,7 +135,8 @@ export default function ProductDetail({
 
   const typed = Number(qtyText.replace(",", "."));
   const qty = Number.isFinite(typed) && typed > 0 ? round3(typed) : 0;
-  const short = !out && p.stock_qty != null && qty > p.stock_qty;
+  const short =
+    !out && p.stock_qty != null && baseQty(p, soldAs, qty) > p.stock_qty;
 
   // The field opens focused and selected: type "cement", Enter, "4", Enter.
   // Constraint 2 — every action reachable by key, and the counter is faster on
@@ -136,12 +162,12 @@ export default function ProductDetail({
 
   function tidy() {
     if (qty <= 0) return setQtyText("1");
-    setQtyText(String(p.allows_fraction ? qty : Math.max(1, Math.round(qty))));
+    setQtyText(String(fraction ? qty : Math.max(1, Math.round(qty))));
   }
 
   function confirm() {
     if (out || qty <= 0) return;
-    onConfirm(p, p.allows_fraction ? qty : Math.max(1, Math.round(qty)));
+    onConfirm(p, fraction ? qty : Math.max(1, Math.round(qty)), soldAs);
   }
 
   const total = charged * (qty || 0);
@@ -197,6 +223,31 @@ export default function ProductDetail({
             {p.category_name ? ` · ${p.category_name}` : ""}
           </p>
 
+          {/* Two ways to buy the same thing, and the price follows the tap.
+              Only drawn for an item the shop actually sells both ways, so the
+              overwhelming majority of the range looks exactly as it did. */}
+          {bothWays && (
+            <div className="detail-soldas" role="group" aria-label="How it is sold">
+              {(["pack", "unit"] as SoldAs[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`detail-soldas-btn${soldAs === m ? " is-on" : ""}`}
+                  aria-pressed={soldAs === m}
+                  onClick={() => setSoldAs(m)}
+                >
+                  <span className="detail-soldas-what">
+                    {m === "pack" ? unitLabel(p, "pack") : "Cut to length"}
+                  </span>
+                  <span className="detail-soldas-price">
+                    {money(packPrice(p, trade, m))}
+                    {m === "unit" ? ` / ${unitLabel(p, "unit")}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="detail-figures">
             <div className="detail-figure">
               <span className="acc-figure-label">
@@ -210,7 +261,7 @@ export default function ProductDetail({
               {trade && tradePrice != null && (
                 <span className="detail-note">retail {money(retail)}</span>
               )}
-              <span className="detail-note">per {p.unit_code}</span>
+              <span className="detail-note">per {unitWord}</span>
             </div>
 
             {p.bin && (
@@ -257,7 +308,7 @@ export default function ProductDetail({
                   ref={qtyRef}
                   // Whole-unit goods must not accept a fraction: half a padlock
                   // is not a sale, and the server refuses it anyway.
-                  inputMode={p.allows_fraction ? "decimal" : "numeric"}
+                  inputMode={fraction ? "decimal" : "numeric"}
                   value={qtyText}
                   onChange={(e) => setQtyText(e.target.value)}
                   onBlur={tidy}
@@ -282,11 +333,11 @@ export default function ProductDetail({
                 </button>
               </div>
               <span className="detail-qty-note">
-                {quantity(qty || 0, p.unit_code)} × {money(charged)}
+                {qtyLabel(p, soldAs, qty || 0)} × {money(charged)}
               </span>
             </div>
 
-            {p.allows_fraction && (
+            {fraction && (
               <span className="detail-note">
                 Sold by length or weight — a part quantity is fine.
               </span>

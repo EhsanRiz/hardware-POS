@@ -6333,4 +6333,174 @@ begin
     'one signature for pos_admin_list_users');
 end $$;
 
+
+
+-- 0107: sold whole, and sold cut ---------------------------------------------
+--
+-- Pipe goes out as a 6 m length at one price and cut to size at another. Both
+-- prices live on one product, and the mode travels on the line.
+--
+-- These run against the real RPCs because the money and the stock arithmetic
+-- pull in opposite directions on purpose: a line's MONEY is counted in whatever
+-- was sold (2 lengths at R180), and its STOCK in base units (12 m). Getting
+-- that backwards is a rounding error on every invoice or a shelf that drains
+-- six times too slowly, and the browser suite runs against a fake that could
+-- happily agree with either.
+do $$
+declare
+  v_tok text; v_emp uuid; v_mgr uuid; v_org uuid;
+  v_pipe uuid; v_plain uuid; v_sale public.sales; v_line public.sale_items;
+  v_trade uuid; v_qid uuid;
+begin
+  select token into v_tok from till;
+  select org_id, manager_id, employee_id into v_org, v_mgr, v_emp from fixture;
+
+  -- 20 mm pipe: R180 the 6 m length, R38 the metre cut. 120 m on the shelf,
+  -- which is twenty lengths.
+  insert into public.products(org_id, sku, name, unit_code, price_retail,
+    price_trade, stock_qty, sold_in_packs, pack_size, pack_label,
+    price_cut_retail, price_cut_trade)
+  values (v_org, 'PIPE20', 'Pipe 20mm', 'm', 180, 170, 120,
+          true, 6, '6 m length', 38, 35)
+  returning id into v_pipe;
+
+  -- The catalogue refuses a half-built pack item rather than selling one.
+  perform assert_refuses($q$
+    insert into public.products(org_id, sku, name, unit_code, price_retail,
+      sold_in_packs, pack_size, pack_label, price_cut_retail)
+    select org_id, 'BAD1', 'Half a pack item', 'm', 10, true, 6, '6 m length', null
+      from fixture
+  $q$, 'an item sold cut cannot be saved without a cut price');
+
+  perform assert_refuses($q$
+    insert into public.products(org_id, sku, name, unit_code, price_retail,
+      sold_in_packs, pack_size, pack_label, price_cut_retail)
+    select org_id, 'BAD2', 'No pack size', 'm', 10, true, null, '6 m length', 38
+      from fixture
+  $q$, 'an item sold in packs must say how much is in one');
+
+  -- TWO WHOLE LENGTHS. Money in lengths, stock in metres.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_pipe, 'qty', 2, 'sold_as', 'pack')));
+
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.unit_price, 180::numeric(12,2),
+    'a whole length is priced at the length price');
+  perform assert_eq(v_line.qty, 2::numeric(14,3),
+    'the line counts lengths, not metres');
+  perform assert_eq(v_line.line_total, 360::numeric(12,2),
+    'two lengths come to twice the length price, exactly');
+  perform assert_eq(v_line.base_qty, 12::numeric(14,3),
+    'but the shelf gives up twelve metres');
+  perform assert_eq(v_line.sold_as, 'pack', 'and the line remembers it went out whole');
+  perform assert_eq(v_line.pack_label, '6 m length',
+    'with the name the counter uses, kept for the invoice');
+  perform assert_eq((select stock_qty from public.products where id = v_pipe),
+    108::numeric(14,3), 'twelve metres came off the shelf, not two');
+
+  -- CUT TO LENGTH. The other price, fractions allowed, metres off the shelf.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_pipe, 'qty', 2.4, 'sold_as', 'unit')));
+
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.unit_price, 38::numeric(12,2),
+    'a cut is priced per metre, at the cut rate');
+  perform assert_eq(v_line.line_total, 91.20::numeric(12,2), '2.4 m at R38');
+  perform assert_eq(v_line.base_qty, 2.4::numeric(14,3),
+    'a cut takes exactly what was cut');
+  perform assert_eq((select stock_qty from public.products where id = v_pipe),
+    105.6::numeric(14,3), 'and the shelf agrees');
+
+  -- The pack is the thing that cannot be split, whatever the unit allows.
+  -- Metres divide; 6 m LENGTHS do not, and this is the guard that knows the
+  -- difference. Without it the unit's allows_fraction would wave 2.5 through.
+  perform assert_refuses(format($q$
+    select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object(
+        'product_id', %L, 'qty', 2.5, 'sold_as', 'pack')))
+  $q$, v_tok, v_emp, v_pipe), 'half a length is not an order anybody can pick');
+
+  -- Stock is judged in base units too: 105.6 m is seventeen whole lengths and
+  -- change, so eighteen must be refused even though 18 < 105.6.
+  perform assert_refuses(format($q$
+    select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object(
+        'product_id', %L, 'qty', 18, 'sold_as', 'pack')))
+  $q$, v_tok, v_emp, v_pipe),
+    'eighteen lengths is more metres than the shelf holds');
+
+  -- An ordinary item cannot be asked for as a pack: that is a till and a
+  -- catalogue disagreeing, and guessing would price it wrongly either way.
+  insert into public.products(org_id, sku, name, unit_code, price_retail, stock_qty)
+  values (v_org, 'PLAIN1', 'Padlock', 'ea', 50, 10) returning id into v_plain;
+
+  perform assert_refuses(format($q$
+    select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object(
+        'product_id', %L, 'qty', 1, 'sold_as', 'pack')))
+  $q$, v_tok, v_emp, v_plain), 'a padlock does not come in 6 m lengths');
+
+  perform assert_refuses(format($q$
+    select public.pos_create_sale(
+      p_register_token => %L, p_cashier_id => %L,
+      p_items => jsonb_build_array(jsonb_build_object(
+        'product_id', %L, 'qty', 1, 'sold_as', 'half')))
+  $q$, v_tok, v_emp, v_pipe), 'a line is sold whole or cut and nothing else');
+
+  -- A line with no mode at all behaves exactly as it did before 0107. This is
+  -- what lets a till that has not updated yet keep selling.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_plain, 'qty', 1)));
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.sold_as, 'unit', 'no mode means the old behaviour');
+  perform assert_eq(v_line.base_qty, 1::numeric(14,3), 'and base is just the quantity');
+  perform assert_eq(v_line.unit_price, 50::numeric(12,2), 'at the only price it has');
+
+  -- THE PRICE STILL COMES FROM THE CATALOGUE. 0061's rule: only a delivery
+  -- line may name its own, and cutting must not have become a second door.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_pipe, 'qty', 1, 'sold_as', 'unit', 'unit_price', 1)));
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.unit_price, 38::numeric(12,2),
+    'a till asking for R1 a metre is ignored, as it always was');
+
+  -- Trade pricing runs down both columns, not just the whole-pack one.
+  insert into public.customers(org_id, name, is_trade)
+  values (v_org, 'Contractor', true) returning id into v_trade;
+
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp, p_customer_id => v_trade,
+    p_payment_method => 'cash',
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_pipe, 'qty', 1, 'sold_as', 'unit')));
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.unit_price, 35::numeric(12,2),
+    'a contractor gets the trade CUT price, not the trade length price');
+
+  -- A quote prices the same way a sale does. It used to ask price_for
+  -- directly, which would have quoted cut pipe at R180 the metre.
+  select quote_id into v_qid from public.pos_save_quote(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object(
+      'product_id', v_pipe, 'qty', 3, 'sold_as', 'unit')));
+  perform assert_eq((select unit_price from public.quote_items where quote_id = v_qid),
+    38::numeric(12,2), 'a quote for a cut quotes the cut price');
+  perform assert_eq((select sold_as from public.quote_items where quote_id = v_qid),
+    'unit', 'and the quote line remembers the mode');
+  -- And reading it back does not cry "the price has changed" at a current quote.
+  perform assert_eq((select price_now from public.pos_quote_items(v_tok, v_qid)),
+    38::numeric, 'price_now asks the cut price too, so a current quote looks current');
+end $$;
+
+
 select 'all database tests passed' as result;

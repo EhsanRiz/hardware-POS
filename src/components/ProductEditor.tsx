@@ -56,6 +56,11 @@ export default function ProductEditor({
     active: product?.active ?? true,
     max_discount_percent: product?.max_discount_percent ?? null,
     max_discount_amount: product?.max_discount_amount ?? null,
+    sold_in_packs: product?.sold_in_packs ?? false,
+    pack_size: product?.pack_size ?? null,
+    pack_label: product?.pack_label ?? null,
+    price_cut_retail: product?.price_cut_retail ?? null,
+    price_cut_trade: product?.price_cut_trade ?? null,
   }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,7 +245,13 @@ export default function ProductEditor({
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Field label={`Retail (${CURRENCY}, incl VAT)`}>
+            <Field
+              label={
+                f.sold_in_packs
+                  ? `Retail per ${f.pack_label?.trim() || "whole one"} (${CURRENCY}, incl VAT)`
+                  : `Retail (${CURRENCY}, incl VAT)`
+              }
+            >
               <input
                 inputMode="decimal"
                 value={f.price_retail || ""}
@@ -248,7 +259,10 @@ export default function ProductEditor({
                 className={inputCls}
               />
             </Field>
-            <Field label="Trade" hint="Blank = trade pays retail.">
+            <Field
+              label={f.sold_in_packs ? "Trade per whole one" : "Trade"}
+              hint="Blank = trade pays retail."
+            >
               <input
                 inputMode="decimal"
                 value={f.price_trade ?? ""}
@@ -272,6 +286,125 @@ export default function ProductEditor({
               <Field label="Cost" hint="You don't have permission to see costs.">
                 <input disabled className={inputCls + " bg-stone-100"} value="—" />
               </Field>
+            )}
+          </div>
+
+          {/* SOLD TWO WAYS.
+              Behind a tick because most of a hardware range is not: a padlock
+              is a padlock. Ticking it changes what the two prices above MEAN —
+              they become the price of a whole one — which is why their labels
+              above read differently once it is on. */}
+          <div className="rounded-xl border border-stone-200 p-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-5 w-5"
+                checked={f.sold_in_packs ?? false}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setF((cur) => ({
+                    ...cur,
+                    sold_in_packs: on,
+                    // Unticking clears the lot rather than leaving a stale cut
+                    // price on an item nothing can sell cut — somebody ticks
+                    // the box again next season and trusts what is in the box.
+                    ...(on ? {} : {
+                      pack_size: null, pack_label: null,
+                      price_cut_retail: null, price_cut_trade: null,
+                    }),
+                  }));
+                }}
+              />
+              <span className="text-[15px] font-medium">
+                Also sold cut to length
+              </span>
+            </label>
+            <p className="text-xs text-stone-500 mt-1">
+              For pipe sold as a 6 m length and cut to size, or wire sold as a
+              bundle and off the drum. Two prices, one item.
+            </p>
+
+            {f.sold_in_packs && (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    label="One whole one is called"
+                    hint="As the counter says it."
+                  >
+                    <input
+                      value={f.pack_label ?? ""}
+                      placeholder="6 m length"
+                      onChange={(e) =>
+                        set("pack_label", e.target.value || null)}
+                      className={inputCls}
+                    />
+                  </Field>
+                  <Field
+                    label={`How many ${f.unit_code} in one`}
+                    hint="A 6 m length is 6."
+                  >
+                    <input
+                      inputMode="decimal"
+                      value={f.pack_size ?? ""}
+                      onChange={(e) => set("pack_size", num(e.target.value))}
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={`Cut price per ${f.unit_code} (retail)`}>
+                    <input
+                      inputMode="decimal"
+                      value={f.price_cut_retail ?? ""}
+                      onChange={(e) =>
+                        set("price_cut_retail", num(e.target.value))}
+                      className={inputCls}
+                    />
+                  </Field>
+                  <Field
+                    label={`Cut price per ${f.unit_code} (trade)`}
+                    hint="Blank = trade pays the retail cut price."
+                  >
+                    <input
+                      inputMode="decimal"
+                      value={f.price_cut_trade ?? ""}
+                      onChange={(e) =>
+                        set("price_cut_trade", num(e.target.value))}
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+
+                {/* WHAT ON HAND NOW MEANS.
+                    Stock has to be counted in the base unit, because one pool
+                    serves both ways of selling. So ticking this box on an item
+                    that already has a count changes what that number means,
+                    and nothing can work out which it was — twenty lengths and
+                    twenty metres are both perfectly sensible readings of 20.
+                    Said out loud, with the arithmetic done, rather than
+                    silently multiplied: a shop that loses a stock count to a
+                    helpful migration has lost a day. */}
+                {!isNew
+                  && !product?.sold_in_packs
+                  && f.stock_qty != null
+                  && (f.pack_size ?? 0) > 0 && (
+                  <div className="rounded-xl bg-amber-50 p-3">
+                    <div className="text-sm font-medium">
+                      Check On hand before you save
+                    </div>
+                    <p className="text-xs text-stone-600 mt-1">
+                      On hand is counted in {f.unit_code} for an item sold both
+                      ways. It reads <strong>{f.stock_qty}</strong> — if that
+                      meant {f.stock_qty}{" "}
+                      {f.pack_label?.trim() || "whole ones"}, it should be{" "}
+                      <strong>
+                        {Math.round(f.stock_qty * (f.pack_size ?? 1) * 1000) / 1000}
+                      </strong>
+                      . Nothing is changed for you.
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

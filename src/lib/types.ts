@@ -40,6 +40,12 @@ export interface User {
 }
 
 /**
+ * Whole, or cut. Defined here rather than in lib/packs.ts because CartLine
+ * carries it and packs.ts imports CartLine — the other way round is a cycle.
+ */
+export type SoldAs = "pack" | "unit";
+
+/**
  * A line in the catalogue.
  *
  * Two fields carry most of the hardware-specific weight:
@@ -90,6 +96,23 @@ export interface Product {
    * ordinary line cannot be repriced from a till.
    */
   kind?: "goods" | "delivery";
+  /**
+   * Sold whole AND cut, at two different prices — a 6 m length of pipe or 2.4 m
+   * off it, a 25 m bundle of wire or however much somebody asks for. See
+   * lib/packs.ts for what each of these means and supabase/migrations/0107 for
+   * the rules the server enforces.
+   *
+   * When this is false the four fields below are null and the item behaves
+   * exactly as every item did before: one price, one way to buy it.
+   */
+  sold_in_packs?: boolean;
+  /** Base units in one whole one: 6 for a 6 m length, 25 for a bundle. */
+  pack_size?: number | null;
+  /** What one whole one is called at the counter: "6 m length". */
+  pack_label?: string | null;
+  /** Per base unit, when it is cut. `price_retail` stays the price of a WHOLE one. */
+  price_cut_retail?: number | null;
+  price_cut_trade?: number | null;
 }
 
 export interface Category {
@@ -112,6 +135,15 @@ export interface UnitOfMeasure {
 export interface CartLine {
   product: Product;
   qty: number;
+  /**
+   * Whole, or cut — for an item the shop sells both ways.
+   *
+   * Absent means whole, which is what the counter reaches for first and what
+   * every line was before 0107. `qty` is counted in whatever this says: 2
+   * lengths, or 2.4 metres. The two are not interchangeable and the difference
+   * is the price.
+   */
+  soldAs?: SoldAs;
   /**
    * Money off THIS line, as opposed to off the sale.
    *
@@ -399,7 +431,16 @@ export interface AdminProduct {
   bin?: string | null;
   /** The ceiling on discounting this line. See Product. */
   max_discount_percent?: number | null;
-  max_discount_amount?: number | null;
+  max_discount_amount?: number | null;  /**
+   * Sold whole AND cut, at two prices — see lib/packs.ts and migration 0107.
+   * `price_retail` and `price_trade` are then the price of a WHOLE one.
+   */
+  sold_in_packs?: boolean;
+  pack_size?: number | null;
+  pack_label?: string | null;
+  price_cut_retail?: number | null;
+  price_cut_trade?: number | null;
+
 }
 
 export interface StockMovement {
