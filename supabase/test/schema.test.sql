@@ -6464,6 +6464,24 @@ begin
   perform assert_eq(v_line.base_qty, 1::numeric(14,3), 'and base is just the quantity');
   perform assert_eq(v_line.unit_price, 50::numeric(12,2), 'at the only price it has');
 
+  -- A PACK ITEM WITH NO MODE IS A WHOLE ONE, and this is the till that has
+  -- not been updated yet. It sends no mode at all, and its screen is showing
+  -- price_retail — the LENGTH price — because that is the only price its code
+  -- knows about. Defaulting to 'unit' here would charge R38 for something the
+  -- cashier just told the customer was R180, and nothing would look wrong on
+  -- either side until themonth end.
+  --
+  -- lib/packs.ts defaultSoldAs() answers 'pack' for the same reason. These are
+  -- two implementations of one rule and this is where they are made to agree.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_pipe, 'qty', 1)));
+  select * into v_line from public.sale_items where sale_id = v_sale.id;
+  perform assert_eq(v_line.unit_price, 180::numeric(12,2),
+    'a pipe line with no mode is a whole length, at the length price');
+  perform assert_eq(v_line.sold_as, 'pack', 'and is recorded as one');
+  perform assert_eq(v_line.base_qty, 6::numeric(14,3), 'giving up six metres');
+
   -- THE PRICE STILL COMES FROM THE CATALOGUE. 0061's rule: only a delivery
   -- line may name its own, and cutting must not have become a second door.
   v_sale := public.pos_create_sale(
@@ -6486,6 +6504,47 @@ begin
   select * into v_line from public.sale_items where sale_id = v_sale.id;
   perform assert_eq(v_line.unit_price, 35::numeric(12,2),
     'a contractor gets the trade CUT price, not the trade length price');
+
+  -- TWO LINES IN ONE SALE, which is where the modes get mixed up.
+  --
+  -- Every test above sells a single line, and a single-line sale cannot
+  -- distinguish "this line's mode" from "the last mode anybody worked out".
+  -- A padlock rung up alongside a length of pipe is the case that can:
+  -- get it wrong and the padlock is written as a 6 m length and takes six
+  -- times its stock off the shelf.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_plain, 'qty', 2),
+      jsonb_build_object('product_id', v_pipe, 'qty', 1, 'sold_as', 'pack')));
+
+  select * into v_line from public.sale_items
+   where sale_id = v_sale.id and product_id = v_plain;
+  perform assert_eq(v_line.sold_as, 'unit',
+    'the padlock is still a padlock, whatever was rung up after it');
+  perform assert_eq(v_line.base_qty, 2::numeric(14,3),
+    'and takes two off the shelf, not twelve');
+  perform assert_eq(v_line.pack_size, null::numeric(14,3),
+    'and carries no pack size at all');
+
+  select * into v_line from public.sale_items
+   where sale_id = v_sale.id and product_id = v_pipe;
+  perform assert_eq(v_line.sold_as, 'pack', 'the pipe went out whole');
+  perform assert_eq(v_line.base_qty, 6::numeric(14,3), 'six metres for one length');
+
+  -- And the same mixture the other way round, since the fault is order-
+  -- dependent: whichever line comes LAST is the one whose mode would leak.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(
+      jsonb_build_object('product_id', v_pipe, 'qty', 1, 'sold_as', 'pack'),
+      jsonb_build_object('product_id', v_plain, 'qty', 2)));
+
+  select * into v_line from public.sale_items
+   where sale_id = v_sale.id and product_id = v_pipe;
+  perform assert_eq(v_line.base_qty, 6::numeric(14,3),
+    'the length still gives up six metres when it is rung up first');
+  perform assert_eq(v_line.sold_as, 'pack', 'and still went out whole');
 
   -- A quote prices the same way a sale does. It used to ask price_for
   -- directly, which would have quoted cut pipe at R180 the metre.
