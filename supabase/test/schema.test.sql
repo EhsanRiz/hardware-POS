@@ -4573,8 +4573,29 @@ begin
     from public.pos_pair_register('+27820000099', '246810', 'Other till');
 
   -- Something worth stealing in the first shop: a product and a sale on it.
+  --
+  -- Chosen, rather than taken off an unordered heap. "limit 1" with no order
+  -- by took whichever row Postgres happened to offer, and on main it
+  -- eventually offered a Galvanised bucket an earlier test had already sold
+  -- down to nothing. pos_create_sale refused it for lack of stock, and a
+  -- block about one shop not seeing another's data went red for a reason that
+  -- has nothing to do with isolation — blocking a deploy to a live shop.
+  -- Nothing in the repository had changed; the row order had.
   select id, price_retail into v_prod_a, v_price
-    from public.products where org_id = v_org_a and active and price_retail > 0 limit 1;
+    from public.products
+    where org_id = v_org_a and active and price_retail > 0
+      -- Untracked stock sells freely; tracked stock has to have one on it.
+      and (stock_qty is null or stock_qty >= 1)
+      -- A pack item sells its whole pack, so "qty 1" would want pack_size off
+      -- the shelf. This block wants the simplest possible sale.
+      and not coalesce(sold_in_packs, false)
+    -- By SKU, so the same row comes back every run on every machine. An
+    -- unordered limit is a coin toss wearing a query's clothes, and this one
+    -- came up tails on main.
+    order by sku
+    limit 1;
+  perform assert(v_prod_a is not null,
+    'the first shop has something in stock to sell');
   v_sale_a := public.pos_create_sale(
     p_register_token => v_tok_a, p_cashier_id => v_emp_a,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod_a, 'qty', 1)),

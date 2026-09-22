@@ -11462,6 +11462,12 @@ test("a price can be typed with a decimal point in it", async ({ page }) => {
   // Leaving the box settles a half-typed number rather than keeping the text.
   const trade = page.getByLabel(/^Trade/);
   await trade.click();
+  // Select first, like the two boxes above. Without it the keys land after
+  // whatever the field already holds — Cement's trade price is 108, so "99."
+  // typed on the end made "10899." and the assertion read 10899. It passed
+  // here and failed on CI, which is what an unstated assumption about where a
+  // caret lands after a click looks like.
+  await trade.press("Control+a");
   await trade.pressSequentially("99.");
   await trade.blur();
   await expect(trade).toHaveValue("99");
