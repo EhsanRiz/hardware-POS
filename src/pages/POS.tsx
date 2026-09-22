@@ -371,6 +371,12 @@ export default function POS() {
   const [askAdminPin, setAskAdminPin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  /**
+   * The shop's prices could not be fetched, and NOT because the line is down.
+   * Null while all is well. Held separately from `banner`, which is cleared by
+   * the next sale — this one has to stay up until it is actually fixed.
+   */
+  const [catalogueStale, setCatalogueStale] = useState<string | null>(null);
   // The sale just rung, while "actually, no" is still a live possibility —
   // cleared the moment the next one starts. And the one being cancelled.
   const [lastSale, setLastSale] = useState<CancellableSale | null>(null);
@@ -512,12 +518,45 @@ export default function POS() {
 
   const refresh = useCallback(async () => {
     try {
-      const [p, c] = await Promise.all([fetchCatalogue(), fetchCategories()]);
-      setProducts(p);
-      cacheSet(CATALOGUE_KEY, p);
+      /**
+       * SETTLED SEPARATELY, and this is not a tidy-up.
+       *
+       * Promise.all is all-or-nothing: one rejection threw both results away,
+       * so a categories call that failed for its own reasons discarded a
+       * perfectly good catalogue — and the catch below then left the till on
+       * whatever price list it happened to be holding.
+       *
+       * The catalogue is the prices the counter charges. It updates on its own
+       * merits or not at all.
+       */
+      const [pr, cr] = await Promise.allSettled([
+        fetchCatalogue(), fetchCategories(),
+      ]);
+
+      if (pr.status === "fulfilled") {
+        setProducts(pr.value);
+        cacheSet(CATALOGUE_KEY, pr.value);
+        setCatalogueStale(null);
+      } else if (!isNetworkError(pr.reason)) {
+        /**
+         * A till quietly selling last week's prices is the failure nobody
+         * notices until the money is wrong, and the old code could not tell
+         * the two apart: every error was treated as "we are offline" and
+         * swallowed, while the header went on saying SYNCED because that is a
+         * separate probe. No line is expected and stays silent. Anything else
+         * is a fault and now says so on the screen where the selling happens.
+         */
+        setCatalogueStale(errorMessage(pr.reason));
+      }
+
       // Categories are not shown on this screen, but the back office reads them
       // from the same cache and may be opened with the line down.
-      cacheSet(CATEGORIES_KEY, c);
+      if (cr.status === "fulfilled") cacheSet(CATEGORIES_KEY, cr.value);
+
+      if (pr.status === "rejected" && pr.reason instanceof NotPairedError) {
+        setPaired(false);
+        return;
+      }
       void refreshSettings();
       try {
         const st = await cashSessionStatus();
@@ -534,8 +573,9 @@ export default function POS() {
         // take cash. Fall back to whatever was cached.
       }
     } catch (e) {
+      // The catalogue and categories are settled above and speak for
+      // themselves; this only covers the calls after them.
       if (e instanceof NotPairedError) setPaired(false);
-      // Otherwise stay on the cached catalogue — this is the offline path.
     }
   }, []);
 
@@ -1733,6 +1773,16 @@ export default function POS() {
     <div className="sell">
       {header}
 
+      {/* The prices this till is charging could not be refreshed, and not for
+          want of a line. It stays up until it is fixed: a till quietly selling
+          last week's prices is the failure nobody notices until the money is
+          wrong. */}
+      {catalogueStale && (
+        <div className="sell-banner is-bad" role="alert">
+          The price list could not be refreshed, so this till may be charging
+          old prices. {catalogueStale}
+        </div>
+      )}
       {banner && (
         <div
           className="sell-banner"

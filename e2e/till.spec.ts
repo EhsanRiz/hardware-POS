@@ -11321,3 +11321,68 @@ test("a price can be typed with a decimal point in it", async ({ page }) => {
   await trade.blur();
   await expect(trade).toHaveValue("99");
 });
+
+/*
+ * A till that cannot refresh its prices has to say so.
+ *
+ * refresh() fetched the catalogue and the categories with Promise.all and
+ * caught everything that came back, with the comment "this is the offline
+ * path". Two faults in one:
+ *
+ *   * all-or-nothing. A categories call that failed for its own reasons threw
+ *     away a catalogue that had arrived perfectly well.
+ *   * every error read as "no line". A server that is plainly ANSWERING and
+ *     refusing is a fault, not an outage — but it was swallowed exactly the
+ *     same way, and the header went on saying SYNCED because that comes from a
+ *     separate probe.
+ *
+ * So the till could sell all week from a price list it silently failed to
+ * update, with nothing on any screen saying so. That is the shape of fault
+ * nobody notices until the money is wrong.
+ */
+
+test("a price list that will not refresh is said out loud, not swallowed", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  // Nothing wrong yet, so nothing said.
+  await expect(page.getByText(/price list could not be refreshed/i)).toHaveCount(0);
+
+  // The server is answering — it is refusing. Not an outage.
+  be.failRpc = "pos_catalogue";
+  await page.reload();
+  // The reload keeps the person signed in (AuthContext, on purpose), so the
+  // counter comes straight back — there is no PIN pad to answer.
+  await page.getByRole("button", { name: /Sign out/i }).first().waitFor();
+
+  await expect(page.getByText(/price list could not be refreshed/i)).toBeVisible();
+  // And it names the reason rather than shrugging.
+  await expect(page.getByText(/Catalogue is having a day/i)).toBeVisible();
+});
+
+test("and a catalogue that arrived is kept even when something beside it fails", async ({ page }) => {
+  // The all-or-nothing half. Categories are a back-office convenience; the
+  // catalogue is the prices this counter charges. One must not take the other
+  // down with it.
+  be.failRpc = "pos_categories";
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // The prices arrived, so the till sells normally and says nothing.
+  await expect(page.getByText(/price list could not be refreshed/i)).toHaveCount(0);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+});
+
+test("no line is not a fault, and stays quiet", async ({ page }) => {
+  // The case the old code was written for and got right: with the line down
+  // there is nothing to say. An outage is expected, announced by the header's
+  // own offline mark, and a second alarm beside it is noise that teaches
+  // people to ignore the first.
+  await pairAndSignIn(page, USERS.manager.pin);
+  be.offline = true;
+  await page.reload();
+  // The reload keeps the person signed in (AuthContext, on purpose), so the
+  // counter comes straight back — there is no PIN pad to answer.
+  await page.getByRole("button", { name: /Sign out/i }).first().waitFor();
+
+  await expect(page.getByText(/price list could not be refreshed/i)).toHaveCount(0);
+});

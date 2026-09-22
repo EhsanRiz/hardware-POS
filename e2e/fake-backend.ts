@@ -604,6 +604,16 @@ export class Backend {
   /** When set, every request fails as though the connection dropped. */
   offline = false;
   /**
+   * Make one route answer with a server error, without the line going down.
+   *
+   * The two are not the same thing and the till used to treat them as one: a
+   * refusal from a server that is plainly answering is a FAULT, and a till
+   * that mistakes it for "no signal" goes on selling from whatever price list
+   * it last managed to fetch. The fake could only be taken offline wholesale,
+   * so that difference was untestable and therefore untested.
+   */
+  failRpc: string | null = null;
+  /**
    * TillAI. The real assistant runs on the server against Gemini; the fake
    * answers with whatever a test set, and records what the till asked and
    * with which token, which is the part the browser suite can hold to
@@ -4180,9 +4190,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
 
       case "rpc/pos_categories":
         if (!tokenOk) return fail("Register not paired or revoked");
+        if (be.failRpc === "pos_categories") return fail("Categories are having a day");
         return json([{ id: "c1", name: "Building", sort_order: 10 }]);
       case "rpc/pos_catalogue":
         if (!tokenOk) return fail("Register not paired or revoked");
+        if (be.failRpc === "pos_catalogue") return fail("Catalogue is having a day");
         return json(PRODUCTS);
       case "units_of_measure":
         return json([
