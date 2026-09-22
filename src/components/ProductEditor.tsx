@@ -87,6 +87,31 @@ export default function ProductEditor({
     return Number.isFinite(n) ? n : null;
   };
 
+  /**
+   * What is in a number box WHILE somebody is typing in it.
+   *
+   * Reported from the shop: "the cost doesn't take decimals". It did not, and
+   * no number box here did, because each one was a controlled input whose
+   * value was the PARSED number. Type "82." and Number("82.") is 82, the box
+   * re-renders as "82", and the decimal point the person just pressed is gone
+   * — so the next key lands against the whole number and 82.80 comes out 8280.
+   *
+   * The model still holds a number; this holds the keystrokes until they stop.
+   * On blur the raw text is dropped and the box re-reads the model, so a half
+   * typed "82." settles to 82 and nothing invalid can be saved.
+   */
+  const [raw, setRaw] = useState<Partial<Record<keyof ProductInput, string>>>({});
+  const numField = <K extends keyof ProductInput>(k: K) => ({
+    inputMode: "decimal" as const,
+    value: raw[k] ?? (f[k] == null || f[k] === 0 ? "" : String(f[k])),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      setRaw((r) => ({ ...r, [k]: e.target.value }));
+      set(k, num(e.target.value) as ProductInput[K]);
+    },
+    onBlur: () => setRaw((r) => { const n = { ...r }; delete n[k]; return n; }),
+    className: inputCls,
+  });
+
   // Both figures, both ex VAT. Margin is profit over the ex-VAT selling
   // price, which is what margin reports use; markup is profit over cost,
   // which is how a shop that buys at 25 and sells at 50 thinks of it. Shown
@@ -253,10 +278,7 @@ export default function ProductEditor({
               }
             >
               <input
-                inputMode="decimal"
-                value={f.price_retail || ""}
-                onChange={(e) => set("price_retail", num(e.target.value) ?? 0)}
-                className={inputCls}
+                {...numField("price_retail")}
               />
             </Field>
             <Field
@@ -264,10 +286,7 @@ export default function ProductEditor({
               hint="Blank = trade pays retail."
             >
               <input
-                inputMode="decimal"
-                value={f.price_trade ?? ""}
-                onChange={(e) => set("price_trade", num(e.target.value))}
-                className={inputCls}
+                {...numField("price_trade")}
               />
             </Field>
             {canSeeCost ? (
@@ -276,10 +295,7 @@ export default function ProductEditor({
                 hint={marginHint}
               >
                 <input
-                  inputMode="decimal"
-                  value={f.cost ?? ""}
-                  onChange={(e) => set("cost", num(e.target.value))}
-                  className={inputCls}
+                  {...numField("cost")}
                 />
               </Field>
             ) : (
@@ -324,6 +340,33 @@ export default function ProductEditor({
               bundle and off the drum. Two prices, one item.
             </p>
 
+            {/* THE UNIT IS THE CUT, and this is the trap the first shop to use
+                this fell into. "Sold by" decides what one CUT one is — so a
+                50 m roll of wire sold by Each cuts into "eaches", the till
+                offers "R60.00 / Each" for what is R60 a metre, and because
+                Each refuses a fraction nobody can sell 2.5 m of it.
+
+                Not refused, because it is legitimate for a box of fifty screws
+                sold singly — whole screws are exactly right there. It is only
+                wrong when the thing is MEASURED, which is the common case and
+                the one the words above describe. So it is said plainly rather
+                than guessed at. */}
+            {f.sold_in_packs && unit && !unit.allows_fraction && (
+              <div className="rounded-xl bg-amber-50 p-3 mt-3">
+                <div className="text-sm font-medium">
+                  Cutting this will only take whole numbers
+                </div>
+                <p className="text-xs text-stone-600 mt-1">
+                  <strong>Sold by</strong> is{" "}
+                  <strong>{unit.name}</strong>, so a cut is priced and counted
+                  per {unit.name.toLowerCase()} and cannot be split — no 2.5 of
+                  it. Right for a box of screws sold singly. If this is
+                  measured, set <strong>Sold by</strong> to the measure (Metre,
+                  Kilogram) and the cut price becomes a price per metre.
+                </p>
+              </div>
+            )}
+
             {f.sold_in_packs && (
               <div className="mt-3 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -344,21 +387,14 @@ export default function ProductEditor({
                     hint="A 6 m length is 6."
                   >
                     <input
-                      inputMode="decimal"
-                      value={f.pack_size ?? ""}
-                      onChange={(e) => set("pack_size", num(e.target.value))}
-                      className={inputCls}
+                      {...numField("pack_size")}
                     />
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label={`Cut price per ${f.unit_code} (retail)`}>
                     <input
-                      inputMode="decimal"
-                      value={f.price_cut_retail ?? ""}
-                      onChange={(e) =>
-                        set("price_cut_retail", num(e.target.value))}
-                      className={inputCls}
+                      {...numField("price_cut_retail")}
                     />
                   </Field>
                   <Field
@@ -366,11 +402,7 @@ export default function ProductEditor({
                     hint="Blank = trade pays the retail cut price."
                   >
                     <input
-                      inputMode="decimal"
-                      value={f.price_cut_trade ?? ""}
-                      onChange={(e) =>
-                        set("price_cut_trade", num(e.target.value))}
-                      className={inputCls}
+                      {...numField("price_cut_trade")}
                     />
                   </Field>
                 </div>
@@ -437,20 +469,15 @@ export default function ProductEditor({
               }
             >
               <input
-                inputMode="decimal"
+                {...numField("stock_qty")}
                 disabled={!isNew}
-                value={f.stock_qty ?? ""}
-                onChange={(e) => set("stock_qty", num(e.target.value))}
                 className={inputCls + (isNew ? "" : " bg-stone-100")}
               />
             </Field>
 
             <Field label="Reorder at" hint="Warns on the till below this.">
               <input
-                inputMode="decimal"
-                value={f.reorder_level ?? ""}
-                onChange={(e) => set("reorder_level", num(e.target.value))}
-                className={inputCls}
+                {...numField("reorder_level")}
               />
             </Field>
           </div>
@@ -469,10 +496,7 @@ export default function ProductEditor({
             <div className="grid grid-cols-2 gap-3">
               <Field label="Percent off, at most">
                 <input
-                  inputMode="decimal"
-                  value={f.max_discount_percent ?? ""}
-                  onChange={(e) => set("max_discount_percent", num(e.target.value))}
-                  className={inputCls}
+                  {...numField("max_discount_percent")}
                   aria-label="Maximum discount percent"
                   placeholder="—"
                 />
@@ -482,10 +506,7 @@ export default function ProductEditor({
                 hint={`Per ${unit?.name?.toLowerCase() ?? f.unit_code} — ten of them allows ten times as much.`}
               >
                 <input
-                  inputMode="decimal"
-                  value={f.max_discount_amount ?? ""}
-                  onChange={(e) => set("max_discount_amount", num(e.target.value))}
-                  className={inputCls}
+                  {...numField("max_discount_amount")}
                   aria-label="Maximum discount amount"
                   placeholder="—"
                 />

@@ -11280,3 +11280,44 @@ test("the slip says which way the pipe went out", async ({ page }) => {
   expect(words).toContain("2 6 m length Pipe 20mm");
   expect(printed).toContain("360.00");
 });
+
+test("a price can be typed with a decimal point in it", async ({ page }) => {
+  // Reported from the shop: "the cost doesn't take decimals". It did not, and
+  // no number box in the editor did.
+  //
+  // Each one was a controlled input whose value was the PARSED number. Type
+  // "82." and Number("82.") is 82, so the box re-renders as "82" and the
+  // decimal point that was just pressed is gone — the next key lands against
+  // the whole number and 82.80 comes out 8280, five figures too dear.
+  //
+  // It must be TYPED. fill() sets the whole value in one go and never puts the
+  // box in the "82." state, which is exactly why every existing test of this
+  // screen passed over a field nobody could actually type a price into.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Cement 42.5N 50kg" }).first().click();
+
+  const cost = page.getByLabel(/^Cost/);
+  await cost.click();
+  await cost.press("Control+a");
+  await cost.pressSequentially("82.80");
+  await expect(cost).toHaveValue("82.80");
+
+  // A comma is what a South African keyboard offers for a decimal, and the
+  // parser has always accepted it — the box has to let it be typed too.
+  const retail = page.getByLabel(/^Retail/);
+  await retail.click();
+  await retail.press("Control+a");
+  await retail.pressSequentially("115,50");
+  await expect(retail).toHaveValue("115,50");
+
+  // And what was typed is what is understood: margin is worked out from both.
+  await expect(page.getByText(/Margin .*markup .*ex VAT/)).toBeVisible();
+
+  // Leaving the box settles a half-typed number rather than keeping the text.
+  const trade = page.getByLabel(/^Trade/);
+  await trade.click();
+  await trade.pressSequentially("99.");
+  await trade.blur();
+  await expect(trade).toHaveValue("99");
+});
