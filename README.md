@@ -495,6 +495,36 @@ Domains & Routes → Add custom domain → till.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.
 
+### Two paths to production, and only one of them tests
+
+There are **two** ways a commit reaches the shop, and they are not equally
+careful:
+
+| Path | Runs the suite? |
+|---|---|
+| GitHub Actions (`.github/workflows/ci.yml`) | **Yes.** The deploy job only runs after the database tests and the full browser suite are green, and it finishes with `scripts/smoke.mjs` against the live address. |
+| Cloudflare Workers Builds (on every push) | **Only what its build command runs.** |
+
+The second one is configured in the dashboard, not in this repository, which is
+how it came as a surprise: on 22 September it put a commit on the till before
+CI had finished. That time the suite passed nine minutes later. It will not
+always.
+
+Pick one:
+
+* **Leave deploys to CI** — Workers & Pages → hardware-pos → Settings → Builds,
+  and turn automatic deployments off. CI is then the only path, and the gate is
+  the whole suite. This is the safer choice.
+* **Keep Cloudflare building** — then set its build command to
+  `npm run build:gated` (`npm test && npm run build`), so a failing unit suite
+  fails the build. Not the browser suite: that wants a Chromium download and
+  twelve minutes, which is the wrong shape for a deploy hook. Also restrict it
+  to the production branch, or every feature branch builds too.
+
+Whichever is chosen, **check what a non-production branch build targets** before
+trusting it. A branch that can reach the production Worker means an unmerged
+branch can land on a counter.
+
 `public/_headers` carries the cache rules. The important one is `sw.js`, which
 must never be cached: the service worker is what decides when a tablet takes an
 update, so a cached copy can leave a till running an old build indefinitely —
