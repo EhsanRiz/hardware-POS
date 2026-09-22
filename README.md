@@ -495,10 +495,10 @@ Domains & Routes → Add custom domain → till.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.
 
-### Deploys go through CI, and only through CI
+### Deploys should go through CI, and only through CI
 
-For a while there were **two** ways a commit reached the shop, and only one of
-them was careful:
+There are **two** ways a commit reaches the shop, and only one of them is
+careful:
 
 | Path | Runs the suite? |
 |---|---|
@@ -511,21 +511,61 @@ CI had finished. That time the suite passed nine minutes later. It would not
 always, and the gate that had already caught one broken build (`d46aac9`, which
 never deployed because CI went red) could be walked straight past.
 
-**So it was switched off.** Workers & Pages → hardware-pos → Settings → Builds →
-automatic deployments off. CI is the only path to the shop, and the gate is the
-whole suite.
+**The decision is to leave deploys to CI.** The repository's half of that is
+done; the second path is a dashboard setting and is still connected at the time
+of writing. Below is exactly which control closes it, because the obvious one
+does not exist.
 
-If that is ever turned back on, point its build command at `npm run build:gated`
-(`npm test && npm run build`) so a failing unit suite fails the build, and
-restrict it to the production branch — otherwise every feature branch builds
-too. That script exists for exactly that case. It deliberately does not run the
-browser suite: that wants a Chromium download and twelve minutes, which is the
-wrong shape for a deploy hook and would make the gate something people switch
+#### There is no "automatic deployments" switch
+
+Worth saying plainly, because it was looked for and is not there. **Workers &
+Pages → hardware-pos → Settings → Builds** has no on/off toggle for deploying.
+What it has is a *connection* and a pair of *commands*:
+
+| Control | What it is set to | What it does |
+|---|---|---|
+| **Git repository** (with **Manage** / **Disconnect**) | `EhsanRiz/hardware-POS` | The whole feature. Disconnecting is the off switch. |
+| **Branch control → Production branch** | `main` | A push here runs the build command, then the **Deploy command**. |
+| **Build configuration → Deploy command** | `npx wrangler deploy` | This is the line that reaches the counter. |
+| **Branch control → Builds for non-production branches** | ticked | Any other branch builds too, running the **Version command** instead. |
+| **Build configuration → Version command** | `npx wrangler versions upload` | Uploads a version. Does **not** promote it to the active deployment. |
+
+So there are two ways to shut the second path, and they differ in kind:
+
+- **Disconnect the repository.** The blunt one, and the one that matches the
+  decision above: no Cloudflare build runs at all, and CI — which holds its own
+  API token, quite separately — carries on deploying. Reconnecting is a few
+  clicks if it is ever wanted back.
+- **Or keep the connection and neuter the deploy**, by changing the Deploy
+  command to something that does not deploy (`npx wrangler versions upload`) and
+  unticking non-production builds. Builds still run and still cost minutes; the
+  thing to remember is that the *command* is the gate, and a later edit to that
+  one field silently re-opens it.
+
+If it is ever reconnected properly, point the build command at
+`npm run build:gated` (`npm test && npm run build`) so a failing unit suite fails
+the build. That script exists for exactly that case. It deliberately does not run
+the browser suite: that wants a Chromium download and twelve minutes, which is
+the wrong shape for a deploy hook and would make the gate something people switch
 off.
 
-And before trusting any branch build, **check what a non-production branch
-targets**. If a branch can reach the production Worker, an unmerged branch can
-land on a counter.
+#### What a branch build targets — answered
+
+This was flagged as an open question in the previous commit, on the reasonable
+fear that an unmerged branch could land on a counter. It cannot, and the reason
+is the table above: a non-production branch runs the **Version command**, not the
+deploy command, so it uploads a Worker version that sits in Version History with
+no traffic. `till.innovaearth.com` keeps serving whatever `main` last deployed.
+
+Two caveats, neither of them about traffic:
+
+- A version URL, if one is opened, runs against the **production resources** —
+  the real Supabase project, the real shops. It is a way to look at branch code,
+  not a sandbox to test destructively in.
+- **Worker Previews are not enabled** on this Worker (the dashboard still offers
+  the banner). Previews are the thing that would give a branch its own isolated
+  bindings. Until that is turned on, "preview" here means "an uploaded version",
+  which is a weaker promise than the word suggests.
 
 `public/_headers` carries the cache rules. The important one is `sw.js`, which
 must never be cached: the service worker is what decides when a tablet takes an
