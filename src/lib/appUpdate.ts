@@ -88,6 +88,15 @@ export function startUpdateWatch(): void {
 }
 
 /**
+ * How long to let the waiting worker take over before stopping waiting on it.
+ *
+ * Three seconds: long enough for a handover that is going to happen, short
+ * enough that a cashier who pressed a button is not left watching a screen
+ * that has not changed and wondering whether they pressed it.
+ */
+const TAKEOVER_MS = 3000;
+
+/**
  * Take the update.
  *
  * Activates the worker that is waiting and reloads the page onto it, so every
@@ -95,13 +104,86 @@ export function startUpdateWatch(): void {
  * precache — is what the till is running afterwards. Nobody has to refresh
  * anything by hand; pressing the button IS the refresh, and it is one press
  * because the cashier is the only one who knows this second is between sales.
+ *
+ * REPORTED FROM A LAPTOP AT THE SHOP: "I click on update when it appears and
+ * it doesn't do anything; however, I get the feature when I Shift+Cmd+R."
+ * Both halves of this used to be able to do nothing at all.
+ *
+ *   THE PLAIN RELOAD COULD NOT WORK. index.html is precached — it is in
+ *   globPatterns — so the service worker answers navigations out of its own
+ *   cache. location.reload() therefore asked the OLD worker for the OLD app
+ *   and got it: same page, same bundle, no visible effect. A hard reload is
+ *   the one thing that goes past the worker, which is exactly the asymmetry
+ *   that was reported. This path now removes the worker first, so the reload
+ *   has nobody left to serve it and must go to the network.
+ *
+ *   AND THE HANDOVER HAD NO END. apply(true) posts SKIP_WAITING and reloads
+ *   when the new worker takes control. If it never does — the worker was
+ *   already activated by an earlier hard reload, or it failed to install —
+ *   there was no timeout, no catch and no change on screen. A press that
+ *   silently failed looked exactly like a press that did nothing, on the one
+ *   control telling the shop an update exists.
+ *
+ * So: ask nicely, wait a bounded time, and if the worker has not taken over,
+ * take the update the blunt way rather than leaving the counter stuck on a
+ * version it has been told to move off.
  */
-export function applyUpdate(): void {
-  // No waiting worker to activate (a dev build, a browser that refused one, or
-  // a version that landed before this tab registered): a plain reload still
-  // fetches the new files rather than doing nothing at all.
-  if (apply && workerWaiting) void apply(true);
-  else window.location.reload();
+export async function applyUpdate(): Promise<void> {
+  if (apply && workerWaiting) {
+    const tookOver = await new Promise<boolean>((resolve) => {
+      if (!("serviceWorker" in navigator)) return resolve(false);
+      const sw = navigator.serviceWorker;
+      let settled = false;
+      const settle = (v: boolean) => {
+        if (settled) return;
+        settled = true;
+        sw.removeEventListener("controllerchange", onSwap);
+        resolve(v);
+      };
+      const onSwap = () => settle(true);
+      sw.addEventListener("controllerchange", onSwap);
+      window.setTimeout(() => settle(false), TAKEOVER_MS);
+      // A rejection here is not a reason to give up — the fallback below is
+      // what the press promised, and it runs either way.
+      void apply!(true).catch(() => {});
+    });
+    // The new worker is in charge, so a reload now is served from ITS
+    // precache. registerSW reloads too; calling it twice costs nothing and
+    // not calling it at all is how a press comes to do nothing.
+    if (tookOver) {
+      window.location.reload();
+      return;
+    }
+  }
+  await reloadFromNetwork();
+}
+
+/**
+ * A reload the service worker cannot answer.
+ *
+ * There is no way to ask for a hard reload from script, so the worker is
+ * unregistered instead: with no registration left, the navigation has nobody
+ * to intercept it and goes to the network, which is what Shift+Cmd+R does by
+ * hand. The caches are left alone deliberately — they are only ever reached
+ * THROUGH a worker, so an unregistered one makes them unreachable, and
+ * deleting them would throw away every cached photograph for nothing.
+ *
+ * The till is without a worker for the length of one navigation. The new page
+ * calls startUpdateWatch() and registers again, so it comes back offline-
+ * capable on its own; and a till that cannot take an update is worse off than
+ * one that is briefly online-only.
+ */
+async function reloadFromNetwork(): Promise<void> {
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      await reg?.unregister();
+    }
+  } catch {
+    // Best effort. A browser that refuses to unregister still gets the reload
+    // below, which is no worse than what this function replaced.
+  }
+  window.location.reload();
 }
 
 /**

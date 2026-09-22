@@ -8997,6 +8997,98 @@ test("a newer till announces itself instead of reloading under the cashier", asy
   await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
 });
 
+test("and pressing it actually takes the update", async ({ page }) => {
+  // Reported from a laptop at the shop: "I click on update when it appears and
+  // it doesn't do anything; however, I get the feature when I Shift+Cmd+R."
+  //
+  // index.html is precached, so the service worker answers navigations from
+  // its own cache: a plain location.reload() asked the OLD worker for the OLD
+  // app and got it. A hard reload is the one thing that goes past a worker,
+  // which is exactly the asymmetry that was reported. The press now takes the
+  // worker out of the way first, so the reload has nobody left to serve it.
+  //
+  // The button APPEARING was tested and what it DID was not, which is how a
+  // control that could not work shipped as the only thing telling a shop an
+  // update exists.
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // This harness registers no service worker — probed, not assumed: zero
+  // registrations, no controller. A till in a shop is always controlled by
+  // one, so the registration is stood in for here. Without the stub this test
+  // passes against the broken code, because "did the page reload" is true
+  // either way; what separates them is whether the worker was dealt with
+  // FIRST, and that needs something to observe.
+  await page.evaluate(() => {
+    sessionStorage.removeItem("pos.test.sw");
+    const sw = navigator.serviceWorker as unknown as {
+      getRegistration: () => Promise<unknown>;
+    };
+    sw.getRegistration = async () => {
+      sessionStorage.setItem("pos.test.sw", "asked");
+      // Deliberately not instant: looking a registration up takes a moment on
+      // a real device too, and the button has to hold its nerve meanwhile.
+      await new Promise((r) => setTimeout(r, 1500));
+      return {
+        unregister: async () => {
+          sessionStorage.setItem("pos.test.sw", "unregistered");
+          return true;
+        },
+      };
+    };
+  });
+
+  // A marker that cannot survive a navigation, so "did it reload" is a fact
+  // rather than an impression.
+  await page.evaluate(() => {
+    (window as unknown as { __alive?: boolean }).__alive = true;
+  });
+
+  // The signal a waiting worker raises, fired directly — a genuine worker
+  // update cannot be staged in a browser test. No real worker sits behind it,
+  // so this walks the fallback path: the one the laptop hit, and the one that
+  // used to hand a reload straight back to the service worker. The other path
+  // (a real worker taking over, and the three-second limit on waiting for it)
+  // cannot be staged here and is not claimed to be covered.
+  await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
+  const update = page.getByRole("button", { name: /Update/ });
+  await expect(update).toBeVisible();
+
+  // Dispatched rather than clicked: click() waits for the navigation it
+  // causes, and by the time it returns the page has reloaded and the button
+  // is gone — there is no moment left in which to observe it working.
+  await update.dispatchEvent("click");
+
+  // It says it is working. A button that looks identical while it unregisters
+  // a worker and reloads teaches the person pressing it that it is broken —
+  // which is what was reported, and half of why.
+  //
+  // By class, not by role: getByRole("button", { name: /Update/ }) matches
+  // the idle "↻ Update" and finds NOTHING against the accessible name
+  // "Updating…" — checked, not assumed, because a locator that quietly
+  // matches nothing is how an assertion comes to prove nothing.
+  const busy = page.locator(".head-update");
+  await expect(busy).toHaveText("Updating…");
+  await expect(busy).toBeDisabled();
+
+  // The worker was taken out of the way, and only then the reload.
+  await expect
+    .poll(() => page.evaluate(() => sessionStorage.getItem("pos.test.sw")))
+    .toBe("unregistered");
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => (window as unknown as { __alive?: boolean }).__alive === true
+        ),
+      { timeout: 15_000 }
+    )
+    .toBe(false);
+
+  // And the till came back up: the point of the press is a working newer
+  // till, not merely a navigation.
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toBeVisible();
+});
+
 test("and the phone says it too, since it goes just as stale", async ({ page }) => {
   // A phone is installed to a home screen and then opened from the home
   // screen forever — the same never-navigates problem as the till, on a

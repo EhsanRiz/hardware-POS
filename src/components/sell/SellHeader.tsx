@@ -1,7 +1,7 @@
 import InnovaMark from "../InnovaMark";
 import NoticeBell from "../NoticeBell";
 import { CalcIcon, CheckIcon, CloudOffIcon, SyncIcon } from "./Icons";
-import { applyUpdate, useUpdateReady } from "../../lib/appUpdate";
+import UpdateButton from "../UpdateButton";
 import { registerName } from "../../lib/device";
 import { roleTitle } from "../../lib/permissions";
 import { shopSettings } from "../../lib/settings";
@@ -64,7 +64,6 @@ export default function SellHeader({
   /** Open or close the floating calculator. */
   onCalculator?: () => void;
 }) {
-  const updateReady = useUpdateReady();
 
   return (
     <header className="sell-head">
@@ -149,20 +148,7 @@ export default function SellHeader({
             <CalcIcon />
           </button>
         )}
-        {/* Only when there is something to take. It is amber and it pulses,
-            because a fix that reaches the shop on Friday for a bug reported on
-            Tuesday might as well not have been written — and the cashier is
-            the only one who knows whether this second is between sales or in
-            the middle of one. */}
-        {updateReady && (
-          <button
-            className="head-update"
-            onClick={applyUpdate}
-            title="A newer till is ready. Takes a few seconds."
-          >
-            ↻ Update
-          </button>
-        )}
+        <UpdateButton title="A newer till is ready. Takes a few seconds." />
         <SyncChip
           online={online}
           pending={pending}

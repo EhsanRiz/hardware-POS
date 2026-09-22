@@ -10,7 +10,7 @@ import InstallButton from "./InstallButton";
 import AppMenu from "./AppMenu";
 import BiometricSwitch from "./BiometricSwitch";
 import NoticeBell from "./NoticeBell";
-import { applyUpdate, useUpdateReady } from "../lib/appUpdate";
+import UpdateButton from "./UpdateButton";
 import { can } from "../lib/permissions";
 import type { Notice } from "../lib/notices";
 import type { User } from "../lib/types";
@@ -55,7 +55,6 @@ export default function PhoneHome({
   const [menuOpen, setMenuOpen] = useState(false);
   // A phone is installed to a home screen and then never navigated, exactly
   // like the till — so it goes just as stale, and the same button fixes it.
-  const updateReady = useUpdateReady();
 
   const [figures, setFigures] = useState<PhoneSummary | null>(null);
   useEffect(() => {
@@ -114,15 +113,7 @@ export default function PhoneHome({
           {onNotice && (
             <NoticeBell notices={notices} onGo={onNotice} onOpen={onReadNotices} canPush />
           )}
-          {updateReady && (
-            <button
-              className="head-update"
-              onClick={applyUpdate}
-              title="A newer app is ready. Takes a few seconds."
-            >
-              ↻ Update
-            </button>
-          )}
+          <UpdateButton title="A newer app is ready. Takes a few seconds." />
           <button className="btn-line quiet" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
