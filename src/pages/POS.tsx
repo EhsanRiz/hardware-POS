@@ -76,7 +76,7 @@ import Quotes, { recallWarnings, sellableLines } from "../components/quotes/Quot
 import { useCamera } from "../lib/useCamera";
 import { hasBackOffice } from "../lib/menu";
 import {
-  defaultSoldAs, lineSoldAs, priceFor as packPrice, soldBothWays,
+  defaultSoldAs, lineKey, lineSoldAs, priceFor as packPrice, soldBothWays,
   unitLabel as packUnitLabel,
 } from "../lib/packs";
 import Stock from "../components/stock/Stock";
@@ -177,8 +177,9 @@ export default function POS() {
 
   const [term, setTerm] = useState("");
   const scanRef = useRef<HTMLInputElement>(null);
-  // Drives the just-scanned row tint, cleared on a timer.
-  const [freshId, setFreshId] = useState<string | null>(null);
+  // Drives the just-scanned row tint, cleared on a timer. Keyed by LINE, not
+  // by product: scanning a cut should not light up the roll above it.
+  const [freshKey, setFreshKey] = useState<string | null>(null);
   const freshTimer = useRef<number>();
 
   const [showParked, setShowParked] = useState(false);
@@ -336,6 +337,13 @@ export default function POS() {
   const [inspecting, setInspecting] = useState<{
     product: Product;
     mode: "add" | "edit";
+    /**
+     * Which line was opened, for "edit". Without it the card can only find a
+     * line by product, and a wire that is on the sale as a roll AND as a cut
+     * gives it two — so it would show the first, and Update would rewrite the
+     * first, whichever one the cashier actually tapped.
+     */
+    key?: string;
   } | null>(null);
   // The open quote this cart came from, so completing the sale closes it and
   // the paper trail joins up: QUO-000031 -> INV-000214.
@@ -359,7 +367,8 @@ export default function POS() {
   // "Save as quote" with nobody picked asks who it is for first. Null when
   // the question is not being asked; the text typed so far while it is.
   const [quoteName, setQuoteName] = useState<string | null>(null);
-  // The line a discount is being set on. The sale-level one has no product id.
+  // The line a discount is being set on, as a lib/packs key. Null when the
+  // dialog is aimed at the whole sale instead.
   const [discountLine, setDiscountLine] = useState<string | null>(null);
   const [showFailed, setShowFailed] = useState(false);
   // The header's pocket calculator. A toggle, so the same button dismisses it.
@@ -679,12 +688,12 @@ export default function POS() {
   );
   /** The same for the line whose discount box is open, if one is. */
   const lineFreeUpTo = useMemo(() => {
-    const l = lines.find((x) => x.product.id === discountLine);
+    const l = lines.find((x) => lineKey(x) === discountLine);
     if (!l) return null;
     // The rand half of a limit is a ceiling on the whole sale, so what is
     // already coming off elsewhere eats into what is left for this line.
     const elsewhere = lines
-      .filter((x) => x.product.id !== discountLine)
+      .filter((x) => lineKey(x) !== discountLine)
       .reduce((sum, x) => sum + (x.discount ?? 0), 0);
     return staffLineCeiling(user, priceOf(l) * l.qty, elsewhere + discount);
   }, [lines, discountLine, user, priceOf, discount]);
@@ -711,23 +720,49 @@ export default function POS() {
 
     // The tint decays after ~1.2s: long enough to pull the eye to the new line,
     // short enough that it is gone before the next scan.
-    setFreshId(p.id);
+    setFreshKey(lineKey({ product: p, soldAs: want }));
     window.clearTimeout(freshTimer.current);
-    freshTimer.current = window.setTimeout(() => setFreshId(null), 1200);
+    freshTimer.current = window.setTimeout(() => setFreshKey(null), 1200);
   }
 
-  function setQty(productId: string, qty: number, soldAs?: SoldAs) {
-    setLines((prev) =>
-      prev.map((l) =>
-        l.product.id === productId
-          ? { ...l, qty, ...(soldAs ? { soldAs } : {}) }
-          : l
-      )
-    );
+  /** Change how many are on ONE line, named by lib/packs' key. */
+  function setQty(key: string, qty: number) {
+    setLines((prev) => prev.map((l) => (lineKey(l) === key ? { ...l, qty } : l)));
   }
 
-  function removeLine(productId: string) {
-    setLines((prev) => prev.filter((l) => l.product.id !== productId));
+  /**
+   * The quantity, and possibly the way it is being bought.
+   *
+   * Opening a line and switching it from a 50 m roll to a cut is not a change
+   * to that line — it is a different line, at a different price, and the key
+   * moves with it. So the old one goes and the new mode takes the quantity,
+   * merging into a line that is already on that mode rather than making a
+   * second one. Editing REPLACES, which is what the detail card promises.
+   */
+  function updateLine(fromKey: string, qty: number, soldAs: SoldAs) {
+    setLines((prev) => {
+      const was = prev.find((l) => lineKey(l) === fromKey);
+      if (!was) return prev;
+      const moved: CartLine = { ...was, qty, soldAs };
+      const toKey = lineKey(moved);
+      if (toKey === fromKey) {
+        return prev.map((l) => (lineKey(l) === fromKey ? moved : l));
+      }
+      // Already a line on the mode being switched to: fold into it and drop
+      // the old one, rather than leaving the sale with two lines of one wire.
+      if (prev.some((l) => lineKey(l) === toKey)) {
+        return prev
+          .filter((l) => lineKey(l) !== fromKey)
+          .map((l) => (lineKey(l) === toKey ? { ...l, qty } : l));
+      }
+      // Otherwise it takes the old line's place — replaced where it sits, so a
+      // line does not jump to the bottom of the sale for being re-priced.
+      return prev.map((l) => (lineKey(l) === fromKey ? moved : l));
+    });
+  }
+
+  function removeLine(key: string) {
+    setLines((prev) => prev.filter((l) => lineKey(l) !== key));
     scanRef.current?.focus();
   }
 
@@ -763,7 +798,7 @@ export default function POS() {
     setDiscountReason(null);
     setApproverPin(null);
     setApprovalCode(null);
-    setFreshId(null);
+    setFreshKey(null);
     setFromQuote(null);
     setDelivery(null);
     setTerm("");
@@ -1855,7 +1890,7 @@ export default function POS() {
           <LineItems
             lines={lines}
             trade={trade}
-            freshId={freshId}
+            freshKey={freshKey}
             onSetQty={setQty}
             onRemove={removeLine}
             // Gated the same as the Discount button below it. Both take money
@@ -1864,7 +1899,9 @@ export default function POS() {
             onDiscountLine={
               can(user, "apply_discount") ? (id) => setDiscountLine(id) : undefined
             }
-            onInspect={(p) => setInspecting({ product: p, mode: "edit" })}
+            onInspect={(l) =>
+              setInspecting({ product: l.product, mode: "edit", key: lineKey(l) })
+            }
           />
 
           <div className="sell-actions">
@@ -2059,16 +2096,27 @@ export default function POS() {
           product={inspecting.product}
           trade={trade}
           mode={inspecting.mode}
-          inSale={
-            lines.find((l) => l.product.id === inspecting.product.id)?.qty ?? 0
+          // Asked per mode, because "3 already on this sale" is a different
+          // number for the roll and for the cut, and the card knows which one
+          // the cashier is looking at. Editing pins it to the line that was
+          // actually opened.
+          inSale={(m) =>
+            lines.find((x) =>
+              inspecting.key != null
+                ? lineKey(x) === inspecting.key
+                : x.product.id === inspecting.product.id && lineSoldAs(x) === m
+            )?.qty ?? 0
           }
           inSaleSoldAs={(() => {
-            const l = lines.find((x) => x.product.id === inspecting.product.id);
+            if (inspecting.key == null) return undefined;
+            const l = lines.find((x) => lineKey(x) === inspecting.key);
             return l ? lineSoldAs(l) : undefined;
           })()}
           onConfirm={(p, qty, soldAs) => {
-            if (inspecting.mode === "edit") {
-              setQty(p.id, qty, soldAs);
+            if (inspecting.mode === "edit" && inspecting.key != null) {
+              // May move the line to the other mode, which re-prices it and
+              // changes its key — updateLine owns that.
+              updateLine(inspecting.key, qty, soldAs);
             } else {
               addProduct(p, qty, soldAs);
               // The query has done its job; leaving it behind pollutes the next
@@ -2170,7 +2218,7 @@ export default function POS() {
       {discountLine && (
         <DiscountModal
           subtotal={(() => {
-            const l = lines.find((x) => x.product.id === discountLine);
+            const l = lines.find((x) => lineKey(x) === discountLine);
             return l ? priceOf(l) * l.qty : 0;
           })()}
           // The line's own cap. If a blanket discount is already on the sale it
@@ -2179,7 +2227,7 @@ export default function POS() {
           // line discount first, which is the order a counter works in, is
           // covered exactly.
           ceiling={(() => {
-            const l = lines.find((x) => x.product.id === discountLine);
+            const l = lines.find((x) => lineKey(x) === discountLine);
             return l ? cartLineCap(l, priceOf(l)) : null;
           })()}
           approvalFreeUpTo={limited ? lineFreeUpTo : undefined}
@@ -2191,10 +2239,10 @@ export default function POS() {
             // — and the words so somebody reading the sale back in a month can
             // see what was agreed and not just that something was.
             const id = discountLine;
-            const was = lines.find((l) => l.product.id === id);
+            const was = lines.find((l) => lineKey(l) === id);
             setLines((prev) =>
               prev.map((l) =>
-                l.product.id === id
+                lineKey(l) === id
                   ? {
                       ...l,
                       discount: amount,
@@ -2209,7 +2257,7 @@ export default function POS() {
               undoDiscount.current = () =>
                 setLines((prev) =>
                   prev.map((l) =>
-                    l.product.id === id
+                    lineKey(l) === id
                       ? {
                           ...l,
                           discount: was?.discount,

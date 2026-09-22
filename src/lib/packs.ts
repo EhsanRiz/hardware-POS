@@ -46,6 +46,23 @@ export function lineSoldAs(l: Pick<CartLine, "product" | "soldAs">): SoldAs {
 }
 
 /**
+ * What identifies a line in the basket.
+ *
+ * A product id used to be enough, because a product could only be in the sale
+ * one way. It cannot be any more: a 6 m length and 2.4 m cut off the same pipe
+ * are two lines carrying the same product id, and everything that addresses a
+ * line by product alone hits both — one quantity box drives two lines, one ×
+ * deletes two, one discount lands on whichever came first.
+ *
+ * So the mode is part of the name. Anything that points at a line — the
+ * quantity box, the remove key, the discount dialog, the React key, the tint
+ * on a just-scanned row — points with one of these.
+ */
+export function lineKey(l: Pick<CartLine, "product" | "soldAs">): string {
+  return `${l.product.id}|${lineSoldAs(l)}`;
+}
+
+/**
  * The price of one of whatever is being bought.
  *
  * Mirrors price_for/price_cut_for (0002, 0107): trade falls back to retail

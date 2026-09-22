@@ -23,7 +23,7 @@ const js = ts.transpileModule(src, {
 const exports_ = {};
 new Function("exports", "require", js)(exports_, () => ({}));
 const {
-  soldBothWays, defaultSoldAs, lineSoldAs, priceFor, baseQty,
+  soldBothWays, defaultSoldAs, lineSoldAs, lineKey, priceFor, baseQty,
   allowsFraction, unitLabel, qtyLabel, qtyPrompt,
 } = exports_;
 
@@ -72,6 +72,29 @@ check("unless it says so", lineSoldAs({ product: pipe, soldAs: "unit" }), "unit"
 // price it off a column that is now null.
 check("a mode on an ordinary item is ignored",
   lineSoldAs({ product: padlock, soldAs: "pack" }), "unit");
+
+// What names a line in the basket. A product id stopped being enough the day
+// one product could be in the sale two ways: everything that pointed at a line
+// by product — the quantity box, the × key, the discount, the React key — hit
+// both lines at once.
+const pipeId = { ...pipe, id: "p8" };
+check("a whole line and a cut line are different lines",
+  lineKey({ product: pipeId, soldAs: "pack" }) ===
+  lineKey({ product: pipeId, soldAs: "unit" }), false);
+check("the same line is the same line",
+  lineKey({ product: pipeId, soldAs: "unit" }),
+  lineKey({ product: { ...pipeId }, soldAs: "unit" }));
+// A line saved before 0107 carries no mode and must land on the whole-length
+// key, or restoring a parked sale would move it onto the cut price.
+check("no mode keys as whole",
+  lineKey({ product: pipeId }), lineKey({ product: pipeId, soldAs: "pack" }));
+// An ordinary item has exactly one line, however a stray mode got onto it.
+check("an ordinary item keys the same either way",
+  lineKey({ product: { ...padlock, id: "p1" }, soldAs: "pack" }),
+  lineKey({ product: { ...padlock, id: "p1" }, soldAs: "unit" }));
+check("and two products never collide",
+  lineKey({ product: pipeId, soldAs: "unit" }) ===
+  lineKey({ product: { ...wire, id: "p3" }, soldAs: "unit" }), false);
 
 // The money. Four prices, and trade falls down the SAME column.
 check("a whole length, retail", priceFor(pipe, false, "pack"), 180);

@@ -11230,6 +11230,151 @@ test("a length and a cut off one are two lines, not one", async ({ page }) => {
   await expect(page.locator(".total-row .fig")).toContainText("256.00");
 });
 
+test("the cart table prices a cut line at the cut rate", async ({ page }) => {
+  // Reported from the counter, with a photograph: a line badged CUT, quantity
+  // 2, reading UNIT 550.00 and AMOUNT 1 100.00 — the whole-roll price on a
+  // line the cashier had cut to 2 m.
+  //
+  // LineItems had kept its own priceOf, reading price_trade/price_retail
+  // straight off the product. That was right for exactly as long as a product
+  // had one price. The total underneath asked lib/packs and charged R120, so
+  // the same basket showed two answers and the one in the biggest type was
+  // wrong. Every existing pack test asserted the TOTAL and passed over it.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+
+  const row = page.locator('[data-testid="line-row"]').first();
+  // Whole: R180 the length, and the rate says per LENGTH — R180/m and R180 per
+  // 6 m length are the same digits and a factor of six apart.
+  await expect(row.locator(".line-unit")).toHaveText("180.00");
+  await expect(row.locator(".line-amt")).toContainText("180.00");
+  await expect(row.locator(".line-rate")).toContainText("180.00/6 m length");
+  await expect(row.locator(".line-tag")).toHaveText("6 m length");
+
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2");
+  await card.getByRole("button", { name: /Update sale/ }).click();
+
+  // Cut: R38 the metre, on the line as well as in the total.
+  await expect(row.locator(".line-unit")).toHaveText("38.00");
+  await expect(row.locator(".line-amt")).toContainText("76.00");
+  await expect(row.locator(".line-rate")).toContainText("38.00/m");
+  await expect(row.locator(".line-tag")).toHaveText("Cut");
+  await expect(page.locator(".total-row .fig")).toContainText("76.00");
+});
+
+test("the shelf count falls by what the sale actually takes", async ({ page }) => {
+  // Two 6 m lengths is twelve metres off the rack, not two. The row read
+  // l.qty straight, so a sale of two lengths claimed to move a 120 m rack to
+  // 118 — and the cashier watching the count is the only person who would
+  // ever notice the shop had promised stock it had already sold.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  const row = page.locator('[data-testid="line-row"]').first();
+  await expect(row.locator(".line-stock")).toHaveText("stock 120 → 114");
+
+  await page.getByLabel("Quantity of Pipe 20mm (6 m length)").fill("2");
+  await page.getByLabel("Quantity of Pipe 20mm (6 m length)").blur();
+  await expect(row.locator(".line-stock")).toHaveText("stock 120 → 108");
+
+  // And when the same pipe is on the sale BOTH ways, the two lines draw down
+  // one rack. Each showing the count after itself would describe a sale that
+  // never happened — two rows both claiming to take 120 to 108.
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe");
+  await page.locator(".result-row").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2.5");
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+  // 12 m of lengths plus 2.5 m cut is 14.5 m, and BOTH rows say so.
+  for (const r of await page.locator('[data-testid="line-row"]').all()) {
+    await expect(r.locator(".line-stock")).toHaveText("stock 120 → 105.5");
+  }
+});
+
+test("a length and a cut off one are edited, discounted and removed apart", async ({ page }) => {
+  // The other half of "two lines, not one". They were two lines on screen and
+  // one line to every control: the quantity box, the × key and the % key all
+  // named their line by PRODUCT id, so each one drove both rows. Typing 3 into
+  // the cut put 3 lengths on the sale as well; pressing × removed the pair.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe");
+  await page.locator(".result-row").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2");
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(2);
+
+  const whole = page.getByLabel("Quantity of Pipe 20mm (6 m length)");
+  const cut = page.getByLabel("Quantity of Pipe 20mm (cut)");
+
+  // Three metres cut. The length line must still be one length.
+  await cut.fill("3");
+  await cut.blur();
+  await expect(cut).toHaveValue("3");
+  await expect(whole).toHaveValue("1");
+  // R180 + 3 m at R38 is R294.
+  await expect(page.locator(".total-row .fig")).toContainText("294.00");
+
+  // Money off the CUT line only. Aimed by product, it landed on whichever
+  // line came first — and the customer who was promised it got nothing off.
+  await page.getByRole("button", { name: "Discount Pipe 20mm (cut)" }).click();
+  await page.getByLabel("Discount amount").fill("14");
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  const rows = page.locator('[data-testid="line-row"]');
+  await expect(rows.filter({ hasText: "Cut" })).toContainText("−14.00");
+  await expect(rows.filter({ hasText: "6 m length" })).not.toContainText("−14.00");
+  await expect(page.locator(".total-row .fig")).toContainText("280.00");
+
+  // And × takes one row, not the pair.
+  await page.getByRole("button", { name: "Remove Pipe 20mm (cut)" }).click();
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(page.locator(".line-tag")).toHaveText("6 m length");
+  await expect(page.locator(".total-row .fig")).toContainText("180.00");
+});
+
+test("switching a line to cut re-prices it rather than adding a second", async ({ page }) => {
+  // Opening a line and changing how it is sold moves it to a different price,
+  // so it becomes a different LINE — a key that has to move with it. Getting
+  // this wrong either leaves the old row behind at the old price or drops the
+  // edit on the floor.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("4");
+  await card.getByRole("button", { name: /Update sale/ }).click();
+
+  await expect(page.locator('[data-testid="line-row"]')).toHaveCount(1);
+  await expect(page.locator(".line-tag")).toHaveText("Cut");
+  await expect(page.locator(".total-row .fig")).toContainText("152.00");
+
+  // Opening it again offers the mode it is actually on, not the default. It
+  // opened on "whole" once, which quietly repriced a cut line at R180 the
+  // moment somebody looked at it to check the quantity.
+  await page.locator(".line-desc-btn").first().click();
+  await expect(
+    card.getByRole("group", { name: "How it is sold" })
+      .getByRole("button", { name: /Cut to length/ })
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(card.getByLabel("How many Pipe 20mm")).toHaveValue("4");
+});
+
 test("the slip says which way the pipe went out", async ({ page }) => {
   // "2 x 6 m length" and "12 m" are the same pipe and very different money. A
   // slip that does not say cannot be used to price a return, and the customer

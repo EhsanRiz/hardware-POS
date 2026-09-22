@@ -51,8 +51,15 @@ export default function ProductDetail({
    * and being offered "add another" is how a sale ends up with eight padlocks.
    */
   mode: "add" | "edit";
-  /** How many of this product the sale already carries. */
-  inSale: number;
+  /**
+   * How many of this product the sale already carries, ON A GIVEN MODE.
+   *
+   * A function rather than a number because the answer depends on which way
+   * the card is currently set to sell it, and that is this component's state.
+   * A wire can be on the sale as two rolls and as 3.5 m cut at the same time;
+   * one number could only ever describe one of them.
+   */
+  inSale: (soldAs: SoldAs) => number;
   /** How the line already in the sale is being bought, when editing one. */
   inSaleSoldAs?: SoldAs;
   onConfirm: (p: Product, qty: number, soldAs: SoldAs) => void;
@@ -128,9 +135,14 @@ export default function ProductDetail({
     };
   }, [p.id, p.image_url, p.image_count]);
 
-  const [qtyText, setQtyText] = useState(() =>
-    String(mode === "edit" && inSale > 0 ? inSale : 1)
-  );
+  // What this mode already has on the sale, re-asked whenever the tap moves.
+  const onSaleNow = inSale(soldAs);
+  const [qtyText, setQtyText] = useState(() => {
+    // The line's own quantity when editing one: opening a line to change it
+    // and being shown "1" is how a sale of six lengths becomes a sale of one.
+    const n = inSale(inSaleSoldAs ?? defaultSoldAs(p));
+    return String(mode === "edit" && n > 0 ? n : 1);
+  });
   const qtyRef = useRef<HTMLInputElement>(null);
 
   const typed = Number(qtyText.replace(",", "."));
@@ -350,10 +362,10 @@ export default function ProductDetail({
             {/* Told, not enforced: the same item can legitimately be rung up
                 twice on one sale, and a cashier who cannot see the first line
                 from here should not have to guess. */}
-            {mode === "add" && inSale > 0 && (
+            {mode === "add" && onSaleNow > 0 && (
               <span className="detail-note">
-                {quantity(inSale, p.unit_code)} already on this sale — this adds
-                to it.
+                {qtyLabel(p, soldAs, onSaleNow)} already on this sale — this
+                adds to it.
               </span>
             )}
           </div>
