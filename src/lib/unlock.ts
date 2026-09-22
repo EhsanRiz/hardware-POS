@@ -65,18 +65,36 @@ export function forgetPins(): void {
 }
 
 /**
- * A phone's owner has just proved their PIN — at sign-in, or at the lock
- * screen after the phone was put away — so the doors they are entitled to
- * open stand open.
+ * Somebody has just proved their PIN — signing in, or coming back to a locked
+ * screen — so the doors they are entitled to open stand open.
  *
- * A phone is one person's, which is the whole difference: the till is shared
- * and watched, and its doors are asked for on their own. Here the PIN was
- * proved against the server moments ago, by the same check the door would
- * make; asking for the identical six digits twice in ten seconds proves
- * nothing except that the app was not paying attention. Permissions are
- * untouched by any of this — the server still decides what each call may do.
+ * The PIN was checked against the server moments ago by the same call the door
+ * would make. Asking for the identical six digits twice in ten seconds proves
+ * nothing except that the app was not paying attention, and the counter said
+ * so: "too many PIN requirements". Permissions are untouched by any of this —
+ * the server still decides what each call may do, and every RPC behind these
+ * doors re-verifies the PIN anyway.
+ *
+ * THE BACK OFFICE IS DIFFERENT ON A SHARED TILL, and that is the shop's own
+ * decision rather than an accident. A phone is one person's: proving the PIN
+ * opens everything they hold, because there is nobody else holding it. A till
+ * is passed between people all day, and the room with the takings, the staff
+ * and the settings in it keeps a deliberate speed bump. The stock room does
+ * not — counting shelves is the job, not a privilege.
+ *
+ * What protects an unattended till is not these doors: anyone standing at a
+ * signed-in one can already ring up a sale. It is the idle lock in
+ * lib/idleLock, which shuts the whole thing after ten minutes. That is the
+ * trade this makes — one guard, done properly, instead of a toll charged on
+ * every screen.
  */
-export function ownerProved(user: User, pin: string): void {
-  if (canAny(user, [...BACK_OFFICE])) remember("admin", pin);
+export function pinProved(
+  user: User,
+  pin: string,
+  device: "personal" | "till"
+): void {
   if (can(user, "manage_inventory")) remember("stock", pin);
+  if (device === "personal" && canAny(user, [...BACK_OFFICE])) {
+    remember("admin", pin);
+  }
 }

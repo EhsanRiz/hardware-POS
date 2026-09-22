@@ -27,7 +27,7 @@ const stubs = {
 };
 const unlock = {};
 new Function("exports", "require", js)(unlock, (m) => stubs[m] ?? {});
-const { remember, recall, forgetPins, ownerProved } = unlock;
+const { remember, recall, forgetPins, pinProved } = unlock;
 
 let now = 1_700_000_000_000;
 Date.now = () => now;
@@ -66,20 +66,44 @@ check("and the stock room", recall("stock"), null);
 
 // A phone's owner opens the doors their permissions reach, and no others.
 const manager = { role: "admin", permissions: [] };
-ownerProved(manager, "123456");
+pinProved(manager, "123456", "personal");
 check("a manager's own PIN opens the back office", recall("admin"), "123456");
 check("and the stock room", recall("stock"), "123456");
 
 forgetPins();
 const counterHand = { role: "employee", permissions: ["take_payments", "apply_discount"] };
-ownerProved(counterHand, "567890");
+pinProved(counterHand, "567890", "personal");
 check("somebody with only the counter opens neither: back office", recall("admin"), null);
 check("somebody with only the counter opens neither: stock room", recall("stock"), null);
 
 forgetPins();
 const storeman = { role: "employee", permissions: ["take_payments", "manage_inventory"] };
-ownerProved(storeman, "111111");
+pinProved(storeman, "111111", "personal");
 check("the storeman's PIN opens the stock room", recall("stock"), "111111");
+
+// A SHARED TILL KEEPS ONE DOOR AND DROPS THE OTHER.
+//
+// Reported from the counter as "too many PIN requirements". Signing in proves
+// the PIN against the server; asking for the identical six digits at the stock
+// room ninety seconds later proves nothing except that the app was not paying
+// attention. The back office is the exception the shop asked for — it is the
+// room with the takings, the staff and the settings in it — and on a till it
+// still asks. What protects an unattended till is the idle lock, not these.
+forgetPins();
+pinProved(manager, "123456", "till");
+check("on a till the stock room opens on the sign-in", recall("stock"), "123456");
+check("but the back office still asks", recall("admin"), null);
+
+// The same manager on their own phone: nobody else is holding it.
+forgetPins();
+pinProved(manager, "123456", "personal");
+check("on a phone the back office opens too", recall("admin"), "123456");
+
+// Permissions are untouched by any of this. Somebody who may not count stock
+// does not get the stock room because the device is a till.
+forgetPins();
+pinProved(counterHand, "567890", "till");
+check("a counter hand still opens no stock room on a till", recall("stock"), null);
 
 if (failures) {
   console.error(`${failures} failure(s)`);

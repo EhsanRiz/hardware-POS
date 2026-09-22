@@ -14,10 +14,18 @@ import { cacheGet, cacheRemove, cacheSet } from "./localCache";
  * Not instant, deliberately. Two of the phone's errands — photographing a
  * supplier's quotation, photographing a shelf — can send the browser to the
  * camera, and a lock that fired on every one of those would be a PIN after
- * every picture. A minute is longer than a camera trip and far shorter than a
- * phone spends in a pocket.
+ * every picture.
+ *
+ * THIRTY MINUTES, up from one. A minute cleared the camera trip and nothing
+ * else: answer a call, walk to the yard, serve somebody at the counter, and
+ * the phone wanted six digits again. That was a large part of what the shop
+ * meant by "too many PIN requirements". Half an hour is longer than any
+ * errand and still far shorter than a phone spends in a pocket overnight,
+ * which is the case this exists for. The till has its own, shorter window
+ * (lib/idleLock) because it is shared and sits in the open; a phone is one
+ * person's and stays with them.
  */
-const AWAY_MS = 60_000;
+const AWAY_MS = 30 * 60_000;
 
 /** When the app was last hidden. On disk, because of the reload case below. */
 const HIDDEN_KEY = "device.hiddenAt";

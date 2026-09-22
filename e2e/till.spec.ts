@@ -4250,11 +4250,8 @@ test("a delivery is booked in against a reference and the shelves update", async
 
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  // Entering Stock costs a PIN, even for a manager already signed in.
-  const gate = page.getByRole("dialog", { name: "Stock" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
 
   await expect(page.getByRole("button", { name: /Running low/ })).toBeVisible();
 
@@ -5402,10 +5399,8 @@ test("a delivery is counted in by scanning, gun or camera, one more per read", a
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  const gate = page.getByRole("dialog", { name: "Stock" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: /Receive a delivery/ }).click();
 
   // The gun types the code into the search box and presses Enter: one more
@@ -5459,10 +5454,8 @@ test("a delivery of something the shelf has never counted starts counting it", a
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  const gate = page.getByRole("dialog", { name: "Stock" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: /Receive a delivery/ }).click();
 
   // The glue is in the catalogue with that barcode on it. Scanned at the back
@@ -6949,11 +6942,8 @@ test("a stock take corrects the shelf, and a sale during the count still counts"
 
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  // Entering Stock costs a PIN, even for a manager already signed in.
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: "Stock take" }).click();
   await page.getByRole("button", { name: "Start a count" }).click();
 
@@ -7002,11 +6992,8 @@ test("a line nobody counted is left exactly as it was", async ({ page }) => {
 
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  // Entering Stock costs a PIN, even for a manager already signed in.
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: "Stock take" }).click();
   await page.getByRole("button", { name: "Start a count" }).click();
   await page.locator("tr.acc-row", { hasText: "CNT-000001" })
@@ -7313,10 +7300,8 @@ test("the back office and the calculator open from the stock room, not only from
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN here any more: the sign-in proved it. See "the stock room opens on
+  // the sign-in, but the back office still asks".
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
 
   // Accounts, Quotes, Deliveries and Stock return early — above the point in
@@ -7344,10 +7329,8 @@ test("tapping Count by mistake can be undone without touching the shelf", async 
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
 
   const row = page.locator("tr", { hasText: "Twin & Earth 2.5mm 100m" }).first();
   await row.getByRole("button", { name: "Count" }).click();
@@ -7372,10 +7355,8 @@ test("a scanned code goes straight to its line, and the sheet says what the shor
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: "Stock take" }).click();
   await page.getByRole("button", { name: "Start a count" }).click();
   await page.locator("tr.acc-row", { hasText: "CNT-000001" })
@@ -7589,10 +7570,8 @@ test("the department drives the list, and two sheets cannot be open over the sam
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  for (const d of USERS.manager.pin.split("")) {
-    await page.getByRole("dialog", { name: "Stock" })
-      .locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: "Stock take" }).click();
 
   // The button says what it is about to do. "Start a count" beside a list of
@@ -7945,7 +7924,7 @@ async function putAway(page: Page, seconds: number) {
 
 test("a phone put away asks for its owner's PIN before anything else", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
-  await putAway(page, 90);
+  await putAway(page, 1900);
 
   // Not a panel over the errands — they must not be readable, because somebody
   // who is not the owner may be holding the handset.
@@ -8016,7 +7995,7 @@ test("a face brings back a phone that was only put in a pocket", async ({ page }
   await turnOnFaceId(page);
 
   // Pocket: the face is the way in, and no PIN is typed.
-  await putAway(page, 90);
+  await putAway(page, 1900);
   await expect(page.locator(".phone-lock")).toBeVisible();
   await page.getByRole("button", { name: /Unlock with Face ID/i }).click();
   await expect(page.locator(".phone-home-who")).toBeVisible();
@@ -8029,7 +8008,7 @@ test("a face that does not match leaves the keypad, and the keypad still works",
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
   await turnOnFaceId(page);
 
-  await putAway(page, 90);
+  await putAway(page, 1900);
   await page.getByRole("button", { name: /Unlock with Face ID/i }).click();
   // Still locked, and told off for nothing: a refusal is somebody choosing
   // the keypad. The keypad is what lets them back in.
@@ -8052,7 +8031,7 @@ test("a phone with no sensor is never offered a face", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   // ...and not on the lock screen to use.
-  await putAway(page, 90);
+  await putAway(page, 1900);
   await expect(page.locator(".phone-lock")).toBeVisible();
   await expect(page.getByRole("button", { name: /Face ID/i })).toHaveCount(0);
 });
@@ -8148,7 +8127,7 @@ test("Face ID can be turned off again from the same menu", async ({ page }) => {
   await box.uncheck();
   await page.keyboard.press("Escape");
 
-  await putAway(page, 90);
+  await putAway(page, 1900);
   await expect(page.locator(".phone-lock")).toBeVisible();
   await expect(page.getByRole("button", { name: /Unlock with Face ID/i })).toHaveCount(0);
   for (const d of USERS.manager.pin.split("")) {
@@ -8168,10 +8147,14 @@ test("a phone glanced away from does not lock", async ({ page }) => {
   await expect(page.locator(".phone-home-who")).toBeVisible();
 });
 
-test("a till is not locked by being left alone", async ({ page }) => {
-  // The counter is watched, shared, and takes money all day. A PIN prompt in
-  // front of a queue because nobody touched it for a minute is not security,
-  // it is a jam.
+test("a till is not locked by a short quiet spell", async ({ page }) => {
+  // The counter takes money all day and a PIN prompt in front of a queue
+  // because nobody touched it for a minute is not security, it is a jam.
+  //
+  // The till DOES lock now, at ten minutes — see the test below. That lock is
+  // what paid for dropping the stock room's door, because anybody standing at
+  // a signed-in till can already ring up a sale, so the doors were charging
+  // six digits to protect nothing. Five minutes is still a quiet spell.
   await pairAndSignIn(page, USERS.manager.pin);
   await putAway(page, 300);
 
@@ -8179,11 +8162,75 @@ test("a till is not locked by being left alone", async ({ page }) => {
   await page.waitForSelector('input[placeholder*="Scan barcode"]');
 });
 
+test("the stock room opens on the sign-in, but the back office still asks", async ({ page }) => {
+  // Reported from the counter: "too many PIN requirements". They were right.
+  // Signing in proves the PIN against the server; asking for the identical six
+  // digits at the stock room ninety seconds later proves nothing except that
+  // the app was not paying attention — and every call behind that door
+  // re-verifies the PIN server-side anyway.
+  //
+  // The back office is the exception the shop chose: the room with the
+  // takings, the staff and the settings in it keeps its speed bump on a till
+  // that is passed between people all day.
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  // Straight in. No pad, no six digits.
+  await expect(page.getByRole("dialog", { name: "Stock" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+
+  // And Manage still asks, which is the half that did not change.
+  await page.getByRole("button", { name: "Manage" }).click();
+  await expect(page.getByRole("dialog", { name: "Manage" })).toBeVisible();
+  await expect(page.getByText(/Enter your PIN to open the back office/i))
+    .toBeVisible();
+});
+
+test("the till locks itself when nobody has touched it, and the sale survives", async ({ page }) => {
+  // The guard that pays for the door coming off the stock room. Anybody
+  // standing at a signed-in till can already ring up a sale under the
+  // cashier's name, so those doors were charging six digits to protect
+  // nothing. This protects the thing they were standing in for.
+  // Mocked BEFORE the app boots, because Playwright only controls timers
+  // created after install and the idle timer starts at mount. Reloading into
+  // a mocked clock instead does not work: a reload PARKS the open sale, so
+  // the basket would be gone for a reason that has nothing to do with the
+  // lock, and the test would be quietly checking the wrong thing.
+  await page.clock.install();
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  // A sale in progress, so the cost of locking is real — a basket lost in
+  // front of a customer is worse than any PIN.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  await page.clock.fastForward(11 * 60 * 1000);
+
+  // Nothing behind it is reachable — not the cart, not the menu.
+  await expect(page.locator(".phone-lock")).toBeVisible();
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+  await expect(page.locator(".line-desc")).toHaveCount(0);
+
+  // The same person, their own PIN, and the basket is exactly where it was.
+  for (const d of USERS.manager.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  // And the doors it stands for opened again with it.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  await expect(page.getByRole("dialog", { name: "Stock" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+});
+
 test("a locked phone with no line still answers a price", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
   be.offline = true;
   await page.context().setOffline(true);
-  await putAway(page, 90);
+  await putAway(page, 1900);
 
   // The PIN cannot be proved without the line, and nothing on the device is
   // kept to prove it against. Refusing everything would brick the phone in the
@@ -9129,7 +9176,7 @@ test("a newer app announced while the phone is locked is still offered when it o
 
   // Put away first, so PhoneHome is gone when the news arrives — the cold
   // start in miniature, and the commonest path on a phone in a pocket.
-  await putAway(page, 90);
+  await putAway(page, 1900);
   await expect(page.locator(".phone-lock")).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event("pos:update-ready")));
 
@@ -10337,10 +10384,8 @@ test("the delivery screen shows the delivery, and a line scanned by mistake come
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByRole("navigation", { name: "Sections" })
     .getByRole("button", { name: "Stock" }).click();
-  const gate = page.getByRole("dialog", { name: "Stock" });
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // No PIN at this door any more: the sign-in proved it. See "the stock room
+  // opens on the sign-in, but the back office still asks".
   await page.getByRole("button", { name: /Receive a delivery/ }).click();
 
   // Nothing scanned, nothing listed — not the whole shop.
@@ -11214,46 +11259,38 @@ test("the back office asks for YOUR PIN, and means it", async ({ page }) => {
   await expect(page.locator(".admin-screen")).toBeVisible();
 });
 
-test("the stock room asks for YOUR PIN too, not just any that would open it", async ({ page }) => {
-  // Reported from the shop the same day as the back office: the storeman
-  // tapped Stock, was asked for a PIN, entered the manager's, and was let in.
-  // It proved only that the PIN belonged to SOMEBODY holding the inventory
-  // right — and every call inside then ran as him.
+test("the stock room runs on the PIN its user signed in with, never a borrowed one", async ({ page }) => {
+  // Reported from the shop once: the storeman tapped Stock, was asked for a
+  // PIN, entered the MANAGER's, and was let in — proving only that the PIN
+  // belonged to somebody holding the inventory right, while every call inside
+  // then ran as him.
+  //
+  // That door is gone on a till, because the shop asked for fewer PINs and it
+  // was charging six digits to protect nothing: the sign-in already proved the
+  // PIN, and proved it belongs to THIS person. So the borrowed-PIN route is
+  // not closed here any more, it has no entrance — the only credential in play
+  // is the one the sign-in verified.
+  //
+  // The same property is still tested at the door that remains: see "the back
+  // office asks for YOUR PIN, and means it". This asserts the two halves that
+  // replaced it.
   await pairAndSignIn(page, USERS.storeman.pin);
   const nav = page.getByRole("navigation", { name: "Sections" });
   await nav.getByRole("button", { name: "Stock", exact: true }).click();
 
-  const gate = page.getByRole("dialog", { name: "Stock" });
-  await expect(gate).toBeVisible();
-  for (const d of USERS.manager.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
-  await expect(gate.getByText(/not your PIN/i)).toBeVisible();
-  // Still shut: the stock room never opened on somebody else's credentials.
-  await expect(nav.getByRole("button", { name: "Stock", exact: true }))
-    .not.toHaveAttribute("aria-current", "page");
-
-  // Her own opens it — the room is hers, it is the borrowed key that is not.
-  for (const d of USERS.storeman.pin.split("")) {
-    await gate.locator(`button:text-is("${d}")`).first().click();
-  }
+  // Her own sign-in opens her own room, with nothing else asked for.
+  await expect(page.getByRole("dialog", { name: "Stock" })).toHaveCount(0);
   await expect(nav.getByRole("button", { name: "Stock", exact: true }))
     .toHaveAttribute("aria-current", "page");
+  // And it is doing real work on that PIN — the shelf is there, not an error.
+  await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
+
+  // The other half — somebody without the inventory right is never offered
+  // the room, so there is no pad for a borrowed PIN to be typed into — is
+  // covered by "a counter hand's phone offers Deliveries but not the stock
+  // room". Named rather than duplicated, so there is one place it can fail.
 });
 
-
-/*
- * Sold whole, and sold cut.
- *
- * From the counter at 5 Star Hardware: pipe goes out as a 6 m length at one
- * price and cut to size at another, dearer per metre. Wire is a 25 or 50 m
- * bundle or however many metres somebody asks for. One item, two prices, and
- * the cashier picks which as they ring it up.
- *
- * The fake carries the same worked example the database tests and
- * test/packs.test.mjs do — R180 the length, R38 the metre, R170 and R35 for
- * trade — so the three cannot quietly disagree about the arithmetic.
- */
 test("pipe rings up whole or cut, and the price follows the tap", async ({ page }) => {
   await pairAndSignIn(page, USERS.manager.pin);
   await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");

@@ -40,6 +40,7 @@ import { enqueueAction, listQueue } from "../lib/queue";
 import { commitDocNumber, peekDocNumber, topUpAllDocNumbers, topUpDocNumbers } from "../lib/docNumbers";
 import { isNetworkError, isOnline, onNetworkChange, useOnline } from "../lib/offline";
 import { useAwayLock } from "../lib/awayLock";
+import { useIdleLock } from "../lib/idleLock";
 import { deviceKind, isPaired, registerName } from "../lib/device";
 import {
   cartLineCap,
@@ -83,6 +84,7 @@ import Stock from "../components/stock/Stock";
 import Admin, { type TabKey } from "../components/Admin";
 import PhoneHome from "../components/PhoneHome";
 import PhoneLock from "../components/PhoneLock";
+import TillLock from "../components/TillLock";
 import PhoneLookup from "../components/PhoneLookup";
 import Calculator from "../components/Calculator";
 import DiscountModal from "../components/DiscountModal";
@@ -93,7 +95,7 @@ import ManagerPinModal from "../components/ManagerPinModal";
 import {
   biometricAvailable, biometricEnrolled, biometricForget, biometricVerify,
 } from "../lib/biometric";
-import { BACK_OFFICE, forgetPins, ownerProved, recall, remember } from "../lib/unlock";
+import { BACK_OFFICE, forgetPins, pinProved, recall, remember } from "../lib/unlock";
 import { buildNotices, fetchNotices, type Notice, type NoticeCounts } from "../lib/notices";
 import CustomerPicker from "../components/sell/CustomerPicker";
 import LineItems from "../components/sell/LineItems";
@@ -410,6 +412,16 @@ export default function POS() {
   // till does not: it is watched, shared, and takes money all day.
   const [locked, unlock] = useAwayLock(kind === "personal");
   /**
+   * The till's own lock, and the thing that pays for dropping the stock
+   * room's door. Ten minutes with nobody touching the screen and it shuts —
+   * which is the guard those doors were standing in for, since anybody at a
+   * signed-in till can already ring up a sale under the cashier's name.
+   *
+   * Not on a phone: that has the away-lock above, which asks a different
+   * question — was this put in a pocket — and the two would double up.
+   */
+  const [tillLocked, unlockTill] = useIdleLock(kind !== "personal");
+  /**
    * Whether this handset can be asked for a face, checked once.
    *
    * Feeds the two doors that ask for YOUR OWN PIN — the back office and the
@@ -461,14 +473,22 @@ export default function POS() {
     [online, noticeCounts, pending, failed]
   );
 
-  // A phone belongs to one person, and the PIN they signed in with was proved
-  // against the server by the sign-in itself. Asking for the same six digits
-  // again at the back office door, ten seconds later, proves nothing. The till
-  // is the other case — shared, watched, and nobody's — so it asks at its own
-  // door and then holds it for a while like everything else.
+  /**
+   * Signing in IS proving the PIN, on either kind of device.
+   *
+   * Reported from the counter as "too many PIN requirements", and they were
+   * right: the same six digits, the same person, the same server-side check,
+   * ninety seconds apart. The stock room now opens on the strength of the
+   * sign-in — counting shelves is the job, not a privilege.
+   *
+   * The back office still asks on a shared till, which is the shop's own
+   * decision: it is the room with the takings, the staff and the settings in
+   * it. On a phone, which is one person's, it opens with everything else.
+   * lib/unlock holds the rule and says why.
+   */
   useEffect(() => {
-    if (kind !== "personal" || !user || !sessionPin) return;
-    ownerProved(user, sessionPin);
+    if (!user || !sessionPin) return;
+    pinProved(user, sessionPin, kind === "personal" ? "personal" : "till");
   }, [kind, user, sessionPin]);
 
   // The dividers over the two footers meet (sell.css, --sell-foot): the
@@ -1438,6 +1458,37 @@ export default function POS() {
 
   if (!paired) return <PairRegister onPaired={() => setPaired(true)} />;
 
+  /**
+   * The till, shut after ten minutes of nobody touching it.
+   *
+   * Before everything else on the page, so nothing behind it is reachable —
+   * not the cart, not the menu, not a tender that was half typed. The sale
+   * itself is untouched and still on screen the moment the PIN is proved.
+   */
+  if (tillLocked && user && kind !== "personal") {
+    return (
+      <TillLock
+        user={user}
+        online={online}
+        onUnlock={(pin) => {
+          // Proved against the server a moment ago, by the same call the
+          // sign-in makes — so the doors it stands for open again with it.
+          setSessionPin(pin);
+          pinProved(user, pin, "till");
+          unlockTill();
+        }}
+        onHandOver={() => {
+          // Park first. The next person signs in as themselves, and this
+          // basket stays attributed to whoever actually rang it up rather
+          // than being inherited silently by whoever sat down next.
+          if (lines.length > 0) void park();
+          unlockTill();
+          signOut();
+        }}
+      />
+    );
+  }
+
   const header = (
     <SellHeader
       user={user}
@@ -1678,14 +1729,14 @@ export default function POS() {
             // Nothing is re-proved because nothing changed: the same PIN, the
             // same person, the same session the phone was already running.
             // Rolling the doors forward is what typing it would have done.
-            if (sessionPin) ownerProved(user, sessionPin);
+            if (sessionPin) pinProved(user, sessionPin, "personal");
             unlock();
           }}
           onUnlock={(pin) => {
             setSessionPin(pin);
             // Proved against the server a moment ago, by the same check the
             // back office's own door makes.
-            ownerProved(user, pin);
+            pinProved(user, pin, "personal");
             unlock();
           }}
           onLookup={() => setLockedPeek(true)}
