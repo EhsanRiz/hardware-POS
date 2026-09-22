@@ -495,35 +495,37 @@ Domains & Routes → Add custom domain → till.innovaearth.com**. The
 `innovaearth.com` zone is already in the account, so DNS and the certificate are
 handled for you.
 
-### Two paths to production, and only one of them tests
+### Deploys go through CI, and only through CI
 
-There are **two** ways a commit reaches the shop, and they are not equally
-careful:
+For a while there were **two** ways a commit reached the shop, and only one of
+them was careful:
 
 | Path | Runs the suite? |
 |---|---|
-| GitHub Actions (`.github/workflows/ci.yml`) | **Yes.** The deploy job only runs after the database tests and the full browser suite are green, and it finishes with `scripts/smoke.mjs` against the live address. |
-| Cloudflare Workers Builds (on every push) | **Only what its build command runs.** |
+| GitHub Actions (`.github/workflows/ci.yml`) | **Yes.** The deploy job runs only after the database tests and the full browser suite are green, and finishes with `scripts/smoke.mjs` against the live address. |
+| Cloudflare Workers Builds (on every push) | No — only whatever its build command ran. |
 
-The second one is configured in the dashboard, not in this repository, which is
-how it came as a surprise: on 22 September it put a commit on the till before
-CI had finished. That time the suite passed nine minutes later. It will not
-always.
+The second was configured in the dashboard rather than in this repository, which
+is how it came as a surprise: on 22 September it put a commit on the till before
+CI had finished. That time the suite passed nine minutes later. It would not
+always, and the gate that had already caught one broken build (`d46aac9`, which
+never deployed because CI went red) could be walked straight past.
 
-Pick one:
+**So it was switched off.** Workers & Pages → hardware-pos → Settings → Builds →
+automatic deployments off. CI is the only path to the shop, and the gate is the
+whole suite.
 
-* **Leave deploys to CI** — Workers & Pages → hardware-pos → Settings → Builds,
-  and turn automatic deployments off. CI is then the only path, and the gate is
-  the whole suite. This is the safer choice.
-* **Keep Cloudflare building** — then set its build command to
-  `npm run build:gated` (`npm test && npm run build`), so a failing unit suite
-  fails the build. Not the browser suite: that wants a Chromium download and
-  twelve minutes, which is the wrong shape for a deploy hook. Also restrict it
-  to the production branch, or every feature branch builds too.
+If that is ever turned back on, point its build command at `npm run build:gated`
+(`npm test && npm run build`) so a failing unit suite fails the build, and
+restrict it to the production branch — otherwise every feature branch builds
+too. That script exists for exactly that case. It deliberately does not run the
+browser suite: that wants a Chromium download and twelve minutes, which is the
+wrong shape for a deploy hook and would make the gate something people switch
+off.
 
-Whichever is chosen, **check what a non-production branch build targets** before
-trusting it. A branch that can reach the production Worker means an unmerged
-branch can land on a counter.
+And before trusting any branch build, **check what a non-production branch
+targets**. If a branch can reach the production Worker, an unmerged branch can
+land on a counter.
 
 `public/_headers` carries the cache rules. The important one is `sw.js`, which
 must never be cached: the service worker is what decides when a tablet takes an
