@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { errorName, rawErrorMessage } from "./errors";
-import { API_BASE } from "./supabase";
+import { ANON_KEY, API_BASE } from "./supabase";
 
 // Network status. navigator.onLine is a coarse and often UNRELIABLE signal on
 // tablets — it can get stuck at "offline" after sleep/wake or a brief Wi-Fi
@@ -56,20 +56,55 @@ function setOnline(v: boolean): void {
   listeners.forEach((l) => l(online));
 }
 
+/**
+ * Whether the probe is going to our OWN origin, which decides how it is sent.
+ *
+ * In a shop it always is: API_BASE is location.origin + "/api", reverse-proxied
+ * to Supabase by worker/index.ts. The single-file demo opened from disk is the
+ * exception — there API_BASE is the upstream host and the request is
+ * third-party.
+ */
+const sameOriginProbe =
+  typeof location !== "undefined" &&
+  location.origin.startsWith("http") &&
+  PROBE_URL.startsWith(`${location.origin}/`);
+
 // Returns true if the server responded at all (even an error status), false on a
 // genuine connectivity failure (DNS/timeout/abort).
 async function probe(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-    // no-cors: we only care that the server ANSWERED, not what it said, so CORS
-    // can never make a reachable server look offline.
     await fetch(`${PROBE_URL}?t=${Date.now()}`, {
       method: "GET",
-      mode: "no-cors",
       cache: "no-store",
       signal: controller.signal,
+      /**
+       * CARRY THE KEY, OR THE CONSOLE FILLS UP.
+       *
+       * Supabase answers /auth/v1/health with 401 to a request with no apikey.
+       * The probe never read the status — any answer means the line is up —
+       * so the till worked perfectly while logging a red error every fifteen
+       * seconds. Reported from the shop as a fault, which is the real cost: a
+       * console that cries wolf four times a minute is a console nobody reads
+       * on the day something is actually wrong.
+       *
+       * The key is public by design and already in this bundle. Same-origin
+       * requests never preflight, so this costs nothing.
+       *
+       * Cross-origin — only the from-disk demo — keeps no-cors, because there
+       * a custom header WOULD force a preflight and a preflight that fails
+       * makes a perfectly reachable server look offline. no-cors also strips
+       * the header, so the two cannot be combined; it is one or the other.
+       */
+      ...(sameOriginProbe
+        ? { headers: { apikey: ANON_KEY } }
+        : { mode: "no-cors" as const }),
     }).finally(() => clearTimeout(timer));
+    // Deliberately not looking at response.ok. A 401, a 500 and a 200 all
+    // prove the same thing — something answered — and the day this starts
+    // caring about the status is the day a server-side fault is reported to
+    // the counter as "no line".
     return true;
   } catch {
     return false;

@@ -614,6 +614,14 @@ export class Backend {
    */
   failRpc: string | null = null;
   /**
+   * Every connectivity probe, and whether it carried an API key.
+   *
+   * Recorded because "the till works" was never the question here: it worked
+   * throughout while filling the shop's console with 401s four times a minute.
+   * The only way to see that in a test is to look at what was SENT.
+   */
+  healthProbes: boolean[] = [];
+  /**
    * TillAI. The real assistant runs on the server against Gemini; the fake
    * answers with whatever a test set, and records what the till asked and
    * with which token, which is the part the browser suite can hold to
@@ -1217,6 +1225,19 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
   // coming back and nothing ever syncs.
   await page.route("**/auth/v1/health*", async (route: Route) => {
     if (be.offline) return route.abort("internetdisconnected");
+    // 401 WITHOUT A KEY, exactly as Supabase does. The fake used to answer 200
+    // to anything, so the till could log a red error every fifteen seconds on
+    // a real counter with the whole suite green — reported from the shop, and
+    // invisible here. A probe that never reads the status still works against
+    // a 401; the cost is a console nobody trusts on the day it matters.
+    const authed = !!route.request().headers()["apikey"];
+    be.healthProbes.push(authed);
+    if (!authed) {
+      return route.fulfill({
+        status: 401, contentType: "application/json",
+        body: JSON.stringify({ message: "No API key found in request" }),
+      });
+    }
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 

@@ -9223,6 +9223,35 @@ test("from the phone, a delivery marked off with no signal is kept, says so, and
   await expect(row).toContainText("Delivered · Manager");
 });
 
+test("the connectivity probe carries a key, so the console stays readable", async ({ page }) => {
+  // Reported from the shop as a fault: a red error in the console every
+  // fifteen seconds, hundreds of them —
+  //   GET /api/auth/v1/health?t=... 401 (Unauthorized)
+  //
+  // Supabase answers /auth/v1/health with 401 to a request with no apikey. The
+  // probe never reads the status — any answer proves the line is up — so the
+  // till worked perfectly while crying wolf four times a minute. That is the
+  // real cost: a console nobody trusts on the day something IS wrong.
+  //
+  // Invisible to this suite until now, because the fake answered 200 to
+  // anything. It models the real 401 as of this change.
+  await pairAndSignIn(page, USERS.manager.pin);
+
+  await expect.poll(() => be.healthProbes.length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+  // Every probe, not merely the last: one unauthenticated straggler is still a
+  // red line on the counter's screen.
+  expect(be.healthProbes.every(Boolean)).toBe(true);
+
+  // And the point of the probe survives the change. This is the half that
+  // matters more than the noise: the till must still notice the line going and
+  // coming back, which it decides WITHOUT looking at the status.
+  be.offline = true;
+  await expect(page.locator(".sync-chip")).toContainText(/OFFLINE/i, { timeout: 20_000 });
+  be.offline = false;
+  await expect(page.locator(".sync-chip")).toContainText(/SYNCED/i, { timeout: 20_000 });
+});
+
 test("one slow probe does not put the till offline; two misses do, and one answer brings it back", async ({ page }) => {
   // The banner flapped all afternoon on a till that was never off: every
   // probe that stalled past six seconds was called an outage while the sale

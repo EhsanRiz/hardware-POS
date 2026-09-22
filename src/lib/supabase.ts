@@ -24,7 +24,15 @@ const sameOrigin =
     : null;
 
 export const API_BASE: string = sameOrigin ?? configured;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+/**
+ * The publishable key, which is public by design — it ships in this bundle and
+ * is meant to. Exported because the connectivity probe needs it too: Supabase
+ * answers /auth/v1/health with 401 to a request that carries no key, and a
+ * till that logs an error every fifteen seconds teaches its shop to ignore the
+ * console. See lib/offline.ts.
+ */
+export const ANON_KEY: string = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const anonKey = ANON_KEY;
 
 if (!API_BASE || !anonKey) {
   // Surfaced loudly so a misconfigured tablet fails fast instead of silently.
