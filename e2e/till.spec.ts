@@ -11497,6 +11497,59 @@ test("the quantity column says what it is counting", async ({ page }) => {
     .toHaveText("Bag");
 });
 
+test("a quantity can be typed with a decimal point in it", async ({ page }) => {
+  // Reported from the counter: "cannot use decimals in the QTY if I want to
+  // click on it and change it." The box held the line's quantity as a NUMBER,
+  // so typing "2." gave Number("2.") = 2, the box re-rendered as "2", and the
+  // decimal point just pressed vanished — the next key landed against the
+  // whole number and 2.5 m of wire came out 25.
+  //
+  // The same bug as the price boxes in the editor, found a second time in a
+  // second file. It must be TYPED: fill() sets the whole value in one go and
+  // never puts the box in the "2." state, which is exactly why every existing
+  // test of this field passed over a box nobody could type a decimal into.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+
+  // On a cut, where a part quantity is the whole point.
+  await page.locator(".line-desc-btn").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByRole("button", { name: /Update sale/ }).click();
+
+  const qty = page.getByLabel("Quantity of Pipe 20mm (cut)");
+  await qty.click();
+  await qty.press("Control+a");
+  await qty.pressSequentially("2.5");
+  await expect(qty).toHaveValue("2.5");
+  // And the money followed the typing, rather than the box alone holding text
+  // the sale never heard about. 2.5 m at R38 is R95.
+  await expect(page.locator(".total-row .fig")).toContainText("95.00");
+
+  // A comma is what a South African keyboard offers, and the parser has
+  // always taken it — the box has to let it be typed too.
+  await qty.press("Control+a");
+  await qty.pressSequentially("1,5");
+  await expect(qty).toHaveValue("1,5");
+  await qty.blur();
+  // Leaving settles the half-typed text back to the number: 1.5 m at R38.
+  await expect(qty).toHaveValue("1.5");
+  await expect(page.locator(".total-row .fig")).toContainText("57.00");
+
+  // A whole length still refuses a fraction on the way out, mode over unit.
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe");
+  await page.locator(".result-row").first().click();
+  await page.locator(".detail-card").getByRole("button", { name: /Add to sale/ }).click();
+  const whole = page.getByLabel("Quantity of Pipe 20mm (6 m length)");
+  await whole.click();
+  await whole.press("Control+a");
+  await whole.pressSequentially("2.5");
+  await whole.blur();
+  await expect(whole).toHaveValue("3");
+});
+
 test("the slip says which way the pipe went out", async ({ page }) => {
   // "2 x 6 m length" and "12 m" are the same pipe and very different money. A
   // slip that does not say cannot be used to price a return, and the customer

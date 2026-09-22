@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { money, quantity } from "../../lib/money";
 import { imageSrc } from "../../lib/images";
 import type { CartLine } from "../../lib/types";
@@ -49,6 +50,27 @@ export default function LineItems({
    * answers, and the one in the biggest type was the wrong one.
    */
   const priceOf = (l: CartLine) => packPrice(l.product, trade, lineSoldAs(l));
+
+  /**
+   * What is in a quantity box WHILE somebody is typing in it.
+   *
+   * Reported from the counter: "cannot use decimals in the QTY if I want to
+   * click on it and change it." The box was a controlled input whose value
+   * was the line's quantity — a NUMBER. Type "2." and Number("2.") is 2, so
+   * the box re-renders as "2" and the decimal point just pressed is gone; the
+   * next key lands against the whole number and 2.5 m of wire comes out 25.
+   *
+   * This is the SECOND place this bug has been found — ProductEditor's ten
+   * price boxes were the first, fixed the same way and for the same reason.
+   * The rule is the one thing to carry away: a controlled number input must
+   * hold the KEYSTROKES while it has focus, and the parsed number only after
+   * it loses it. Every other numeric box in the app was checked against this
+   * and binds string state already.
+   *
+   * Keyed by line, because a sale can carry the same product twice — a roll
+   * and a cut off it — and typing in one must not disturb the other.
+   */
+  const [draft, setDraft] = useState<Record<string, string>>({});
 
   /**
    * What the shelf gives up for this line, counted in base units.
@@ -204,14 +226,23 @@ export default function LineItems({
                   // metres divide, but two and a half 6 m lengths is not an
                   // order anybody can pick off a rack, and 0107 rejects it.
                   inputMode={fraction ? "decimal" : "numeric"}
-                  value={l.qty}
+                  value={draft[key] ?? String(l.qty)}
                   aria-label={`Quantity of ${p.name}${which}`}
                   onChange={(e) => {
-                    const raw = Number(e.target.value.replace(",", "."));
-                    if (!Number.isFinite(raw)) return;
-                    onSetQty(key, raw);
+                    const text = e.target.value;
+                    setDraft((d) => ({ ...d, [key]: text }));
+                    const n = Number(text.replace(",", "."));
+                    // The sale follows along as it is typed, but only once
+                    // what has been typed is a quantity. "2." and "" are
+                    // half-typed, not a request for nought of something.
+                    if (Number.isFinite(n) && n > 0) onSetQty(key, n);
                   }}
                   onBlur={(e) => {
+                    setDraft((d) => {
+                      const next = { ...d };
+                      delete next[key];
+                      return next;
+                    });
                     let v = Number(e.target.value.replace(",", "."));
                     if (!Number.isFinite(v) || v <= 0) v = 1;
                     if (!fraction) v = Math.round(v);
