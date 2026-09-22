@@ -1275,7 +1275,7 @@ begin
     'and the counter still starts where it always did');
 
   select id into v_helper from public.pos_admin_invite_user(
-    v_tok, '1234', 'Thabo the driver', '+27820000077',
+    v_tok, '1234', 'Thabo the driver', '+27820000144',
     'helper'::user_role, array[]::text[]);
   update public.app_users set status = 'active',
          pin_hash = crypt('9876', gen_salt('bf')) where id = v_helper;
@@ -4750,7 +4750,7 @@ begin
   -- not for a wrong PIN — the reason is checked, so this cannot pass by
   -- accident.
   select id into v_hand from public.pos_admin_invite_user(
-    v_tok, '1234', 'Log Hand', '+27820000077', 'employee'::user_role, array[]::text[]);
+    v_tok, '1234', 'Log Hand', '+27820000144', 'employee'::user_role, array[]::text[]);
   update public.app_users set status = 'active',
          pin_hash = crypt('707070', gen_salt('bf')) where id = v_hand;
   begin
@@ -6649,6 +6649,61 @@ begin
   perform assert_eq(r.price_cut_retail,
     (select price_cut_retail from public.products where id = v_pipe),
     'and the cut price the till shows on the second button');
+end $$;
+
+
+-- 0110: a shop opens with departments, not with an empty list.
+--
+-- 5 Star Hardware opened with one category — "Delivery", the system's own —
+-- so every product they entered went in uncategorised. The demo shop had
+-- eight departments put there by hand once and nothing carried them to the
+-- shops that came after, which made the thing demonstrated and the thing
+-- delivered different products.
+do $$
+declare
+  v_org uuid; v_n int; v_names text;
+begin
+  v_org := public.innova_create_org('Fresh Hardware', 'New Owner', '+27820000761');
+
+  select count(*), string_agg(name, ', ' order by name)
+    into v_n, v_names
+  from public.categories where org_id = v_org;
+
+  perform assert_eq(v_n, 8, 'a new hardware shop opens with its departments');
+  perform assert_eq(v_names,
+    'Building Materials, Electrical, Fasteners, Garden & Outdoor, '
+    || 'Paint & Sundries, Plumbing, Timber & Board, Tools',
+    'and they are the ones the demo shop shows a shopkeeper before they sign up');
+
+  -- Alphabetical, which is what sort_order 0 means to the till. A department
+  -- list that comes out in insertion order reads as a mistake.
+  perform assert_eq(
+    (select count(*)::int from public.categories
+      where org_id = v_org and sort_order <> 0),
+    0, 'and they sort by name, like every other shop''s');
+
+  -- Seeding twice adds nothing: the unique index does the work, so a re-run
+  -- of the backfill over a shop that already has them is harmless.
+  perform public.seed_departments(v_org);
+  select count(*) into v_n from public.categories where org_id = v_org;
+  perform assert_eq(v_n, 8, 'seeding again changes nothing');
+
+  -- A shop that has made its own list is left alone. This is the half that
+  -- matters on a backfill: eight departments appearing overnight in a shop
+  -- that deliberately keeps three would be an act of vandalism.
+  update public.categories set name = 'Ironmongery'
+   where org_id = v_org and name = 'Fasteners';
+  perform public.seed_departments(v_org);
+  perform assert_eq(
+    (select count(*)::int from public.categories
+      where org_id = v_org and name = 'Ironmongery'),
+    1, 'a renamed department stays renamed');
+
+  -- A till cannot reach it. The function makes categories wholesale, which is
+  -- the server's business and not a counter's.
+  perform assert_eq(
+    has_function_privilege('anon', 'public.seed_departments(uuid)', 'execute'),
+    false, 'and a till cannot seed departments itself');
 end $$;
 
 
