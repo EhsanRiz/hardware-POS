@@ -11463,6 +11463,40 @@ test("switching a line to cut re-prices it rather than adding a second", async (
   await expect(card.getByLabel("How many Pipe 20mm")).toHaveValue("4");
 });
 
+test("the quantity column says what it is counting", async ({ page }) => {
+  // From the counter, looking at a sale carrying the same wire twice: "would
+  // it make sense if the units are mentioned under the QTY?" It would. The
+  // rows read "2.5" and "3", one above the other, meaning two and a half
+  // METRES and three 50 m ROLLS — and the only thing saying so was a badge
+  // two columns away in the item description.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000107");
+  await page.keyboard.press("Enter");
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe");
+  await page.locator(".result-row").first().click();
+  const card = page.locator(".detail-card");
+  await card.getByRole("group", { name: "How it is sold" })
+    .getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("2.4");
+  await card.getByRole("button", { name: /Add to sale/ }).click();
+
+  const rows = page.locator('[data-testid="line-row"]');
+  await expect(rows).toHaveCount(2);
+  // Each figure carries its own unit, and the two differ — which is the whole
+  // point, since the numbers alone cannot be told apart.
+  await expect(rows.filter({ hasText: "6 m length" }).locator(".line-qty-unit"))
+    .toHaveText("6 m length");
+  await expect(rows.filter({ hasText: "Cut" }).locator(".line-qty-unit"))
+    .toHaveText("Metre");
+
+  // And an ordinary item says its own unit too — "2" of a thing is as
+  // ambiguous for cement as it is for wire.
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(rows.filter({ hasText: "Cement" }).locator(".line-qty-unit"))
+    .toHaveText("Bag");
+});
+
 test("the slip says which way the pipe went out", async ({ page }) => {
   // "2 x 6 m length" and "12 m" are the same pipe and very different money. A
   // slip that does not say cannot be used to price a return, and the customer

@@ -463,6 +463,27 @@
   padding: 4px 7px;
   min-height: 34px;
 }
+/* The unit the quantity is in, under the box.
+   Quiet and small on purpose: it is read once, when somebody asks "two and a
+   half what?", and must not compete with the figure above it or with the
+   amount beside it. Right-aligned with the input so the two read as one cell
+   rather than as a number and a stray word. */
+.line-qty-unit {
+  display: block;
+  margin-top: 1px;
+  /* The input's 7px padding plus its 1px transparent border, so the word sits
+     under the last digit rather than one pixel out from it. */
+  padding-right: 8px;
+  font-size: 11.5px;
+  line-height: 1.2;
+  /* The same grey as every other caption on the row (.line-unit, .line-meta),
+     so this reads as metadata and not as a second figure. */
+  color: var(--color-neutral-700);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .line-qty input:hover { border-color: var(--divider); }
 .line-qty input:focus {
   border-color: var(--color-accent);

@@ -221,6 +221,16 @@ export default function LineItems({
                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                   }}
                 />
+                {/* What the number counts, under the number.
+                    From the counter: "would it make sense if the units are
+                    mentioned under the QTY?" — and on a sale carrying the same
+                    wire twice it is the question the row could not answer.
+                    "2.5" and "3" sat one above the other meaning two and a
+                    half METRES and three 50 m ROLLS, and the only thing saying
+                    so was a badge two columns away in the item description.
+                    A quantity is a decimal with a unit, never a count
+                    (handoff, constraint 7) — this is the unit. */}
+                <span className="line-qty-unit">{unitLabel(p, soldAs)}</span>
               </span>
 
               <span className="line-unit">
