@@ -36,5 +36,20 @@
       "mcp__Supabase__delete_branch",
       "mcp__Supabase__create_project"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__Supabase__execute_sql|mcp__Supabase__apply_migration",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/guard-sql.mjs",
+            "timeout": 10,
+            "statusMessage": "Checking the SQL against the guard"
+          }
+        ]
+      }
+    ]
   }
 }
