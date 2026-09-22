@@ -6583,4 +6583,73 @@ begin
 end $$;
 
 
+-- 0109: the two doors onto a product must open on the same product.
+--
+-- A till puts something on a sale two ways: a barcode matched against the
+-- cached catalogue, or a name typed into search. 0107 taught pos_catalogue
+-- about packs and left pos_search_products alone, so the same wire was a
+-- roll-or-cut item through one door and a plain metre item through the
+-- other — no picker, and a line the server then read as a whole roll.
+--
+-- Asserted as a SET DIFFERENCE rather than a list of column names, because a
+-- list is a thing somebody has to remember to update and this is exactly the
+-- failure of remembering. Add a column to the catalogue and forget search and
+-- this goes red naming the column.
+do $$
+declare v_missing text;
+begin
+  -- The declared result type is the thing the till actually receives, so the
+  -- comparison is made on that rather than on the function's source.
+  select string_agg(c, ', ' order by c) into v_missing
+  from (
+    select trim(split_part(trim(c), ' ', 1)) as c
+    from unnest(string_to_array(
+      rtrim(ltrim(pg_get_function_result((
+        select p.oid from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname='public' and p.proname='pos_catalogue')), 'TABLE('), ')'),
+      ',')) as c
+  ) cat
+  where cat.c not in (
+    select trim(split_part(trim(s), ' ', 1))
+    from unnest(string_to_array(
+      rtrim(ltrim(pg_get_function_result((
+        select p.oid from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname='public' and p.proname='pos_search_products')), 'TABLE('), ')'),
+      ',')) as s
+  );
+
+  perform assert(v_missing is null,
+    'search serves every column the catalogue does (missing: '
+      || coalesce(v_missing, '') || ')');
+end $$;
+
+-- And the values, not just the shape: a column that is present and always
+-- null would satisfy the check above and still leave the counter without a
+-- picker.
+do $$
+declare
+  v_tok text; v_org uuid; v_pipe uuid; r record;
+begin
+  select org_id into v_org from fixture;
+  select token into v_tok from till;
+  select id into v_pipe from public.products
+   where org_id = v_org and sold_in_packs and sku is not null
+   order by sku limit 1;
+  perform assert(v_pipe is not null, 'there is a both-ways product to look for');
+
+  select * into r from public.pos_search_products(
+    v_tok, (select name from public.products where id = v_pipe), 25)
+   where id = v_pipe;
+
+  perform assert(r.id is not null, 'search finds a both-ways product by name');
+  perform assert_eq(r.sold_in_packs, true,
+    'and says it is sold in packs, which is what draws the picker');
+  perform assert_eq(r.pack_size, (select pack_size from public.products where id = v_pipe),
+    'with the pack size the price depends on');
+  perform assert_eq(r.price_cut_retail,
+    (select price_cut_retail from public.products where id = v_pipe),
+    'and the cut price the till shows on the second button');
+end $$;
+
+
 select 'all database tests passed' as result;

@@ -1032,6 +1032,31 @@ function normalize(t: string): string {
     .trim();
 }
 
+/**
+ * What pos_search_products actually hands back.
+ *
+ * This used to be `{ ...p, score: 1 }` — the whole product row, every field a
+ * FakeProduct happens to carry. The real function is a `returns table(...)`
+ * with a fixed column list, and the difference is not academic: 0107 added
+ * five pack columns to pos_catalogue and not to this one, so a product
+ * reached by TYPING went to the till with no sold_in_packs and no roll-or-cut
+ * picker, while the same product reached by SCANNING was fine.
+ *
+ * The e2e test that adds cut pipe through search passed throughout, because
+ * the fake could not represent the thing that was broken. So it is spelled
+ * out now: every column the function declares, and nothing it does not. The
+ * next one 0107 forgets has somewhere to go red.
+ */
+const SEARCH_COLUMNS = [
+  "id", "sku", "barcode", "name", "description", "category_id",
+  "category_name", "unit_code", "unit_name", "allows_fraction",
+  "price_retail", "price_trade", "tax_code", "stock_qty", "reorder_level",
+  "image_url", "sort_order", "bin",
+  "image_count", "max_discount_percent", "max_discount_amount",
+  "sold_in_packs", "pack_size", "pack_label",
+  "price_cut_retail", "price_cut_trade",
+] as const;
+
 function searchProducts(q: string) {
   const n = normalize(q);
   if (!n) return [];
@@ -1039,7 +1064,15 @@ function searchProducts(q: string) {
   return PRODUCTS.filter((p) => {
     const text = normalize(p.name + " " + p.sku + " " + (p.barcode ?? ""));
     return toks.every((t) => text.includes(t));
-  }).map((p) => ({ ...p, score: 1 }));
+  }).map((p) => {
+    const row: Record<string, unknown> = { score: 1 };
+    // A column the function declares but the row has not set is null on the
+    // wire, not absent — which is what the till receives and must cope with.
+    for (const c of SEARCH_COLUMNS) {
+      row[c] = (p as unknown as Record<string, unknown>)[c] ?? null;
+    }
+    return row;
+  });
 }
 
 /**

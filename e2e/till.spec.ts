@@ -11179,6 +11179,94 @@ test("pipe rings up whole or cut, and the price follows the tap", async ({ page 
   expect(sent.items[0].unit_price).toBeUndefined();
 });
 
+test("a product found by TYPING offers the picker, same as one scanned", async ({ page }) => {
+  // Reported from the counter, with a photograph: opening Barb wire Fencing
+  // 50M showed "R550.00 per Metre", no picker, "1 Metre x R550.00" — for an
+  // item the shop had entered correctly as a 50 m roll at R550 or R60 the
+  // metre.
+  //
+  // Two doors onto one product. A barcode is matched against the cached
+  // catalogue, which carries sold_in_packs. A typed name hits
+  // pos_search_products, which 0107 never taught about packs — so the same
+  // wire was a roll-or-cut item one way and a plain metre item the other.
+  // 0109 makes search serve what the catalogue serves.
+  //
+  // The test above already reaches this product through search and taps "Cut
+  // to length", and it passed all along: the fake returned the whole product
+  // row where the real function projects a fixed column list. The fake has
+  // been made to project the same list, which is what gives this test teeth.
+  await pairAndSignIn(page, USERS.manager.pin);
+  // The list the SERVER sends replaces the cached one — ScanBar does
+  // `remote ?? local` — but only after a 180 ms debounce and a round trip.
+  // Clicking before that opens the product out of the CACHE, which has every
+  // column, and the test proves nothing about search at all. This is not
+  // hypothetical: written without the wait, both of these passed against a
+  // fake deliberately reverted to the broken column list.
+  const answered = page.waitForResponse((r) =>
+    r.url().includes("pos_search_products")
+  );
+  await page.getByPlaceholder(/Scan barcode/i).fill("Pipe 20");
+  await answered;
+  await page.waitForTimeout(300);
+  await page.locator(".result-row").first().click();
+
+  const card = page.locator(".detail-card");
+  await expect(card).toBeVisible();
+  const picker = card.getByRole("group", { name: "How it is sold" });
+  // The picker at all — this is what was missing at the counter.
+  await expect(picker).toBeVisible();
+  await expect(picker.getByRole("button", { name: /6 m length/ })).toContainText("180.00");
+  await expect(picker.getByRole("button", { name: /Cut to length/ })).toContainText("38.00");
+  // And it opens on the whole length, priced per LENGTH — the card read
+  // "per Metre" against the length price, which is the same figure attached
+  // to the wrong unit.
+  await expect(card).toContainText("per 6 m length");
+
+  await picker.getByRole("button", { name: /Cut to length/ }).click();
+  await card.getByLabel("How many Pipe 20mm").fill("3");
+  await card.getByRole("button", { name: /Add to sale · R.*114\.00/ }).click();
+
+  // 3 m at R38. Priced as a whole length it would have been R540, and the
+  // server would have taken 18 m off a rack for what the screen called 3.
+  await expect(page.locator(".total-row .fig")).toContainText("114.00");
+  await expect(page.locator(".line-row .line-unit")).toHaveText("38.00");
+});
+
+test("a line added by search carries its discount ceiling", async ({ page }) => {
+  // The same fault, older than the pack columns and quieter. pos_catalogue
+  // returns max_discount_percent; pos_search_products did not. The till works
+  // a line's ceiling out from it, so a line added by TYPING had no ceiling —
+  // the dialog waved a discount through that pos_create_sale then refused at
+  // the tender screen, which is a cashier promising money off and not being
+  // able to give it.
+  PRODUCTS.find((p) => p.id === "p1")!.max_discount_percent = 5;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  // Reached by TYPING, not by the barcode the test above it uses — that is
+  // the whole point. Same product, the other door.
+  // The list the SERVER sends replaces the cached one — ScanBar does
+  // `remote ?? local` — but only after a 180 ms debounce and a round trip.
+  // Clicking before that opens the product out of the CACHE, which has every
+  // column, and the test proves nothing about search at all. This is not
+  // hypothetical: written without the wait, both of these passed against a
+  // fake deliberately reverted to the broken column list.
+  const answered = page.waitForResponse((r) =>
+    r.url().includes("pos_search_products")
+  );
+  await page.getByPlaceholder(/Scan barcode/i).fill("Cement");
+  await answered;
+  await page.waitForTimeout(300);
+  await page.locator(".result-row").first().click();
+  await page.locator(".detail-card").getByRole("button", { name: /Add to sale/ }).click();
+
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  // R115 of cement capped at 5% is R5.75, stated up front — from a line that
+  // never went near the catalogue. Without the column it read as uncapped.
+  await expect(page.getByText(/Capped at R\s5\.75 off/i)).toBeVisible();
+  await page.getByLabel("Discount amount").fill("10");
+  await expect(page.getByRole("button", { name: /^Apply$/ })).toBeDisabled();
+});
+
 test("a whole length cannot be sold in halves, though its metres divide", async ({ page }) => {
   // The guard the unit alone gets wrong. Pipe is measured in metres and metres
   // divide, so allows_fraction is true — but two and a half 6 m LENGTHS is not
