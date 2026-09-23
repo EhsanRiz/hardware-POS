@@ -3050,6 +3050,14 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           PRODUCTS.find(
             (x) => x.sku.toLowerCase() === code.toLowerCase() && x.id !== exceptId
           )?.name ?? null;
+        /**
+         * The same for the barcode, which the server checks EXACTLY — a
+         * barcode is digits off a label, and lib/search matches it exactly.
+         * Folding case here would model a rule neither the server nor the
+         * scanner has (0113).
+         */
+        const barcodeHeldBy = (code: string, exceptId?: string) =>
+          PRODUCTS.find((x) => x.barcode === code && x.id !== exceptId)?.name ?? null;
         if (body.p_id == null) {
           // 0053: born with the shop's next code unless one was typed.
           if (!String(body.p_name ?? "").trim()) return fail("A name is required");
@@ -3057,6 +3065,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const sku = typed || "SKU-" + String(++be.skuSeq).padStart(6, "0");
           const taken = codeHeldBy(sku);
           if (taken) return fail(`The code ${sku} is already used by ${taken}`);
+          const bc = String(body.p_barcode ?? "").trim();
+          const onIt = bc ? barcodeHeldBy(bc) : null;
+          if (onIt) return fail(`That barcode is already on ${onIt}`);
           const made = mk("new" + PRODUCTS.length, sku, (body.p_barcode as string) || null,
             String(body.p_name), "ea", "Each", false, Number(body.p_price_retail ?? 0),
             null, Number(body.p_stock_qty ?? 0), null);
@@ -3076,6 +3087,12 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const taken = codeHeldBy(typedSku, p.id);
           if (taken) return fail(`The code ${typedSku} is already used by ${taken}`);
           p.sku = typedSku;
+        }
+        const typedBarcode = String(body.p_barcode ?? "").trim();
+        if (typedBarcode) {
+          const onIt = barcodeHeldBy(typedBarcode, p.id);
+          if (onIt) return fail(`That barcode is already on ${onIt}`);
+          p.barcode = typedBarcode;
         }
         // Null clears the cap, unlike the picture in 0027 — an empty box has
         // to be able to remove one.

@@ -7864,6 +7864,49 @@ test("a stock code already in use is refused by name, not by a constraint", asyn
   await expect(page.getByRole("cell", { name: "CEM50" })).toBeVisible();
 });
 
+test("a barcode already on another product is refused by name", async ({ page }) => {
+  // The field a gun actually reads, and the one that had no check at all: two
+  // rows sharing a barcode means a scan resolves to whichever comes first, at
+  // that other thing's price. It used to show the counter
+  // products_org_barcode_key (0113).
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /New product/i }).click();
+
+  await page.getByLabel("Name").fill("Cement, relabelled");
+  await page.getByLabel(/^Barcode/).fill("6001234000015");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByText("That barcode is already on Cement 42.5N 50kg")
+  ).toBeVisible();
+
+  // A free one saves, so the refusal is about the clash and not the screen.
+  await page.getByLabel(/^Barcode/).fill("6009999000123");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "Cement, relabelled" })).toBeVisible();
+});
+
+test("a reorder level on an uncounted item says it cannot fire yet", async ({ page }) => {
+  // Every notice and reorder query needs BOTH a reorder level and a stock
+  // figure, so a level set on an untracked item is a number that can never
+  // warn anybody. The box took it, saved it and showed it back, which reads
+  // as "covered" to whoever set it. It is kept — it starts working the moment
+  // the item is counted — but it no longer pretends.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Wood Glue 500ml" }).first().click();
+
+  await expect(page.getByText("Needs a stock count first — see below.")).toBeVisible();
+  await page.getByLabel("Reorder at").fill("5");
+  await expect(page.getByText(/cannot warn you until this item is counted/)).toBeVisible();
+
+  // And counting it is what switches it on, which is the whole claim.
+  await page.getByLabel("First count").fill("6");
+  await page.getByRole("button", { name: "Start counting" }).click();
+  await expect(page.getByText(/cannot warn you until this item is counted/)).toHaveCount(0);
+  await expect(page.getByText("Warns on the till below this.")).toBeVisible();
+});
+
 test("an ordinary edit keeps the item's own code without clashing with itself", async ({ page }) => {
   // The case a duplicate check forgets. Saving a price on an existing item
   // sends that item's own code back, and a check that did not exclude the row

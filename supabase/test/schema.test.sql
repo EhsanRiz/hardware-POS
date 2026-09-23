@@ -6921,4 +6921,57 @@ begin
 end $$;
 
 
+-- 0113: a barcode on two products -------------------------------------------
+
+do $$
+declare v_tok text; v_a public.products; v_b public.products; v_msg text;
+begin
+  select token into v_tok from till;
+
+  v_a := public.pos_admin_save_product(v_tok, '1234', null, 'BC-ONE', '6009999000011',
+    'Scanned thing one', null, null, 'ea', 50, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.barcode, '6009999000011', 'a barcode is kept as given');
+
+  -- Two rows on one barcode is the wrong-item-sold fault again, and this is
+  -- the field a gun actually reads. It used to show the counter
+  -- products_org_barcode_key.
+  begin
+    perform public.pos_admin_save_product(v_tok, '1234', null, 'BC-TWO', '6009999000011',
+      'Scanned thing two', null, null, 'ea', 50, null, null, 'standard', 0, null, true);
+    perform assert(false, 'a barcode already in use is refused');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'That barcode is already on Scanned thing one',
+    'and the refusal names what already carries it');
+
+  -- The edit that must still work, same trap as the stock code.
+  v_a := public.pos_admin_save_product(v_tok, '1234', v_a.id, 'BC-ONE', '6009999000011',
+    'Scanned thing one', null, null, 'ea', 61, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.price_retail, 61::numeric,
+    'an item keeping its own barcode is not a clash with itself');
+
+  -- Blank is not a value: many products have no barcode and must not collide
+  -- with each other. This is the case an over-eager check breaks first.
+  v_a := public.pos_admin_save_product(v_tok, '1234', null, 'BC-NONE-1', '',
+    'No barcode one', null, null, 'ea', 5, null, null, 'standard', 0, null, true);
+  v_b := public.pos_admin_save_product(v_tok, '1234', null, 'BC-NONE-2', null,
+    'No barcode two', null, null, 'ea', 5, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.barcode, null::text, 'an empty barcode is stored as none');
+  perform assert_eq(v_b.barcode, null::text, 'and so is a missing one');
+
+  -- Whitespace is not a barcode either, and the check must read what gets
+  -- STORED: the trim used to happen inline at each write, so a guard could
+  -- easily have compared something else.
+  begin
+    v_msg := null;
+    perform public.pos_admin_save_product(v_tok, '1234', null, 'BC-PAD', '  6009999000011  ',
+      'Padded', null, null, 'ea', 50, null, null, 'standard', 0, null, true);
+    perform assert(false, 'a padded barcode is the same barcode');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'That barcode is already on Scanned thing one',
+    'and a padded duplicate is caught, not stored as a second one');
+end $$;
+
+
 select 'all database tests passed' as result;

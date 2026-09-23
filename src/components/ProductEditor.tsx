@@ -533,7 +533,14 @@ export default function ProductEditor({
               />
             </Field>
 
-            <Field label="Reorder at" hint="Warns on the till below this.">
+            <Field
+              label="Reorder at"
+              hint={
+                stockNow == null
+                  ? "Needs a stock count first — see below."
+                  : "Warns on the till below this."
+              }
+            >
               <input
                 {...numField("reorder_level")}
               />
@@ -670,6 +677,19 @@ export default function ProductEditor({
               <p className="text-xs text-stone-500">
                 None on the shelf? Enter 0 — that still starts the tracking.
               </p>
+              {/* A reorder level on an untracked item is a number that can
+                  never fire: every notice and reorder query requires BOTH a
+                  reorder level and a stock figure. The box took it, saved it
+                  and showed it back, which reads as "covered" to the person
+                  who set it. It is kept rather than refused — it starts
+                  working the moment this item is counted — but it no longer
+                  pretends to be doing something. */}
+              {f.reorder_level != null && (
+                <p className="text-xs text-amber-700">
+                  "Reorder at {f.reorder_level}" cannot warn you until this
+                  item is counted. Counting it here is what switches it on.
+                </p>
+              )}
             </div>
           )}
 
