@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { adminAdjustStock, adminStockHistory, type ProductInput } from "../lib/adminApi";
+import {
+  adminAdjustStock, adminStockHistory, startCounting, type ProductInput,
+} from "../lib/adminApi";
 import { CURRENCY } from "../lib/config";
 import { money } from "../lib/format";
 import { imageSrc } from "../lib/images";
@@ -68,6 +70,24 @@ export default function ProductEditor({
   const [countTo, setCountTo] = useState("");
   const [countNote, setCountNote] = useState("");
   const [history, setHistory] = useState<StockMovement[] | null>(null);
+
+  /**
+   * What the shelf reads NOW, as opposed to when this dialog opened.
+   *
+   * `f` is a snapshot taken at mount, and it has to be — it is the edit in
+   * progress. Stock is the one field on it that something else can move while
+   * the dialog is open, because Apply below goes straight to the server. Two
+   * things followed from reading stock off `f`: the screen kept showing the
+   * old figure after a count, and — until 0111 — pressing Save afterwards
+   * wrote that stale figure back over the balance with no movement to explain
+   * it. The server no longer accepts stock on an update, so this is now about
+   * the screen telling the truth rather than about losing anything.
+   */
+  const [stockNow, setStockNow] = useState<number | null>(
+    product?.stock_qty ?? null
+  );
+  /** The first count of something never counted. See startCounting. */
+  const [firstCount, setFirstCount] = useState("");
 
   const unit = units.find((u) => u.code === f.unit_code);
   const isNew = !product;
@@ -152,12 +172,41 @@ export default function ProductEditor({
     setBusy(true);
     setError(null);
     try {
-      await adminAdjustStock(pin, product.id, n, countNote || null);
+      setStockNow(await adminAdjustStock(pin, product.id, n, countNote || null));
       setCountTo("");
       setCountNote("");
       setHistory(await adminStockHistory(pin, product.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not adjust stock");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Start counting something that has never been counted.
+   *
+   * The screen this replaces told the truth and was still a dead end: it said
+   * to go to Stock, Receive a delivery — a screen for goods that arrived, and
+   * one that refuses an item not yet live, which is every item sitting in
+   * "Not priced yet". Meanwhile the person is here, holding the thing, and
+   * knows how many there are.
+   */
+  async function beginCount() {
+    const n = num(firstCount);
+    if (n == null || !product) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const now = await startCounting(
+        pin, product.id, n, countNote || "First count"
+      );
+      setStockNow(now);
+      setFirstCount("");
+      setCountNote("");
+      setHistory(await adminStockHistory(pin, product.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start counting this");
     } finally {
       setBusy(false);
     }
@@ -418,7 +467,7 @@ export default function ProductEditor({
                     helpful migration has lost a day. */}
                 {!isNew
                   && !product?.sold_in_packs
-                  && f.stock_qty != null
+                  && stockNow != null
                   && (f.pack_size ?? 0) > 0 && (
                   <div className="rounded-xl bg-amber-50 p-3">
                     <div className="text-sm font-medium">
@@ -426,11 +475,11 @@ export default function ProductEditor({
                     </div>
                     <p className="text-xs text-stone-600 mt-1">
                       On hand is counted in {f.unit_code} for an item sold both
-                      ways. It reads <strong>{f.stock_qty}</strong> — if that
-                      meant {f.stock_qty}{" "}
+                      ways. It reads <strong>{stockNow}</strong> — if that
+                      meant {stockNow}{" "}
                       {f.pack_label?.trim() || "whole ones"}, it should be{" "}
                       <strong>
-                        {Math.round(f.stock_qty * (f.pack_size ?? 1) * 1000) / 1000}
+                        {Math.round(stockNow * (f.pack_size ?? 1) * 1000) / 1000}
                       </strong>
                       . Nothing is changed for you.
                     </p>
@@ -463,13 +512,16 @@ export default function ProductEditor({
               hint={
                 isNew
                   ? "Blank = don't track stock."
-                  : f.stock_qty == null
-                    ? "Not counted yet — see below."
+                  : stockNow == null
+                    ? "Not counted yet — start below."
                     : "Changed by the stock count below."
               }
             >
+              {/* Reads stockNow, not the form, so a count applied a moment ago
+                  shows here instead of the figure this dialog opened with. */}
               <input
                 {...numField("stock_qty")}
+                {...(isNew ? {} : { value: stockNow ?? "" })}
                 disabled={!isNew}
                 className={inputCls + (isNew ? "" : " bg-stone-100")}
               />
@@ -572,23 +624,55 @@ export default function ProductEditor({
               Receive is what starts counting it. A stock count cannot, and
               says so from the server in words nobody can act on:
               "Stock is not tracked for X". */}
-          {!isNew && f.stock_qty == null && (
-            <div className="rounded-xl bg-stone-50 p-3">
+          {!isNew && stockNow == null && (
+            <div className="rounded-xl bg-stone-50 p-3 space-y-2">
               <div className="text-sm font-medium">Stock is not counted for this item</div>
-              <p className="text-xs text-stone-500 mt-1">
-                It still sells, and nothing is deducted. To start counting it,
-                book it in on <strong>Stock → Receive a delivery</strong> — what
-                arrives becomes the first count. A stock count cannot start it.
+              <p className="text-xs text-stone-500">
+                It still sells, and nothing is deducted — so it never runs out,
+                never warns you it is low and never reaches a reorder list.
+                Count what is on the shelf to start tracking it.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  inputMode="decimal"
+                  value={firstCount}
+                  onChange={(e) => setFirstCount(e.target.value)}
+                  placeholder="On shelf"
+                  aria-label="First count"
+                  style={{ width: "6.5rem" }}
+                  className={inputCls + " flex-none"}
+                  disabled={busy}
+                />
+                <button
+                  onClick={beginCount}
+                  disabled={busy || !firstCount}
+                  className="flex-none px-4 py-2 rounded-xl bg-colophon text-paper text-sm disabled:opacity-40"
+                >
+                  Start counting
+                </button>
+              </div>
+              <input
+                value={countNote}
+                onChange={(e) => setCountNote(e.target.value)}
+                placeholder="Reason (e.g. first count, found on shelf)"
+                aria-label="Reason for the count"
+                className={inputCls}
+                disabled={busy}
+              />
+              {/* Zero is a real answer and the box takes it: it starts the
+                  counting without inventing a receipt for goods nobody has. */}
+              <p className="text-xs text-stone-500">
+                None on the shelf? Enter 0 — that still starts the tracking.
               </p>
             </div>
           )}
 
           {/* Stock is only changed through a counted adjustment, so the movement
               ledger can always explain the balance. */}
-          {!isNew && f.stock_qty != null && (
+          {!isNew && stockNow != null && (
             <div className="rounded-xl bg-stone-50 p-3 space-y-2">
               <div className="text-sm font-medium">
-                Stock count — currently {fmtQty(product!.stock_qty ?? 0)}{" "}
+                Stock count — currently {fmtQty(stockNow)}{" "}
                 {f.unit_code}
               </div>
               {/* Three controls on one line came to about 370px of content

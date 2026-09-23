@@ -105,13 +105,20 @@ export async function adminDeleteProduct(
 }
 
 /** Set stock to a counted figure; the difference is written to the ledger. */
+/**
+ * Correct the balance of something already counted, through the ledger.
+ *
+ * Returns what the shelf now reads. The editor needs it: the form it submits
+ * was captured when the dialog opened, and a screen still showing that figure
+ * after a count is how somebody comes to trust the wrong number.
+ */
 export async function adminAdjustStock(
   pin: string,
   productId: string,
   newQty: number,
   note: string | null
-): Promise<void> {
-  const { error } = await supabase.rpc("pos_admin_adjust_stock", {
+): Promise<number | null> {
+  const { data, error } = await supabase.rpc("pos_admin_adjust_stock", {
     p_register_token: requireToken(),
     p_pin: pin,
     p_product_id: productId,
@@ -119,6 +126,53 @@ export async function adminAdjustStock(
     p_note: note,
   });
   if (error) throw error;
+  return stockOf(data);
+}
+
+/**
+ * The balance out of a function that returns one `products` row.
+ *
+ * PostgREST hands a composite back as an object, but the pair of RPCs here
+ * that return `products` are read nowhere else in the app, so nothing has ever
+ * pinned the shape — and the hand-written fake wraps one of them in an array
+ * and the other not. Taking either is cheaper than a wrong guess that only
+ * shows up on a counter.
+ */
+function stockOf(data: unknown): number | null {
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { stock_qty?: number | null }
+    | null
+    | undefined;
+  return row?.stock_qty ?? null;
+}
+
+/**
+ * The first count of something that was never counted (0111).
+ *
+ * An item photographed onto the shelf from the phone has no stock figure at
+ * all, which means NOT TRACKED rather than zero — it never runs out, never
+ * warns and never reorders. Receiving a delivery is the other way to start
+ * one, and it refuses an item that is not yet live, which is every item
+ * waiting to be priced. So this exists for the editor, where the person and
+ * the thing already are.
+ *
+ * Refuses once there is a balance: correcting one is adminAdjustStock's job.
+ */
+export async function startCounting(
+  pin: string,
+  productId: string,
+  qty: number,
+  note: string | null
+): Promise<number | null> {
+  const { data, error } = await supabase.rpc("pos_product_start_count", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_product_id: productId,
+    p_qty: qty,
+    p_note: note,
+  });
+  if (error) throw error;
+  return stockOf(data);
 }
 
 export async function adminStockHistory(

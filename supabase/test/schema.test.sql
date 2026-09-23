@@ -6707,4 +6707,128 @@ begin
 end $$;
 
 
+-- 0111: a price edit is not a stock count -------------------------------------
+--
+-- This is the suite that can prove it. The browser tests drive a hand-written
+-- fake whose save has never written stock on an update, so the fault lived in
+-- the server alone and a green browser run said nothing about it.
+
+do $$
+declare
+  v_tok text; v_p public.products; v_moves int; v_sigs int; v_after numeric;
+begin
+  select token into v_tok from till;
+
+  -- Something tracked, with a balance the ledger can be checked against.
+  v_p := public.pos_admin_save_product(v_tok, '1234', null, 'STK-COUNT-1', null,
+    'Ledger test hammer', null, null, 'ea', 100, null, 40, 'standard', 8, null, true);
+
+  -- A count through the proper door. Two on top of the eight.
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_p.id, 10, 'counted');
+  perform assert_eq(
+    (select stock_qty from public.products where id = v_p.id), 10::numeric,
+    'a stock count moves the balance');
+
+  select count(*)::int into v_moves from public.stock_movements
+   where product_id = v_p.id;
+
+  -- Now the edit that used to undo it. The form the editor submits was
+  -- captured when the dialog opened, so it still carries the OLD eight — and
+  -- the counter presses Save because they came here to fix a price.
+  perform public.pos_admin_save_product(v_tok, '1234', v_p.id, 'STK-COUNT-1', null,
+    'Ledger test hammer', null, null, 'ea', 125, null, 40, 'standard', 8, null, true);
+
+  perform assert_eq(
+    (select stock_qty from public.products where id = v_p.id), 10::numeric,
+    'saving a price does NOT rewrite the balance to the figure on the form');
+  perform assert_eq(
+    (select price_retail from public.products where id = v_p.id), 125::numeric,
+    'and the edit it was actually for still lands');
+  -- The other half, and the one that made this invisible: the revert wrote no
+  -- movement, so nothing in the ledger ever admitted to it.
+  perform assert_eq(
+    (select count(*)::int from public.stock_movements where product_id = v_p.id),
+    v_moves, 'and it writes no movement, because it moved nothing');
+
+  -- Opening stock still works on an INSERT, where there is no ledger to
+  -- disagree with. Without this the fix would have quietly cost every new
+  -- product its starting figure.
+  v_p := public.pos_admin_save_product(v_tok, '1234', null, 'STK-COUNT-2', null,
+    'Opening stock chisel', null, null, 'ea', 60, null, 30, 'standard', 12, null, true);
+  perform assert_eq(v_p.stock_qty, 12::numeric,
+    'a brand-new product still takes its opening stock');
+
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_admin_save_product';
+  perform assert_eq(v_sigs, 1, 'pos_admin_save_product has exactly one signature');
+end $$;
+
+-- 0111: the first count, from where the person is standing --------------------
+
+do $$
+declare
+  v_tok text; v_p public.products; v_out public.products; v_sigs int;
+begin
+  select token into v_tok from till;
+
+  -- What the shelf camera leaves: priced, INACTIVE because nobody has passed
+  -- it yet, and stock_qty null — not tracked, as opposed to none in stock.
+  v_p := public.pos_admin_save_product(v_tok, '1234', null, 'SHELF-TEST-1', null,
+    'Shelf found bow saw', null, null, 'ea', 0, null, null, 'standard', null, null,
+    false);
+  perform assert_eq(v_p.stock_qty, null::numeric, 'it arrives untracked');
+  perform assert_eq(v_p.active, false, 'and not yet live');
+
+  -- The old door is shut to exactly this item, which is why 0111 exists:
+  -- receiving demands an active product.
+  perform assert_refuses(format(
+    'select public.pos_receive_stock(%L, %L, %L::jsonb, null, null, true)',
+    v_tok, '1234',
+    jsonb_build_array(jsonb_build_object('product_id', v_p.id, 'qty', 6))::text),
+    'receiving refuses an item that is not live yet');
+
+  -- The new one is not, and does not ask whether it is live.
+  v_out := public.pos_product_start_count(v_tok, '1234', v_p.id, 6, 'Counted on the shelf');
+  perform assert_eq(v_out.stock_qty, 6::numeric, 'the first count starts the tracking');
+  perform assert_eq(
+    (select count(*)::int from public.stock_movements
+      where product_id = v_p.id and reason = 'receipt'), 1,
+    'and it goes through the ledger like everything else');
+  -- From nothing to what was counted. A movement whose qty_after does not
+  -- follow from its delta is how the balance and the ledger drift apart.
+  perform assert_eq(
+    (select qty_after from public.stock_movements where product_id = v_p.id),
+    6::numeric, 'the movement reads nothing-to-six');
+
+  -- Twice is refused: correcting a balance is the stock count's job, and two
+  -- doors onto one job is how they come to disagree.
+  perform assert_refuses(format(
+    'select public.pos_product_start_count(%L, %L, %L, 9)', v_tok, '1234', v_p.id),
+    'a first count is refused once there is a balance');
+
+  -- Counted none starts the tracking without inventing a receipt.
+  v_p := public.pos_admin_save_product(v_tok, '1234', null, 'SHELF-TEST-2', null,
+    'Shelf found empty hook', null, null, 'ea', 0, null, null, 'standard', null,
+    null, false);
+  v_out := public.pos_product_start_count(v_tok, '1234', v_p.id, 0, null);
+  perform assert_eq(v_out.stock_qty, 0::numeric, 'counting none still starts it');
+  perform assert_eq(
+    (select count(*)::int from public.stock_movements where product_id = v_p.id),
+    0, 'and writes no movement for goods nobody has');
+
+  perform assert_refuses(format(
+    'select public.pos_product_start_count(%L, %L, %L, -1)', v_tok, '1234', v_p.id),
+    'a negative first count is refused');
+
+  -- A cashier cannot start counting shelves.
+  perform assert_refuses(format(
+    'select public.pos_product_start_count(%L, %L, %L, 5)', v_tok, '9999', v_p.id),
+    'and a PIN without manage_inventory is refused at the door');
+
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_product_start_count';
+  perform assert_eq(v_sigs, 1, 'pos_product_start_count has exactly one signature');
+end $$;
+
+
 select 'all database tests passed' as result;

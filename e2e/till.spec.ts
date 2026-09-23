@@ -7756,21 +7756,75 @@ test("Look it up answers price, stock and bin with the line down", async ({ page
   await expect(page.getByText(/as the phone last saw it/i)).toBeVisible();
 });
 
-test("an item that was never counted says how to start counting it", async ({ page }) => {
+test("an item that was never counted is counted from the editor itself", async ({ page }) => {
   // Wood Glue is what the Shelf screen leaves behind: priced, never counted,
   // stock_qty null. The editor greys On hand after creation — right, because
   // stock moves through the ledger — and for this item it then showed nothing
-  // at all: no count box either, because there is no balance to correct. So
-  // the figure read as unreachable and a manager reasonably concluded the
-  // item was broken. It is not; Receive is what starts it.
+  // at all: no count box either, because there is no balance to correct.
+  //
+  // It used to point at Stock → Receive a delivery. True, and still a dead
+  // end: that screen is for goods that arrived, and pos_receive_stock refuses
+  // an item that is not live — which is every item sitting in "Not priced
+  // yet". Meanwhile the person is HERE, holding the thing, and knows there
+  // are six. So the first count happens where they are standing (0111).
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.locator("tr", { hasText: "Wood Glue 500ml" }).first().click();
 
   await expect(page.getByText("Stock is not counted for this item")).toBeVisible();
-  await expect(page.getByText(/Receive a delivery/)).toBeVisible();
-  // And the locked field points at it rather than sitting there mute.
-  await expect(page.getByText("Not counted yet — see below.")).toBeVisible();
+  await expect(page.getByText("Not counted yet — start below.")).toBeVisible();
+
+  await page.getByLabel("First count").fill("6");
+  await page.getByLabel("Reason for the count").fill("Counted on the shelf");
+  await page.getByRole("button", { name: "Start counting" }).click();
+
+  // The panel becomes the ordinary count box, because it is now an ordinary
+  // counted item — and the greyed field agrees, rather than still reading
+  // blank because it was drawn from the form this dialog opened with.
+  await expect(page.getByText(/Stock count — currently 6/)).toBeVisible();
+  await expect(page.getByText("Stock is not counted for this item")).toHaveCount(0);
+  await expect(page.getByLabel("On hand")).toHaveValue("6");
+
+  // And the shelf moved through the ledger, which is the point of doing it
+  // this way rather than writing the figure into the row.
+  expect(be.stockMoves).toEqual([
+    { product_id: "p7", qty_delta: 6, reason: "receipt", note: "Counted on the shelf" },
+  ]);
+});
+
+test("counting none still starts the tracking, and invents no receipt", async ({ page }) => {
+  // Zero is a real answer — the shelf is empty but the shop wants to know when
+  // it stops being empty. Without this, "start counting" would be unreachable
+  // for exactly the item most worth reordering. The second assertion is the
+  // one that matters: starting at nothing must not write a goods-received
+  // movement for goods nobody has.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Wood Glue 500ml" }).first().click();
+
+  await page.getByLabel("First count").fill("0");
+  await page.getByRole("button", { name: "Start counting" }).click();
+
+  await expect(page.getByText(/Stock count — currently 0/)).toBeVisible();
+  expect(be.stockMoves).toEqual([]);
+});
+
+test("the on-hand figure follows a count instead of the one the dialog opened with", async ({ page }) => {
+  // The staleness that hid the worse fault. `f` is captured at mount and has
+  // to be — it is the edit in progress — but Apply goes straight to the
+  // server, so reading stock off the form left the screen showing the opening
+  // figure after a count had already moved it. A manager reads that number and
+  // believes it.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Padlock 50mm Brass" }).first().click();
+
+  await expect(page.getByLabel("On hand")).toHaveValue("45");
+  await page.getByLabel("Counted quantity").fill("41");
+  await page.getByRole("button", { name: "Apply" }).click();
+
+  await expect(page.getByText(/Stock count — currently 41/)).toBeVisible();
+  await expect(page.getByLabel("On hand")).toHaveValue("41");
 });
 
 test("an item that IS counted offers the count, not the receiving advice", async ({ page }) => {

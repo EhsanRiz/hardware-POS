@@ -2559,6 +2559,39 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         prod.stock_qty = newQty;
         return json(prod);
       }
+      /**
+       * 0111: the first count of something never counted.
+       *
+       * Modelled down to the refusals, because they are the whole reason the
+       * function exists separately from the adjustment above: that one demands
+       * an existing balance, this one demands the absence of it, and neither
+       * asks whether the item is live — an item waiting to be priced is not.
+       */
+      case "rpc/pos_product_start_count": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        {
+          const no = pinLacks(body.p_pin, "manage_inventory");
+          if (no) return fail(no);
+        }
+        const prod = PRODUCTS.find((x) => x.id === body.p_product_id);
+        if (!prod) return fail("Product not found");
+        const qty = Number(body.p_qty);
+        if (!(qty >= 0)) return fail("A first count cannot be negative");
+        if (prod.stock_qty != null) {
+          return fail(`${prod.name} is already counted — use the stock count instead`);
+        }
+        // Zero first, so the movement reads nothing-to-what-was-counted, and
+        // so that counting none still starts the tracking.
+        prod.stock_qty = 0;
+        if (qty > 0) {
+          be.stockMoves.push({
+            product_id: prod.id, qty_delta: qty, reason: "receipt",
+            note: (body.p_note as string) || "First count",
+          });
+          prod.stock_qty = qty;
+        }
+        return json(prod);
+      }
       case "rpc/pos_accounts_overview":
         if (!tokenOk) return fail("Register not paired or revoked");
         return json(
