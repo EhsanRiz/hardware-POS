@@ -6831,4 +6831,94 @@ begin
 end $$;
 
 
+-- 0112: one code per item, however it is typed -------------------------------
+
+do $$
+declare
+  v_tok text; v_a public.products; v_b public.products; v_msg text;
+  v_n int; v_sigs int; v_out record;
+begin
+  select token into v_tok from till;
+
+  v_a := public.pos_admin_save_product(v_tok, '1234', null, 'CEM50', null,
+    'Cement 50kg', null, null, 'ea', 95, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.sku, 'CEM50', 'a typed code is the code');
+
+  -- The same code again NAMES what holds it, rather than showing the counter
+  -- a constraint. This is the whole point: "photograph this and send it to
+  -- the vendor" is not an error message.
+  begin
+    perform public.pos_admin_save_product(v_tok, '1234', null, 'CEM50', null,
+      'Cement other', null, null, 'ea', 95, null, null, 'standard', 0, null, true);
+    perform assert(false, 'a duplicate code is refused');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'The code CEM50 is already used by Cement 50kg',
+    'and the refusal says which item already has it');
+
+  -- The one that sells the wrong item. lower-case cem50 used to be accepted
+  -- beside CEM50, and lib/search compares case-folded, so a scan then picked
+  -- whichever row came first.
+  begin
+    v_msg := null;
+    perform public.pos_admin_save_product(v_tok, '1234', null, 'cem50', null,
+      'Cement lower', null, null, 'ea', 95, null, null, 'standard', 0, null, true);
+    perform assert(false, 'a code differing only in case is refused');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'The code cem50 is already used by Cement 50kg',
+    'and it is refused by the same sentence, not a constraint');
+
+  -- And the index says so too, under any caller. A guard in one function is
+  -- not a rule; the next function to insert a product would not have it.
+  perform assert_refuses(format(
+    'insert into public.products(org_id, sku, name, unit_code, price_retail)
+       values (%L, %L, %L, %L, 1)',
+    v_a.org_id, 'cEm50', 'Straight past the function', 'ea'),
+    'and the index refuses a case-variant however it is written');
+
+  -- THE EDIT THAT MUST STILL WORK. An ordinary save keeps the product's own
+  -- code, and a duplicate check that forgot to exclude this row would refuse
+  -- every price change in the catalogue.
+  v_a := public.pos_admin_save_product(v_tok, '1234', v_a.id, 'CEM50', null,
+    'Cement 50kg', null, null, 'ea', 102, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.price_retail, 102::numeric,
+    'saving an item that keeps its own code is not a clash with itself');
+
+  -- Re-spelling your own code is allowed, for the same reason.
+  v_a := public.pos_admin_save_product(v_tok, '1234', v_a.id, 'cem50', null,
+    'Cement 50kg', null, null, 'ea', 102, null, null, 'standard', 0, null, true);
+  perform assert_eq(v_a.sku, 'cem50', 'and an item may re-spell its own code');
+
+  -- A generated code still lands, and cannot collide with a typed one.
+  v_b := public.pos_admin_save_product(v_tok, '1234', null, '', null,
+    'Something unnamed', null, null, 'ea', 10, null, null, 'standard', 0, null, true);
+  perform assert(v_b.sku ~ '^SKU-\d{6}$', 'a blank box still draws from the sequence');
+
+  -- The spreadsheet import finds it however it was spelt, and UPDATES rather
+  -- than creating the second row the old exact match would have made — or,
+  -- once the index landed, rejecting the line and silently skipping the price.
+  select count(*) into v_n from public.products
+   where org_id = v_a.org_id and lower(sku) = 'cem50';
+  perform assert_eq(v_n, 1, 'one cement before the import');
+  select * into v_out from public.pos_admin_import_products(v_tok, '1234',
+    jsonb_build_array(jsonb_build_object('sku', 'CEM50', 'price', 111)));
+  perform assert_eq(v_out.outcome, 'updated',
+    'a price list row matches the item whatever case it is in');
+  select count(*) into v_n from public.products
+   where org_id = v_a.org_id and lower(sku) = 'cem50';
+  perform assert_eq(v_n, 1, 'and no second cement was created');
+  perform assert_eq(
+    (select price_retail from public.products where id = v_a.id), 111::numeric,
+    'and the price it carried actually landed');
+
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_admin_import_products';
+  perform assert_eq(v_sigs, 1, 'pos_admin_import_products has exactly one signature');
+  select count(*) into v_sigs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'pos_admin_save_product';
+  perform assert_eq(v_sigs, 1, 'pos_admin_save_product has exactly one signature');
+end $$;
+
+
 select 'all database tests passed' as result;

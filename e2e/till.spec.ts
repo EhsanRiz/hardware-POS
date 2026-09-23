@@ -7827,6 +7827,62 @@ test("the on-hand figure follows a count instead of the one the dialog opened wi
   await expect(page.getByLabel("On hand")).toHaveValue("41");
 });
 
+test("a stock code already in use is refused by name, not by a constraint", async ({ page }) => {
+  // 5 Star keep their own codes — CEM50 for a bag of cement — and want to type
+  // them instead of living with SKU-000284. Two products holding one code is
+  // the thing to prevent: lib/search's exactMatch compares case-folded and
+  // returns the FIRST match, so the loser of a clash is rung up at the
+  // winner's price with nothing on screen to say so.
+  //
+  // The refusal has to name the item that already holds the code. It used to
+  // be a raw "duplicate key value violates unique constraint
+  // products_org_sku_key", which is something a shopkeeper photographs and
+  // sends to the vendor rather than something they act on.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /New product/i }).click();
+
+  await page.getByLabel("Name").fill("Cement, second bag");
+  await page.getByLabel("SKU").fill("CEM-425-50");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByText("The code CEM-425-50 is already used by Cement 42.5N 50kg")
+  ).toBeVisible();
+
+  // The half that sells the wrong item: differing only in case was ACCEPTED,
+  // because the index was case-sensitive while the scanner is not.
+  await page.getByLabel("SKU").fill("cem-425-50");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByText("The code cem-425-50 is already used by Cement 42.5N 50kg")
+  ).toBeVisible();
+
+  // A free code saves, so the refusal is about the clash and not about the
+  // screen being broken.
+  await page.getByLabel("SKU").fill("CEM50");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "CEM50" })).toBeVisible();
+});
+
+test("an ordinary edit keeps the item's own code without clashing with itself", async ({ page }) => {
+  // The case a duplicate check forgets. Saving a price on an existing item
+  // sends that item's own code back, and a check that did not exclude the row
+  // being saved would refuse every edit in the catalogue — the fix being far
+  // worse than the fault.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.locator("tr", { hasText: "Cement 42.5N 50kg" }).first().click();
+
+  await expect(page.getByLabel("SKU")).toHaveValue("CEM-425-50");
+  await page.getByLabel(/^Retail/).fill("119");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(page.getByText(/already used by/)).toHaveCount(0);
+  await expect(
+    page.locator("tr", { hasText: "Cement 42.5N 50kg" }).first()
+  ).toContainText("119");
+});
+
 test("an item that IS counted offers the count, not the receiving advice", async ({ page }) => {
   // The other half: a tracked item must keep its count box and must NOT be
   // told to go and receive something. Without this the first test would pass

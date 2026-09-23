@@ -3034,12 +3034,29 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
         const pct = body.p_max_discount_percent;
+        /**
+         * Whoever already holds this code, case-folded, excluding the product
+         * being saved (0112).
+         *
+         * This lived here as `x.sku === sku` with a message of its own — "That
+         * SKU already exists" — which the SERVER has never said, and which was
+         * case-SENSITIVE besides. So the fake was both kinder and stricter
+         * than the real thing in different directions, and the browser suite
+         * could see neither fault. The wording below is the server's, to the
+         * letter, because a test that asserts the fake's own invention proves
+         * only that the fake is self-consistent.
+         */
+        const codeHeldBy = (code: string, exceptId?: string) =>
+          PRODUCTS.find(
+            (x) => x.sku.toLowerCase() === code.toLowerCase() && x.id !== exceptId
+          )?.name ?? null;
         if (body.p_id == null) {
           // 0053: born with the shop's next code unless one was typed.
           if (!String(body.p_name ?? "").trim()) return fail("A name is required");
           const typed = String(body.p_sku ?? "").trim();
           const sku = typed || "SKU-" + String(++be.skuSeq).padStart(6, "0");
-          if (PRODUCTS.some((x) => x.sku === sku)) return fail("That SKU already exists");
+          const taken = codeHeldBy(sku);
+          if (taken) return fail(`The code ${sku} is already used by ${taken}`);
           const made = mk("new" + PRODUCTS.length, sku, (body.p_barcode as string) || null,
             String(body.p_name), "ea", "Each", false, Number(body.p_price_retail ?? 0),
             null, Number(body.p_stock_qty ?? 0), null);
@@ -3050,6 +3067,15 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!p) return fail("Product not found");
         if (pct != null && (Number(pct) < 0 || Number(pct) > 100)) {
           return fail("A discount cap is a percentage between 0 and 100");
+        }
+        // A typed code on an EXISTING product, which this did not handle at
+        // all: the sku was neither checked nor kept, so a rename was a no-op
+        // here and an ordinary save could not be seen to clash with itself.
+        const typedSku = String(body.p_sku ?? "").trim();
+        if (typedSku) {
+          const taken = codeHeldBy(typedSku, p.id);
+          if (taken) return fail(`The code ${typedSku} is already used by ${taken}`);
+          p.sku = typedSku;
         }
         // Null clears the cap, unlike the picture in 0027 — an empty box has
         // to be able to remove one.

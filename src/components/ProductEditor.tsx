@@ -3,6 +3,7 @@ import {
   adminAdjustStock, adminStockHistory, startCounting, type ProductInput,
 } from "../lib/adminApi";
 import { CURRENCY } from "../lib/config";
+import { errorMessage } from "../lib/errors";
 import { money } from "../lib/format";
 import { imageSrc } from "../lib/images";
 import { fmtQty } from "../lib/receipt";
@@ -155,13 +156,18 @@ export default function ProductEditor({
   // counter machine that has no lens. See lib/device.ts.
   const canScan = useCamera();
 
+  // Every catch below goes through errorMessage, NOT `e instanceof Error`.
+  // supabase-js does not throw — api.ts rethrows the plain object it returns,
+  // so the instanceof check misses every server message and the counter gets
+  // the fallback instead. That is how "The code CEM50 is already used by
+  // Cement 50kg" arrived at this screen as "Could not save". See lib/errors.
   async function save() {
     setBusy(true);
     setError(null);
     try {
       await onSave(f);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save");
+      setError(errorMessage(e, "Could not save"));
       setBusy(false);
     }
   }
@@ -177,7 +183,7 @@ export default function ProductEditor({
       setCountNote("");
       setHistory(await adminStockHistory(pin, product.id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not adjust stock");
+      setError(errorMessage(e, "Could not adjust stock"));
     } finally {
       setBusy(false);
     }
@@ -206,7 +212,7 @@ export default function ProductEditor({
       setCountNote("");
       setHistory(await adminStockHistory(pin, product.id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start counting this");
+      setError(errorMessage(e, "Could not start counting this"));
     } finally {
       setBusy(false);
     }
