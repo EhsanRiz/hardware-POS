@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import InstallButton from "../components/InstallButton";
 import ScanButton from "../components/ScanButton";
 import { joinCount, type CountUnit } from "../lib/countApi";
 import {
   addCapture,
+  carryOn,
+  finish,
   getCaptures,
   getSession,
   getState,
@@ -13,8 +16,10 @@ import {
   startSession,
   syncCaptures,
   undoCapture,
+  unsentCount,
   type LocalCapture,
 } from "../lib/countStore";
+import { downscaleImage } from "../lib/images";
 import { errorMessage } from "../lib/errors";
 import { onNetworkChange, useOnline } from "../lib/offline";
 import { normalizeSearchText } from "../lib/search";
@@ -76,7 +81,7 @@ export default function CountApp() {
     // go without the connection check ever calling it down, and then there
     // is no "back" to wait for.
     const retry = setInterval(() => {
-      if (getCaptures().some((c) => c.state === "waiting" || c.state === "voiding")) {
+      if (unsentCount() > 0) {
         void syncCaptures();
       }
     }, 10_000);
@@ -91,7 +96,18 @@ export default function CountApp() {
     return (
       <Ended
         reason={session.ended}
-        unsent={captures.filter((c) => c.state !== "sent").length}
+        unsent={unsentCount(captures)}
+      />
+    );
+  }
+  // Said "I'm done". Still on the count — the code still holds, the phone
+  // still sends — until the shop posts it or the counter carries on.
+  if (session.finished) {
+    return (
+      <Finished
+        shop={session.shop_name}
+        doc={session.doc_number}
+        counted={captures.filter((c) => c.state === "sent").length}
       />
     );
   }
@@ -175,6 +191,39 @@ function Join() {
           {busy ? "Joining…" : "Start counting"}
         </button>
       </form>
+      {/* On the phone's home screen, Count opens straight here: no address
+          to type again tomorrow. Its own icon, apart from the till's. */}
+      <InstallButton className="count-install" />
+    </main>
+  );
+}
+
+function Finished({ shop, doc, counted }: { shop: string; doc: string; counted: number }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <main className="count-app">
+      <h1 className="count-title">You're done</h1>
+      <p className="count-lede">
+        {counted} count{counted === 1 ? "" : "s"} sent to {shop} ({doc}). The shop
+        posts the count once everybody has said they are done — until then you
+        can go back and add more.
+      </p>
+      {error && <p className="acc-note is-bad" role="alert">{error}</p>}
+      <button
+        type="button"
+        className="btn-line count-go"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setError(null);
+          carryOn()
+            .catch((e) => setError(errorMessage(e, "Could not go back to counting")))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Carry on counting
+      </button>
     </main>
   );
 }
@@ -333,7 +382,8 @@ function Counting({
     return () => clearTimeout(t);
   }, [flash]);
 
-  const waiting = captures.filter((c) => c.state === "waiting" || c.state === "voiding").length;
+  // Counts, take-backs and photos: everything still in the phone's pocket.
+  const waiting = unsentCount(captures);
   const failed = captures.filter((c) => c.state === "failed").length;
   const mine = [...captures].reverse();
 
@@ -371,9 +421,9 @@ function Counting({
             pick={sheet.pick}
             unit={unitOf(sheet.pick.unit_code)}
             onCancel={() => setSheet(null)}
-            onSave={(qty) => {
+            onSave={(qty, photos) => {
               const p = sheet.pick;
-              addCapture(
+              void addCapture(
                 {
                   product_id: p.product_id,
                   new_item_id: p.new_item_id,
@@ -385,7 +435,8 @@ function Counting({
                   qty,
                   location: location.trim() || null,
                 },
-                p.name
+                p.name,
+                photos
               );
               saved(`Saved: ${qty} ${unitOf(p.unit_code).name} — ${p.name}`);
             }}
@@ -397,7 +448,7 @@ function Counting({
             units={units}
             onCancel={() => setSheet(null)}
             onSave={(n) => {
-              addCapture(
+              void addCapture(
                 {
                   product_id: null,
                   new_item_id: null,
@@ -407,7 +458,8 @@ function Counting({
                   qty: n.qty,
                   location: location.trim() || null,
                 },
-                n.name
+                n.name,
+                n.photos
               );
               saved(`Saved: ${n.qty} ${unitOf(n.unit_code).name} — ${n.name} (new)`);
             }}
@@ -496,6 +548,18 @@ function Counting({
               </div>
               <div className="count-row-meta">
                 {c.location && <span>{c.location}</span>}
+                {(c.photos ?? []).length > 0 && (
+                  <span>
+                    {(() => {
+                      const ps = c.photos ?? [];
+                      const sent = ps.filter((x) => x.state === "sent").length;
+                      const bad = ps.find((x) => x.state === "failed");
+                      return bad
+                        ? `photo refused: ${bad.error ?? ""}`
+                        : `${ps.length} photo${ps.length === 1 ? "" : "s"}${sent === ps.length ? " sent" : ""}`;
+                    })()}
+                  </span>
+                )}
                 <span>
                   {c.state === "sent"
                     ? "sent"
@@ -520,7 +584,126 @@ function Counting({
           ))}
         </ul>
       </section>
+
+      <DoneButton />
+      <InstallButton className="count-install" />
     </main>
+  );
+}
+
+/**
+ * "I'm done" — the counter's own word on their own count. Asked twice, because
+ * the shop may post straight after it; and refused on the phone while
+ * anything is still waiting to send.
+ */
+function DoneButton() {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <section className="count-done" aria-label="Finish">
+      {error && <p className="acc-note is-bad" role="alert">{error}</p>}
+      {asking ? (
+        <>
+          <p className="acc-note">
+            Finished your part? The shop posts the count once everybody has said
+            so. You can still come back until it is posted.
+          </p>
+          <button
+            type="button"
+            className="btn-line count-go"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              finish()
+                .catch((e) => {
+                  setError(errorMessage(e, "Could not tell the shop you are done"));
+                  setAsking(false);
+                })
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "Sending…" : "Yes, I'm done"}
+          </button>
+          <button type="button" className="btn-cancel" onClick={() => setAsking(false)}>
+            Not yet
+          </button>
+        </>
+      ) : (
+        <button type="button" className="btn-line count-add" onClick={() => setAsking(true)}>
+          I'm done counting
+        </button>
+      )}
+    </section>
+  );
+}
+
+/** As many photos as one stop at a shelf is worth (the server's limit too). */
+const MAX_PHOTOS = 4;
+
+/**
+ * Photos of the thing being counted: the reviewer pricing "Andolex" tomorrow
+ * was not standing in front of it. The phone's own camera through a file
+ * input — no viewfinder to build, and it works the same on iPhone and
+ * Android. Shrunk before it is kept, as the shelf screen does.
+ */
+function PhotoPicker({
+  photos,
+  setPhotos,
+  name,
+}: {
+  photos: string[];
+  setPhotos: (p: string[]) => void;
+  name: string;
+}) {
+  const input = useRef<HTMLInputElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="count-photos">
+      {photos.length > 0 && (
+        <ul className="count-thumbs" aria-label={`Photos of ${name || "this item"}`}>
+          {photos.map((src, i) => (
+            <li key={i}>
+              <img src={src} alt={`Photo ${i + 1}`} />
+              <button
+                type="button"
+                className="count-thumb-x"
+                aria-label={`Remove photo ${i + 1}`}
+                onClick={() => setPhotos(photos.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {photos.length < MAX_PHOTOS && (
+        <button type="button" className="btn-line count-add" onClick={() => input.current?.click()}>
+          {photos.length ? "Take another photo" : "Take a photo"}
+        </button>
+      )}
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        aria-label="Photo"
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          setError(null);
+          try {
+            setPhotos([...photos, await downscaleImage(file)].slice(0, MAX_PHOTOS));
+          } catch {
+            setError("That photo could not be read — try again");
+          }
+        }}
+      />
+      {error && <p className="acc-note is-bad">{error}</p>}
+    </div>
   );
 }
 
@@ -545,10 +728,11 @@ function CountSheet({
 }: {
   pick: Pick;
   unit: CountUnit;
-  onSave: (qty: number) => void;
+  onSave: (qty: number, photos: string[]) => void;
   onCancel: () => void;
 }) {
   const [qty, setQty] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   return (
     <form
@@ -557,7 +741,7 @@ function CountSheet({
         e.preventDefault();
         const q = readQty(qty, unit);
         if (typeof q === "string") setError(q);
-        else onSave(q);
+        else onSave(q, photos);
       }}
     >
       <h2 className="count-h2">{pick.name}</h2>
@@ -579,6 +763,7 @@ function CountSheet({
           aria-label={`How many ${pick.name}`}
         />
       </label>
+      <PhotoPicker photos={photos} setPhotos={setPhotos} name={pick.name} />
       {error && <p className="acc-note is-bad" role="alert">{error}</p>}
       <div className="count-sheet-actions">
         <button type="submit" className="btn-line count-go">
@@ -602,13 +787,14 @@ function NewItemSheet({
   name: string;
   barcode: string;
   units: CountUnit[];
-  onSave: (n: { name: string; barcode: string; unit_code: string; qty: number }) => void;
+  onSave: (n: { name: string; barcode: string; unit_code: string; qty: number; photos: string[] }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(startName);
   const [barcode, setBarcode] = useState(startBarcode);
   const [unitCode, setUnitCode] = useState("ea");
   const [qty, setQty] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const unit = units.find((u) => u.code === unitCode) ?? {
     code: unitCode, name: unitCode, allows_fraction: false,
@@ -633,7 +819,7 @@ function NewItemSheet({
           setError(q);
           return;
         }
-        onSave({ name: name.trim(), barcode: b, unit_code: unitCode, qty: q });
+        onSave({ name: name.trim(), barcode: b, unit_code: unitCode, qty: q, photos });
       }}
     >
       <h2 className="count-h2">Something the shop has not listed</h2>
@@ -693,6 +879,7 @@ function NewItemSheet({
           aria-label="How many of the new item"
         />
       </label>
+      <PhotoPicker photos={photos} setPhotos={setPhotos} name={name} />
       {error && <p className="acc-note is-bad" role="alert">{error}</p>}
       <div className="count-sheet-actions">
         <button type="submit" className="btn-line count-go">

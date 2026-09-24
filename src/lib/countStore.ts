@@ -13,7 +13,10 @@
 // not the till's to throw away.
 import {
   countState,
+  finishCount,
+  resumeCount,
   sendCapture,
+  uploadCountPhoto,
   voidCapture,
   type CaptureInput,
   type CountJoin,
@@ -21,6 +24,7 @@ import {
 } from "./countApi";
 import { rawErrorMessage } from "./errors";
 import { isNetworkError } from "./offline";
+import { dropAllPhotos, dropPhoto, keepPhoto, readPhoto } from "./countPhotos";
 
 const SESSION_KEY = "count.session";
 const STATE_KEY = "count.state";
@@ -37,15 +41,28 @@ export interface CountSession {
   location: string;
   /** Why the phone can no longer count, once the server has said so. */
   ended: string | null;
+  /**
+   * The counter said "I'm done" (0115). Only they can say it, and they can
+   * take it back until the count is posted; nothing else ends their count.
+   */
+  finished?: boolean;
 }
 
 export type CaptureState = "waiting" | "sent" | "failed" | "voiding";
+
+/** A photo taken with a count. The picture itself waits in countPhotos. */
+export interface LocalPhoto {
+  ref: string;
+  state: "waiting" | "sent" | "failed";
+  error: string | null;
+}
 
 export interface LocalCapture extends CaptureInput {
   /** What the counter saw on the screen: the item's name. */
   label: string;
   state: CaptureState;
   error: string | null;
+  photos?: LocalPhoto[];
 }
 
 function read<T>(key: string, fallback: T): T {
@@ -106,6 +123,7 @@ export function startSession(j: CountJoin): void {
   // unsent from a finished count cannot be sent anywhere now.
   write(CAPTURES_KEY, []);
   write(STATE_KEY, null);
+  void dropAllPhotos();
   write(SESSION_KEY, {
     token: j.token,
     job_id: j.job_id,
@@ -115,6 +133,7 @@ export function startSession(j: CountJoin): void {
     counter_name: j.counter_name,
     location: "",
     ended: null,
+    finished: false,
   } satisfies CountSession);
   changed();
 }
@@ -123,7 +142,44 @@ export function leaveSession(): void {
   write(SESSION_KEY, null);
   write(STATE_KEY, null);
   write(CAPTURES_KEY, []);
+  void dropAllPhotos();
   changed();
+}
+
+/** What this phone still has to send: counts, take-backs and photos. */
+export function unsentCount(list: LocalCapture[] = getCaptures()): number {
+  let n = 0;
+  for (const c of list) {
+    if (c.state === "waiting" || c.state === "voiding") n++;
+    if (c.state !== "failed") n += (c.photos ?? []).filter((p) => p.state === "waiting").length;
+  }
+  return n;
+}
+
+/**
+ * "I'm done." Refused while anything is still on the phone: the shop posts on
+ * the strength of this, and a count still in a pocket would miss the post.
+ */
+export async function finish(): Promise<void> {
+  const s = getSession();
+  if (!s || s.ended) return;
+  await syncCaptures();
+  const left = unsentCount();
+  if (left > 0) {
+    throw new Error(
+      `${left} still to send from this phone. Find signal, let them go, then try again.`
+    );
+  }
+  await finishCount(s.token);
+  patchSession({ finished: true });
+}
+
+/** "Not done after all." */
+export async function carryOn(): Promise<void> {
+  const s = getSession();
+  if (!s || s.ended) return;
+  await resumeCount(s.token);
+  patchSession({ finished: false });
 }
 
 export function setLocation(location: string): void {
@@ -161,11 +217,22 @@ function newRef(): string {
   }
 }
 
-/** Write a capture down. It is kept whether or not it can be sent yet. */
-export function addCapture(
+/**
+ * Write a capture down, with any photos taken of it. Kept whether or not it
+ * can be sent yet; the photos wait in IndexedDB before the capture is listed,
+ * so a capture on the list never points at a photo that was not kept.
+ */
+export async function addCapture(
   c: Omit<CaptureInput, "client_ref" | "captured_at">,
-  label: string
-): LocalCapture {
+  label: string,
+  photos: string[] = []
+): Promise<LocalCapture> {
+  const kept: LocalPhoto[] = [];
+  for (const dataUrl of photos) {
+    const ref = newRef();
+    await keepPhoto(ref, dataUrl);
+    kept.push({ ref, state: "waiting", error: null });
+  }
   const capture: LocalCapture = {
     ...c,
     client_ref: newRef(),
@@ -173,6 +240,7 @@ export function addCapture(
     label,
     state: "waiting",
     error: null,
+    photos: kept,
   };
   saveCaptures([...getCaptures(), capture]);
   void syncCaptures();
@@ -187,6 +255,7 @@ export function undoCapture(ref: string): void {
   const list = getCaptures();
   const c = list.find((x) => x.client_ref === ref);
   if (!c) return;
+  for (const p of c.photos ?? []) void dropPhoto(p.ref);
   // Refused, or never sent and not on its way right now: nothing to tell the
   // server. One being sent at this moment may land, so it is taken back
   // properly like any other.
@@ -257,6 +326,37 @@ export async function syncCaptures(): Promise<void> {
         update(c.client_ref, { state: "failed", error: m });
       }
     }
+    // Then the photos, for counts the server now holds. A photo is only ever
+    // sent after its count, because it hangs on that count.
+    if (!lineDown && !getSession()?.ended) {
+      outer: for (const c of getCaptures()) {
+        if (c.state !== "sent") continue;
+        for (const p of c.photos ?? []) {
+          if (p.state !== "waiting") continue;
+          const dataUrl = await readPhoto(p.ref);
+          if (!dataUrl) {
+            setPhoto(c.client_ref, p.ref, { state: "failed", error: "The photo was lost on this phone" });
+            continue;
+          }
+          try {
+            await uploadCountPhoto(s.token, c.client_ref, p.ref, dataUrl);
+            setPhoto(c.client_ref, p.ref, { state: "sent", error: null });
+            void dropPhoto(p.ref);
+          } catch (e) {
+            if (isNetworkError(e)) {
+              lineDown = true;
+              break outer;
+            }
+            const m = rawErrorMessage(e, "The photo was refused");
+            if (isEnded(m)) {
+              patchSession({ ended: m });
+              break outer;
+            }
+            setPhoto(c.client_ref, p.ref, { state: "failed", error: m });
+          }
+        }
+      }
+    }
   } finally {
     syncing = false;
     inFlight = null;
@@ -265,6 +365,16 @@ export async function syncCaptures(): Promise<void> {
   // Something new went up: the phone's list of new items should know its id,
   // and whatever the other counter has met since.
   if (learned) void refreshState();
+}
+
+function setPhoto(captureRef: string, photoRef: string, patch: Partial<LocalPhoto>): void {
+  saveCaptures(
+    getCaptures().map((x) =>
+      x.client_ref === captureRef
+        ? { ...x, photos: (x.photos ?? []).map((p) => (p.ref === photoRef ? { ...p, ...patch } : p)) }
+        : x
+    )
+  );
 }
 
 function update(ref: string, patch: Partial<LocalCapture>): void {

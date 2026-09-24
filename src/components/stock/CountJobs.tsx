@@ -20,6 +20,7 @@ import {
 } from "../../lib/countApi";
 import { fmtDayMonthTime } from "../../lib/dates";
 import { errorMessage } from "../../lib/errors";
+import { imageSrc } from "../../lib/images";
 import { fmtQty } from "../../lib/receipt";
 import type { Category, Product, UnitOfMeasure } from "../../lib/types";
 
@@ -126,6 +127,8 @@ export default function CountJobs({
   }
 
   const unitName = (code: string) => units.find((u) => u.code === code)?.name ?? code;
+  // 0115: posting waits for everybody still on the count to say they are done.
+  const stillCounting = counters.filter((k) => k.active && !k.finished_at);
   const pending = fresh.filter((n) => n.decision === "pending" && n.captures > 0).length;
 
   return (
@@ -209,7 +212,7 @@ export default function CountJobs({
           {counters.length === 0 ? (
             <p className="acc-note">Nobody has joined yet.</p>
           ) : (
-            <table className="acc-table">
+            <table className="acc-table" aria-label="Counters">
               <tbody>
                 {counters.map((k) => (
                   <tr key={k.id} className={k.active ? "" : "is-quiet"}>
@@ -220,6 +223,11 @@ export default function CountJobs({
                         {k.last_seen_at ? ` · last sent ${fmtDayMonthTime(k.last_seen_at)}` : ""}
                         {k.active ? "" : " · taken off"}
                       </span>
+                    </td>
+                    <td>
+                      {k.active && (k.finished_at
+                        ? <span className="count-job-said">done</span>
+                        : <span className="acc-sub">still counting</span>)}
                     </td>
                     <td className="num">{k.captures} counts</td>
                     <td className="num">
@@ -312,6 +320,13 @@ export default function CountJobs({
           )}
 
           <div className="count-job-post">
+            {stillCounting.length > 0 && (
+              <p className="acc-note" role="status" aria-label="Waiting for">
+                Waiting for {stillCounting.map((k) => k.name).join(", ")} to say
+                they are done on their phone. The count can be posted once
+                everybody has — or take a lost phone off the count.
+              </p>
+            )}
             {confirmPost ? (
               <>
                 <p className="acc-note">
@@ -335,6 +350,7 @@ export default function CountJobs({
                           `${r.products_counted === 1 ? "" : "s"} counted, ` +
                           `${r.products_created} added to the catalogue` +
                           (r.created_hidden ? ` (${r.created_hidden} hidden until priced)` : "") +
+                          (r.photos ? `, ${r.photos} photo${r.photos === 1 ? "" : "s"} added` : "") +
                           "."
                       );
                     }, "The count could not be posted")
@@ -350,7 +366,7 @@ export default function CountJobs({
               <>
                 <button
                   className="btn-fill"
-                  disabled={busy || !online}
+                  disabled={busy || !online || stillCounting.length > 0}
                   onClick={() => setConfirmPost(true)}
                 >
                   Post the count
@@ -458,6 +474,17 @@ function NewItemReviewRow({
         {where ? ` · ${where}` : ""}
         {item.captures === 0 ? " · every count of it was taken back" : ""}
       </span>
+      {item.photos.length > 0 && (
+        <ul className="count-job-thumbs" aria-label={`Photos of ${item.name}`}>
+          {item.photos.map((p) => (
+            <li key={p}>
+              <a href={imageSrc(p) ?? undefined} target="_blank" rel="noreferrer">
+                <img src={imageSrc(p) ?? undefined} alt={item.name} />
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="count-job-item-form">
         <select
           className="modal-input"

@@ -47,6 +47,11 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, message: "Bad request" }, 400);
   }
 
+  // A counter's phone on a count job (0115). No till, no PIN: the count token
+  // is the credential, and it opens exactly one thing — a photo on one of
+  // that phone's own captures, filed under that count.
+  if (b.count_token) return await countPhoto(b);
+
   const token = b.register_token ?? "";
   const pin = b.pin ?? "";
   const productId = b.product_id ?? "";
@@ -129,3 +134,69 @@ Deno.serve(async (req: Request) => {
 
   return json({ ok: true, id: imageId, path });
 });
+
+/** data:image/jpeg;base64,… → bytes and extension, or a refusal. */
+function decode(dataUrl: string):
+  | { ok: true; bytes: Uint8Array; mime: string; ext: string }
+  | { ok: false; status: number; message: string } {
+  const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl);
+  if (!match) return { ok: false, status: 400, message: "Unreadable image" };
+  const [, mime, b64] = match;
+  const ext = TYPES[mime];
+  if (!ext) return { ok: false, status: 400, message: "Use a JPEG, PNG or WebP" };
+  let bytes: Uint8Array;
+  try {
+    const binary = atob(b64);
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  } catch {
+    return { ok: false, status: 400, message: "Unreadable image" };
+  }
+  if (bytes.length > MAX_BYTES) {
+    return { ok: false, status: 413, message: "That photo is too large" };
+  }
+  return { ok: true, bytes, mime, ext };
+}
+
+// A photo from a counter's phone. Same order as above — check, upload, record
+// — and idempotent: the phone sends again whenever it is not sure the last
+// try landed, so a photo the count already holds uploads nothing.
+async function countPhoto(b: Record<string, string>): Promise<Response> {
+  const token = b.count_token ?? "";
+  const captureRef = b.capture_ref ?? "";
+  const photoRef = b.photo_ref ?? "";
+  if (!captureRef || !photoRef || !b.image) {
+    return json({ ok: false, message: "Missing details" }, 400);
+  }
+
+  const { data: rows, error: checkError } = await supabase.rpc("pos_count_photo_check", {
+    p_token: token, p_capture_ref: captureRef, p_photo_ref: photoRef,
+  });
+  if (checkError) return json({ ok: false, message: checkError.message }, 403);
+  const target = (rows as { org_id: string; job_id: string; existing_path: string | null }[])[0];
+  if (!target) return json({ ok: false, message: "Not permitted" }, 403);
+  if (target.existing_path) return json({ ok: true, path: target.existing_path });
+
+  const img = decode(b.image);
+  if (!img.ok) return json({ ok: false, message: img.message }, img.status);
+
+  const path = `${target.org_id}/count/${target.job_id}/${crypto.randomUUID()}.${img.ext}`;
+  const { error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, img.bytes, { contentType: img.mime, upsert: false });
+  if (uploadError) {
+    console.error(uploadError);
+    return json({ ok: false, message: "Could not store that photo" }, 500);
+  }
+
+  const { data: stored, error: linkError } = await supabase.rpc("pos_count_add_photo", {
+    p_token: token, p_capture_ref: captureRef, p_photo_ref: photoRef, p_path: path,
+  });
+  if (linkError) {
+    await supabase.storage.from(BUCKET).remove([path]);
+    return json({ ok: false, message: linkError.message }, 400);
+  }
+  // Two tries racing each other: the first one recorded is the one kept.
+  if (stored !== path) await supabase.storage.from(BUCKET).remove([path]);
+  return json({ ok: true, path: stored });
+}

@@ -1,0 +1,17 @@
+{
+  "id": "/count",
+  "name": "InnovaPOS Count",
+  "short_name": "Count",
+  "description": "Stock count — count a shop's shelves with your phone",
+  "start_url": "/count",
+  "scope": "/count",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0e3a2d",
+  "background_color": "#f5f2ea",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
