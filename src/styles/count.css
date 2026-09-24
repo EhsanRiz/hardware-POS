@@ -111,3 +111,21 @@
 }
 .count-row.is-failed .count-row-meta { color: var(--color-owing); }
 .count-undo { min-height: 44px; margin-left: auto; padding: 0 10px; }
+
+/* 0115: photos, "I'm done", install. */
+.count-photos { margin: var(--space-2) 0; }
+.count-thumbs { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.count-thumbs li { position: relative; }
+.count-thumbs img {
+  width: 72px; height: 72px; object-fit: cover;
+  border: 1px solid var(--divider); border-radius: var(--radius-md); display: block;
+}
+.count-thumb-x {
+  position: absolute; top: -14px; right: -14px;
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--divider); background: var(--color-bg); color: var(--color-text);
+  font-size: 16px; line-height: 1;
+}
+.count-done { margin-top: var(--space-6); border-top: 1px solid var(--divider); padding-top: var(--space-3); }
+.count-done .btn-cancel { width: 100%; }
+.count-install { margin-top: var(--space-4); }

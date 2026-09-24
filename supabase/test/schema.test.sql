@@ -7191,6 +7191,126 @@ begin
     'a counter taken off the count can send nothing more');
 end $$;
 
+-- 0115: photos on a count, and nobody shut out mid-shelf ---------------------
+
+do $$
+declare
+  v_st record; v_fix record; v_org uuid; v_row record; v_path text; v_msg text;
+  v_ties uuid; i int;
+begin
+  select * into v_st from cj_state;
+  select * into v_fix from cj_fix;
+  select org_id into v_org from fixture;
+
+  -- Where the function will put it, and nothing recorded yet.
+  select * into v_row from public.pos_count_photo_check(v_st.tok_a, 'a-2', 'ph-1');
+  perform assert_eq(v_row.org_id, v_org, 'a photo is filed under its own shop');
+  perform assert_eq(v_row.existing_path, null::text, 'and is not there yet');
+
+  v_path := v_org::text || '/count/' || v_st.job_id::text || '/one.jpg';
+  perform assert_eq(public.pos_count_add_photo(v_st.tok_a, 'a-2', 'ph-1', v_path), v_path,
+    'a photo is recorded against the capture it was taken for');
+  -- Sent again because the phone never heard back: the same photo, once.
+  perform public.pos_count_add_photo(v_st.tok_a, 'a-2', 'ph-1',
+    v_org::text || '/count/' || v_st.job_id::text || '/two.jpg');
+  select * into v_row from public.pos_count_photo_check(v_st.tok_a, 'a-2', 'ph-1');
+  perform assert_eq(v_row.existing_path, v_path, 'a resent photo is the first one, not a second');
+  perform assert_eq((select count(*)::int from public.count_photos where photo_ref = 'ph-1'), 1,
+    'and there is one row for it');
+
+  -- Only in this count's folder: a path is the one thing a phone could lie about.
+  perform assert_refuses(format(
+    'select public.pos_count_add_photo(%L, ''a-2'', ''ph-x'', %L)',
+    v_st.tok_a, v_org::text || '/elsewhere/x.jpg'),
+    'a photo path outside the count''s folder is refused');
+  perform assert_refuses(format(
+    'select public.pos_count_add_photo(%L, ''a-2'', ''ph-y'', %L)',
+    v_st.tok_a, v_org::text || '/count/' || v_st.job_id::text || '/../../x.jpg'),
+    'and so is one that climbs out of it');
+  -- Only on your own capture.
+  perform assert_refuses(format(
+    'select public.pos_count_photo_check(%L, ''b-2'', ''ph-z'')', v_st.tok_a),
+    'a photo cannot go on somebody else''s capture');
+
+  -- Four is the limit, as on the shelf screen.
+  for i in 2..4 loop
+    perform public.pos_count_add_photo(v_st.tok_a, 'a-2', 'ph-' || i,
+      v_org::text || '/count/' || v_st.job_id::text || '/' || i || '.jpg');
+  end loop;
+  perform assert_refuses(format(
+    'select public.pos_count_photo_check(%L, ''a-2'', ''ph-5'')', v_st.tok_a),
+    'a fifth photo on one capture is refused');
+  -- And refused where it is recorded too, not only at the question before
+  -- the upload: two phones' worth of retries can race past a check.
+  perform assert_refuses(format(
+    'select public.pos_count_add_photo(%L, ''a-2'', ''ph-5'', %L)',
+    v_st.tok_a, v_org::text || '/count/' || v_st.job_id::text || '/5.jpg'),
+    'a fifth photo is refused where it is recorded as well');
+
+  -- One on the untracked rope (it has no picture), one on the tracked thing,
+  -- which is given a picture of its own first: a counter never replaces it.
+  perform public.pos_count_add_photo(v_st.tok_a, 'a-5', 'ph-rope',
+    v_org::text || '/count/' || v_st.job_id::text || '/rope.jpg');
+  perform public.pos_count_add_photo(v_st.tok_a, 'a-1', 'ph-mine',
+    v_org::text || '/count/' || v_st.job_id::text || '/mine.jpg');
+  update public.products set image_url = v_org::text || '/shop/own.jpg'
+   where id = v_fix.tracked;
+
+  -- The reviewer sees the photos on the new item.
+  -- A counter's token is not a till.
+  perform assert_refuses(format(
+    'select * from public.pos_count_job_new_items(%L, ''1234'', %L)', v_st.tok_a, v_st.job_id),
+    'a counter cannot read the review');
+end $$;
+
+do $$
+declare v_tok text; v_st record; v_n int; v_msg text; v_at timestamptz;
+begin
+  select token into v_tok from till;
+  select * into v_st from cj_state;
+
+  select cardinality(photos) into v_n
+    from public.pos_count_job_new_items(v_tok, '7301', v_st.job_id)
+   where barcode = '6009114999990';
+  perform assert_eq(v_n, 4, 'the reviewer sees the photos taken of a new item');
+
+  -- Nobody is shut out mid-shelf: Lerato has not said she is done.
+  begin
+    perform public.pos_count_job_post(v_tok, '1234', v_st.job_id);
+    perform assert(false, 'posting while somebody is still counting is refused');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Still counting: Lerato.%',
+    'and it names who: ' || coalesce(v_msg, ''));
+
+  -- She says so, and her phone then takes no more counts until she carries on.
+  v_at := public.pos_count_finish(v_st.tok_a);
+  perform assert(v_at is not null, 'a counter says they are done');
+  begin
+    v_msg := null;
+    perform public.pos_count_capture(v_st.tok_a, 'a-late', null, null, null,
+      'Something forgotten', 'ea', 1, null, now());
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'You said you were done — tap Carry on counting first',
+    'a count after "done" is refused with the way back in');
+  -- A resend of a count sent BEFORE "done" is still the same count, not a refusal.
+  perform assert_eq(
+    public.pos_count_capture(v_st.tok_a, 'a-1', null, null, null, null, null, 30, null, now())->>'repeat',
+    'true', 'a resend of an earlier count is still accepted as the same count');
+
+  perform public.pos_count_resume(v_st.tok_a);
+  perform public.pos_count_capture(v_st.tok_a, 'a-late', null, null, null,
+    'Something forgotten', 'ea', 1, 'Aisle 9', now());
+  perform public.pos_count_void(v_st.tok_a, 'a-late');
+  perform public.pos_count_finish(v_st.tok_a);
+
+  perform assert((select finished_at is not null
+                     from public.pos_count_job_counters(v_tok, '7301', v_st.job_id)
+                    where name = 'Lerato'),
+    'the till sees who has said they are done');
+end $$;
+
 -- Posting: counted, plus everything since it was counted.
 do $$
 declare
@@ -7240,6 +7360,18 @@ begin
   perform assert_eq(v_spacers.price_retail, 24.5::numeric, 'at its price');
   perform assert_eq(v_spacers.stock_qty, 15::numeric, 'with both counters'' counts (12 + 3)');
   perform assert_eq(v_spacers.unit_code, 'pack', 'in the unit it was counted in');
+
+  -- 0115: the photos went with the count, and nowhere they were not wanted.
+  perform assert_eq((select count(*)::int from public.product_images where product_id = v_spacers.id), 4,
+    'a new product gets the photos taken of it');
+  perform assert(v_spacers.image_url like '%/count/%', 'and the first is its thumbnail');
+  select * into v_p from public.products where id = v_fix.untracked;
+  perform assert(v_p.image_url like '%/rope.jpg', 'an item with no photo gets the counter''s');
+  select * into v_p from public.products where id = v_fix.tracked;
+  perform assert_eq(v_p.image_url, (select org_id from fixture)::text || '/shop/own.jpg',
+    'an item with a photo of its own keeps it');
+  perform assert_eq((select count(*)::int from public.product_images where product_id = v_fix.tracked), 0,
+    'and gets no counter''s photo beside it');
 
   select * into v_ties from public.products
    where org_id = (select org_id from fixture) and name = 'Cable ties 200mm';

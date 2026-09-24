@@ -40,6 +40,15 @@ async function openPhone(browser: Browser): Promise<Page> {
   return phone;
 }
 
+/** Any real picture will do for the phone's camera: the till's own icon. */
+const PHOTO = "public/icon-192.png";
+
+/** "I'm done", asked and confirmed, on the counter's own phone. */
+async function done(phone: Page) {
+  await phone.getByRole("button", { name: "I'm done counting" }).click();
+  await phone.getByRole("button", { name: "Yes, I'm done" }).click();
+}
+
 async function join(phone: Page, code: string, name: string) {
   await phone.goto("/count");
   await phone.getByLabel("Count code").fill(code);
@@ -107,6 +116,10 @@ test("a counter joins with the code, counts what the shop has and what it does n
   await phone.getByLabel("What is it?").fill("Tile spacers 3mm");
   await phone.getByLabel("Counted in").selectOption("pack");
   await phone.getByLabel("How many of the new item").fill("12");
+  // After the scan, a photo: the reviewer pricing this tomorrow never saw it.
+  await phone.getByLabel("Photo").setInputFiles(PHOTO);
+  await expect(phone.getByRole("list", { name: "Photos of Tile spacers 3mm" })
+    .getByRole("img")).toHaveCount(1);
   await phone.getByRole("button", { name: "Save count" }).click();
 
   // And something with no barcode at all.
@@ -126,6 +139,10 @@ test("a counter joins with the code, counts what the shop has and what it does n
   expect(job.captures.map((c) => [c.qty, c.location])).toEqual([
     [30, "Aisle 1"], [12.5, "Aisle 1"], [3, "Aisle 1"], [12, "Aisle 1"], [5, "Aisle 1"],
   ]);
+  // The photo went up after its count, against that count.
+  await expect(mine.locator("li", { hasText: "Tile spacers 3mm" })).toContainText("1 photo sent");
+  expect(job.photos.map((ph) => ph.capture_ref))
+    .toEqual([job.captures[3].client_ref]);
 
   // THE SHOP KEEPS TRADING. A bag of cement goes out after it was counted.
   // Moved directly: the fake does not take stock down when it sells (see the
@@ -150,12 +167,32 @@ test("a counter joins with the code, counts what the shop has and what it does n
   await spacers.getByLabel("Price for Tile spacers 3mm").fill("24.50");
   await spacers.getByRole("button", { name: "Save" }).click();
   await expect(spacers).toContainText("Goes on sale when the count is posted.");
+  await expect(spacers.getByRole("list", { name: "Photos of Tile spacers 3mm" })
+    .getByRole("img")).toHaveCount(1);
 
+  // NOBODY IS SHUT OUT MID-SHELF. Lerato has not said she is done, so the
+  // count cannot be posted from under her.
+  await expect(page.getByRole("status", { name: "Waiting for" })).toContainText("Lerato");
+  await expect(page.getByRole("button", { name: "Post the count" })).toBeDisabled();
+
+  // She says so; her phone keeps its place and can still go back.
+  await done(phone);
+  await expect(phone.getByRole("heading", { name: "You're done" })).toBeVisible();
+  await phone.reload();
+  await expect(phone.getByRole("heading", { name: "You're done" })).toBeVisible();
+  await phone.getByRole("button", { name: "Carry on counting" }).click();
+  await expect(phone.getByLabel("Find an item")).toBeVisible();
+  await done(phone);
+  await expect(phone.getByRole("heading", { name: "You're done" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByRole("table", { name: "Counters" }).locator("tr", { hasText: "Lerato" }))
+    .toContainText("done");
   await page.getByRole("button", { name: "Post the count" }).click();
   await expect(page.getByText(/1 of them hidden, with no price yet/)).toBeVisible();
   await page.getByRole("button", { name: "Yes, post STK-000001" }).click();
   await expect(page.getByText(
-    "STK-000001 posted: 5 items counted, 2 added to the catalogue (1 hidden until priced).")).toBeVisible();
+    "STK-000001 posted: 5 items counted, 2 added to the catalogue (1 hidden until priced), 1 photo added.")).toBeVisible();
 
   // Counted, plus what sold since — not what the till held before.
   expect(cement.stock_qty).toBe(29);
@@ -165,6 +202,8 @@ test("a counter joins with the code, counts what the shop has and what it does n
   expect(untouched.stock_qty).toBe(untouchedBefore);
   const made = PRODUCTS.find((p) => p.name === "Tile spacers 3mm")!;
   expect(made).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, stock_qty: 12, unit_code: "pack" });
+  // The counter's photo is the new product's picture.
+  expect(made.image_url).toBe(job.photos[0].path);
   const hidden = be.shelfAdded.find((p) => p.name === "Cable ties 200mm")!;
   expect(hidden).toMatchObject({ active: false, stock_qty: 5 });
 
@@ -185,10 +224,24 @@ test("with no signal the phone keeps counting, and every count is sent once when
   be.offline = true;
   await phone.context().setOffline(true);
   await phone.getByLabel("Where are you?").fill("Storeroom");
-  await count(phone, "6001234000015", "8");
+  // Cement, with a photo — both wait on the phone for the signal.
+  const box = phone.getByLabel("Find an item");
+  await box.fill("6001234000015");
+  await box.press("Enter");
+  await phone.getByLabel("How many Cement 42.5N 50kg").fill("8");
+  await phone.getByLabel("Photo").setInputFiles(PHOTO);
+  await expect(phone.getByRole("list", { name: "Photos of Cement 42.5N 50kg" }).getByRole("img"))
+    .toHaveCount(1);
+  await phone.getByRole("button", { name: "Save count" }).click();
   await count(phone, "6001234000060", "4");
   await expect(phone.getByRole("status", { name: "Sending" }))
-    .toHaveText("No signal — 2 kept on this phone", { timeout: 20_000 });
+    .toHaveText("No signal — 3 kept on this phone", { timeout: 20_000 });
+
+  // "I'm done" with counts still in the pocket would let the shop post
+  // without them: refused, and it says why.
+  await done(phone);
+  await expect(phone.getByRole("alert")).toContainText("3 still to send from this phone");
+  await expect(phone.getByLabel("Find an item")).toBeVisible();
 
   // A phone that goes flat in the storeroom still has them when it wakes.
   // The page itself comes back (the service worker holds the app on a real
@@ -198,6 +251,9 @@ test("with no signal the phone keeps counting, and every count is sent once when
   await phone.reload();
   await expect(phone.getByRole("region", { name: "My counts" }).locator("li.is-waiting"))
     .toHaveCount(2);
+  // The photo came back with it: kept in the phone's own storage, not memory.
+  await expect(phone.getByRole("region", { name: "My counts" }).locator("li", { hasText: "Cement" }))
+    .toContainText("1 photo");
   // One taken back before it was ever sent simply goes.
   await phone.getByRole("button", { name: "Take back Padlock 50mm Brass" }).click();
   await expect(phone.getByRole("region", { name: "My counts" }).locator("li")).toHaveCount(1);
@@ -209,6 +265,9 @@ test("with no signal the phone keeps counting, and every count is sent once when
     .toHaveText("All sent", { timeout: 45_000 });
   await expect.poll(() => be.countJobs[0].captures.length).toBe(1);
   expect(be.countJobs[0].captures[0]).toMatchObject({ qty: 8, location: "Storeroom" });
+  // And its photo, once, after it.
+  await expect.poll(() => be.countJobs[0].photos.length).toBe(1);
+  expect(be.countJobs[0].photos[0].capture_ref).toBe(be.countJobs[0].captures[0].client_ref);
 
   // Taken back after it was sent: the shop stops counting it.
   await phone.getByRole("button", { name: "Take back Cement 42.5N 50kg" }).click();
@@ -249,6 +308,8 @@ test("a second counter meeting the same new thing counts it, not a twin — and 
   await b.getByRole("button", { name: "Save count" }).click();
   await expect(b.getByRole("status", { name: "Sending" })).toHaveText("All sent");
   expect(be.countJobs[0].newItems.map((n) => n.name)).toEqual(["Cable ties 200mm", "Cable-tie black 200"]);
+  await done(a);
+  await done(b);
 
   await page.getByRole("button", { name: "Refresh" }).click();
   const ties = page.getByRole("listitem", { name: "New item Cable ties 200mm" });
@@ -334,4 +395,48 @@ test("a storeman can run the count but not price it, and a sheet cannot open bes
   await page.getByRole("button", { name: "Abandon" }).click();
   await expect(page.getByText("STK-000001 abandoned. Nothing moved.")).toBeVisible();
   expect(be.countJobs[0].status).toBe("abandoned");
+});
+
+test("the counting phone installs as its own app, opening on the count", async ({ page }) => {
+  await page.goto("/count");
+  await expect(page.getByRole("heading", { name: "Stock count" })).toBeVisible();
+  // Its own manifest, not the till's: installed, it opens at /count, named Count.
+  const href = await page.locator('link[rel="manifest"]').getAttribute("href");
+  expect(href).toBe("/count.webmanifest");
+  const manifest = await (await page.request.get(href!)).json();
+  expect(manifest).toMatchObject({ id: "/count", start_url: "/count", short_name: "Count", display: "standalone" });
+  await expect(page).toHaveTitle("Count · InnovaPOS");
+
+  // The till keeps its own.
+  await page.goto("/");
+  expect(await page.locator('link[rel="manifest"]').getAttribute("href")).not.toBe("/count.webmanifest");
+});
+
+test("a counter who carries on after the till last looked still holds the post", async ({ page, browser }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const code = await startCount(page);
+  const phone = await openPhone(browser);
+  await join(phone, code, "Lerato");
+  await count(phone, "6001234000015", "30");
+  await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent");
+  await done(phone);
+  await expect(phone.getByRole("heading", { name: "You're done" })).toBeVisible();
+
+  // The till looks: everybody is done, and Post is offered.
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByRole("button", { name: "Post the count" })).toBeEnabled();
+
+  // Then she remembers a shelf — after the till last looked.
+  await phone.getByRole("button", { name: "Carry on counting" }).click();
+  await expect(phone.getByLabel("Find an item")).toBeVisible();
+
+  // The till's screen is out of date; the server is not. She is not shut out.
+  await page.getByRole("button", { name: "Post the count" }).click();
+  await page.getByRole("button", { name: "Yes, post STK-000001" }).click();
+  await expect(page.getByText(/Still counting: Lerato\./)).toBeVisible();
+  expect(be.countJobs[0].status).toBe("open");
+  await count(phone, "6001234000060", "4");
+  await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent");
+  expect(be.countJobs[0].captures).toHaveLength(2);
+  await phone.context().close();
 });

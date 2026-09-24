@@ -475,24 +475,40 @@ phones. Migration 0114; screens in `src/count/` (the phone) and
    items by name and barcode and **never a price, cost or stock figure**; it
    can do nothing but count on this one job, and stops working the moment the
    job is posted or abandoned. *Let nobody else join* closes the door;
-   *Take off* stops one phone (a lost one) and keeps what it sent.
+   *Take off* stops one phone (a lost one) and keeps what it sent. On the
+   join screen, **Install app** puts Count on the phone's home screen as its
+   own icon (`public/count.webmanifest`), opening straight on the count.
 3. **Count.** Say where you are once ("Aisle 3"), then scan or type, and say
    how many. The same item in two places is two counts, and they add up.
    Something the catalogue does not know is written down by name (and
    barcode, if it has one), and the next counter to scan or search for it
-   finds the same thing instead of inventing a twin. Every count is kept on
-   the phone first and sent when there is signal.
-4. **Review.** Back on the till: who is counting; each item the shop has with
+   finds the same thing instead of inventing a twin. Up to four **photos**
+   go with each count (0115) — the reviewer pricing "Andolex" tomorrow was
+   not standing in front of it. Every count and photo is kept on the phone
+   first (photos in IndexedDB) and sent when there is signal.
+4. **Done.** Each counter presses **I'm done counting** on their own phone
+   when their part is finished, and can take it back (*Carry on counting*)
+   until the count is posted. Nothing else ends their count: the code stays
+   valid and the phone keeps its place across reloads. "Done" is refused on
+   the phone while anything is still unsent.
+5. **Review.** Back on the till: who is counting; each item the shop has with
    what was counted, what the till holds now and what posting will make it;
    and the new items. For each new item: *Put on sale* (needs a price), *Add
    hidden, price later*, *Same as…* (another new item or an existing one —
    the count goes there), or *Not stock — skip*.
-5. **Post.** One press does it all: new items become products, and every
+6. **Post.** Refused while anybody on the count has not said they are done
+   (the till names them; *Take off* is the override for a lost phone). One
+   press does it all: new items become products, and every
    counted item's stock becomes **what was counted plus whatever has moved
    since it was counted** — a sale after the counter walked past comes off, a
    delivery after it goes on. Items nobody counted are left alone; a blank on
    the list is not a zero. New items nobody priced go in hidden, with their
-   stock, for Manage → Catalogue.
+   stock, for Manage → Catalogue. Counters' photos become the picture of a
+   product that has none; a product with a picture of its own keeps it.
+
+Photos are stored by the `product-image` edge function, which since 0115
+also accepts a counter's token. Deploying 0115 therefore needs
+`npx supabase functions deploy product-image` as well as the migration.
 
 Reviewing prices and posting need `manage_catalogue` as well as
 `manage_inventory`: a storeman can run the count, the owner prices it.

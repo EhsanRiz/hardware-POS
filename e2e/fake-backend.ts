@@ -326,7 +326,9 @@ export interface FakeCountJob {
   opened_at: string;
   posted_by_name: string | null;
   counters: { id: string; name: string; token: string; active: boolean;
-              joined_at: string; last_seen_at: string | null }[];
+              joined_at: string; last_seen_at: string | null;
+              /** 0115: said "I'm done" on their own phone. */
+              finished_at: string | null }[];
   newItems: { id: string; match_key: string; barcode: string | null; name: string;
               unit_code: string; decision: "pending" | "add" | "skip" | "merge";
               merge_into: string | null; merge_product: string | null;
@@ -337,6 +339,8 @@ export interface FakeCountJob {
               product_id: string | null; new_item_id: string | null; qty: number;
               location: string | null; captured_at: string; voided: boolean }[];
   snap: Record<string, number | null>;
+  /** 0115: photos the product-image function stored against a capture. */
+  photos: { counter_id: string; capture_ref: string; photo_ref: string; path: string }[];
 }
 
 /** Everything the fake server saw, so tests can assert on it. */
@@ -1301,6 +1305,30 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     const respond = (status: number, data: unknown) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
 
+    // 0115: a counter's phone, by its count token, onto one of its own captures.
+    if (b.count_token) {
+      const job = be.countJobs.find((x) => x.counters.some((c) => c.token === b.count_token));
+      const me = job?.counters.find((c) => c.token === b.count_token);
+      if (!job || !me) return respond(403, { ok: false, message: "This phone is not on a count" });
+      if (job.status !== "open") return respond(403, { ok: false, message: "This count has finished" });
+      if (!me.active) return respond(403, { ok: false, message: "You have been taken off this count" });
+      const again = job.photos.find((ph) => ph.counter_id === me.id && ph.photo_ref === b.photo_ref);
+      if (again) return respond(200, { ok: true, path: again.path });
+      const cap = job.captures.find((c) => c.counter_id === me.id && c.client_ref === b.capture_ref);
+      if (!cap) return respond(403, { ok: false, message: "That count has not reached the shop yet" });
+      if (cap.voided) return respond(403, { ok: false, message: "That count was taken back" });
+      if (job.photos.filter((ph) => ph.capture_ref === cap.client_ref && ph.counter_id === me.id).length >= 4) {
+        return respond(403, { ok: false, message: "That is 4 photos already" });
+      }
+      if (!/^data:image\/(jpeg|png|webp);base64,./.test(String(b.image ?? ""))) {
+        return respond(400, { ok: false, message: "Unreadable image" });
+      }
+      const path = `org1/count/${job.id}/${job.photos.length + 1}.jpg`;
+      job.photos.push({ counter_id: me.id, capture_ref: String(b.capture_ref),
+                        photo_ref: String(b.photo_ref), path });
+      return respond(200, { ok: true, path });
+    }
+
     if (b.register_token !== REGISTER_TOKEN) {
       return respond(403, { ok: false, message: "Register not paired or revoked" });
     }
@@ -2061,7 +2089,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const counter = {
           id: `cc${job.counters.length + 1}-${job.id}`, name,
           token: `count-token-${job.id}-${job.counters.length + 1}`, active: true,
-          joined_at: "2026-01-01T08:00:00Z", last_seen_at: null,
+          joined_at: "2026-01-01T08:00:00Z", last_seen_at: null, finished_at: null,
         };
         job.counters.push(counter);
         return json([{ token: counter.token, counter_id: counter.id, counter_name: name,
@@ -2070,7 +2098,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       }
       case "rpc/pos_count_state":
       case "rpc/pos_count_capture":
-      case "rpc/pos_count_void": {
+      case "rpc/pos_count_void":
+      case "rpc/pos_count_finish":
+      case "rpc/pos_count_resume": {
         const job = be.countJobs.find((j) => j.counters.some((c) => c.token === body.p_token));
         const me = job?.counters.find((c) => c.token === body.p_token);
         if (!job || !me) return fail("This phone is not on a count");
@@ -2093,6 +2123,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           });
         }
 
+        // 0115: the counter's own word on their own count.
+        if (path === "rpc/pos_count_finish") {
+          me.finished_at = me.finished_at ?? "2026-01-01T10:00:00Z";
+          return json(me.finished_at);
+        }
+        if (path === "rpc/pos_count_resume") {
+          me.finished_at = null;
+          return json(null);
+        }
+
         const ref = String(body.p_client_ref ?? "").trim();
         if (path === "rpc/pos_count_void") {
           const c = job.captures.find((x) => x.counter_id === me.id && x.client_ref === ref);
@@ -2105,6 +2145,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           return json({ id: seen.id, product_id: seen.product_id,
                         new_item_id: seen.new_item_id, repeat: true });
         }
+        if (me.finished_at) return fail("You said you were done — tap Carry on counting first");
         const qty = body.p_qty == null ? null : Math.round(Number(body.p_qty) * 1000) / 1000;
         if (qty == null || Number.isNaN(qty)) return fail("How many are there?");
         if (qty < 0) return fail("A shelf cannot hold less than nothing");
@@ -2170,7 +2211,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           note: String(body.p_note ?? "").trim() || null, status: "open",
           join_code: `K7M4QXP${"23456789"[n % 8]}`, joining_open: true,
           opened_at: "2026-01-01T08:00:00Z", posted_by_name: null,
-          counters: [], newItems: [], captures: [], snap: {},
+          counters: [], newItems: [], captures: [], snap: {}, photos: [],
         };
         be.countJobs.push(job);
         return json({ id: job.id, doc_number: job.doc_number, join_code: job.join_code });
@@ -2247,6 +2288,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             id: k.id, name: k.name, active: k.active, joined_at: k.joined_at,
             last_seen_at: k.last_seen_at,
             captures: live(j).filter((c) => c.counter_id === k.id).length,
+            finished_at: k.finished_at,
           })));
         }
         if (path === "rpc/pos_count_job_counted") {
@@ -2275,6 +2317,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
               merge_product_name: all().find((p) => p.id === n.merge_product)?.name ?? null,
               category_id: n.category_id, price_retail: n.price_retail,
               price_trade: n.price_trade, cost: n.cost, product_id: n.product_id,
+              photos: j.photos
+                .filter((ph) => mine.some((c) => c.client_ref === ph.capture_ref
+                                                 && c.counter_id === ph.counter_id))
+                .map((ph) => ph.path),
             };
           }).sort((a, b) => a.name.localeCompare(b.name)));
         }
@@ -2331,6 +2377,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           });
           return json(null);
         }
+        // 0115: nobody is shut out mid-shelf.
+        const still = j.counters.filter((k) => k.active && !k.finished_at).map((k) => k.name);
+        if (still.length) {
+          return fail(`Still counting: ${still.join(", ")}. Each presses "I'm done" on their phone first — or take a phone off the count.`);
+        }
         // Post: new items become products, then every counted product becomes
         // counted plus whatever moved since it was first counted.
         let created = 0, hidden = 0, moved = 0, up = 0, down = 0;
@@ -2372,11 +2423,25 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             if (delta > 0) up += delta; else down -= delta;
           }
         }
+        // 0115: photos go to a product with none of its own, never beside one.
+        let photos = 0;
+        const hadPicture = new Set(all().filter((p) => p.image_url).map((p) => p.id));
+        for (const ph of j.photos) {
+          const c = live(j).find((x) => x.client_ref === ph.capture_ref && x.counter_id === ph.counter_id);
+          if (!c) continue;
+          const pid = c.product_id ?? landsOn(j, c.new_item_id!);
+          const p = pid ? all().find((x) => x.id === pid) : undefined;
+          if (!p || hadPicture.has(p.id) || (p.photos ?? []).length >= 4) continue;
+          p.photos = [...(p.photos ?? []), ph.path];
+          p.image_url = p.image_url ?? ph.path;
+          p.image_count = p.photos.length;
+          photos++;
+        }
         j.status = "posted";
         j.posted_by_name = pinHolder(body.p_pin)!.row.name;
         return json({ products_counted: tally.size, products_created: created,
                       created_hidden: hidden, lines_moved: moved,
-                      units_up: up, units_down: down });
+                      units_up: up, units_down: down, photos });
       }
       // 0068: what walked out of the door without being sold.
       case "rpc/pos_shrinkage": {

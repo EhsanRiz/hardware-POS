@@ -6,7 +6,7 @@
 // are the back office's usual register token and manager PIN, checked in the
 // database on every call like the rest of adminApi.
 import { requireToken } from "./api";
-import { supabase } from "./supabase";
+import { API_BASE, supabase } from "./supabase";
 
 // --- the counter's side ------------------------------------------------------
 
@@ -114,6 +114,59 @@ export async function voidCapture(token: string, clientRef: string): Promise<boo
   return data as boolean;
 }
 
+/**
+ * "I'm done" (0115). The count cannot be posted while anybody on it has not
+ * said this, so a counter is never shut out half-way down a shelf.
+ */
+export async function finishCount(token: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_count_finish", { p_token: token });
+  if (error) throw error;
+}
+
+/** "Not done after all" — until the count is posted. */
+export async function resumeCount(token: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_count_resume", { p_token: token });
+  if (error) throw error;
+}
+
+/**
+ * A photo on one of this phone's captures, through the same function that
+ * stores product photos (the bucket is not writable with the anon key). Sent
+ * again whenever the phone is unsure: the photo's own ref makes the second
+ * send a no-op on the server.
+ */
+export async function uploadCountPhoto(
+  token: string,
+  captureRef: string,
+  photoRef: string,
+  dataUrl: string
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/functions/v1/product-image`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({
+      count_token: token,
+      capture_ref: captureRef,
+      photo_ref: photoRef,
+      image: dataUrl,
+    }),
+  });
+  let body: { ok?: boolean; path?: string; message?: string } = {};
+  try {
+    body = await res.json();
+  } catch {
+    /* a proxy or a dropped line can answer with something that is not JSON */
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.message ?? "The photo could not be sent.");
+  }
+  return body.path!;
+}
+
 // --- the shop's side ---------------------------------------------------------
 
 export interface CountJob {
@@ -170,6 +223,8 @@ export interface CountCounter {
   joined_at: string;
   last_seen_at: string | null;
   captures: number;
+  /** When they said "I'm done" — null while still counting (0115). */
+  finished_at: string | null;
 }
 
 export async function countJobCounters(pin: string, jobId: string): Promise<CountCounter[]> {
@@ -237,6 +292,8 @@ export interface CountNewItemRow {
   price_trade: number | null;
   cost: number | null;
   product_id: string | null;
+  /** Storage paths of the photos counters took of it (0115). */
+  photos: string[];
 }
 
 export async function countJobNewItems(pin: string, jobId: string): Promise<CountNewItemRow[]> {
@@ -289,6 +346,8 @@ export interface CountPostResult {
   lines_moved: number;
   units_up: number;
   units_down: number;
+  /** Photos handed to products that had none (0115). */
+  photos: number;
 }
 
 export async function postCountJob(pin: string, jobId: string): Promise<CountPostResult> {
