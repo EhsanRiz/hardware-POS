@@ -306,6 +306,39 @@ export interface RecordedAccountPayment {
   created_at: string;
 }
 
+/** The units the fake knows, as units_of_measure holds them. */
+export const UNITS = [
+  { code: "ea", name: "Each", allows_fraction: false, sort_order: 10 },
+  { code: "m", name: "Metre", allows_fraction: true, sort_order: 20 },
+  { code: "kg", name: "Kilogram", allows_fraction: true, sort_order: 50 },
+  { code: "bag", name: "Bag", allows_fraction: false, sort_order: 80 },
+  { code: "pack", name: "Pack", allows_fraction: false, sort_order: 100 },
+];
+
+/** 0114: a count job, as the fake keeps it. */
+export interface FakeCountJob {
+  id: string;
+  doc_number: string;
+  note: string | null;
+  status: "open" | "posted" | "abandoned";
+  join_code: string;
+  joining_open: boolean;
+  opened_at: string;
+  posted_by_name: string | null;
+  counters: { id: string; name: string; token: string; active: boolean;
+              joined_at: string; last_seen_at: string | null }[];
+  newItems: { id: string; match_key: string; barcode: string | null; name: string;
+              unit_code: string; decision: "pending" | "add" | "skip" | "merge";
+              merge_into: string | null; merge_product: string | null;
+              category_id: string | null; price_retail: number | null;
+              price_trade: number | null; cost: number | null;
+              product_id: string | null }[];
+  captures: { id: string; counter_id: string; client_ref: string;
+              product_id: string | null; new_item_id: string | null; qty: number;
+              location: string | null; captured_at: string; voided: boolean }[];
+  snap: Record<string, number | null>;
+}
+
 /** Everything the fake server saw, so tests can assert on it. */
 export class Backend {
   sales: RecordedSale[] = [];
@@ -589,6 +622,19 @@ export class Backend {
              /** 0068: what it cost, snapshotted at open. */
              unit_cost: number | null }[];
   }[] = [];
+  /**
+   * 0114: counts done by people from outside the shop, joined by a code.
+   *
+   * `snap` is what the till held for a product when the first count of it
+   * ARRIVED. Posting sets stock to counted + (now − snap), which is the
+   * server's "counted plus every movement since" for a fake whose sales move
+   * stock_qty directly and keep no timestamps. The one place the two differ:
+   * the server dates a capture by when it was COUNTED (a phone that counted
+   * offline at nine and synced at eleven), the fake by when it arrived. No
+   * browser test here sells between an offline count and its sync; the
+   * database suite covers the dating.
+   */
+  countJobs: FakeCountJob[] = [];
   /** 0061: the delivery notes, newest last. */
   deliveries: {
     id: string; doc_number: string; sale_id: string; customer_name: string;
@@ -658,6 +704,7 @@ export class Backend {
     this.archivedQuotes = {};
     this.deliveries = [];
     this.stockCounts = [];
+    this.countJobs = [];
     this.bankAccounts = [];
     this.bankReadFails = false;
   }
@@ -1869,8 +1916,16 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       // 0065: the stock take.
       case "rpc/pos_stock_count_open": {
         if (!tokenOk) return fail("Register not paired or revoked");
-        if (body.p_pin !== USERS.manager.pin) return fail("Not permitted");
+        // Whose PIN, not whether it is the manager's: a storeman with
+        // manage_inventory opens a sheet on the real server too.
+        const refused = pinLacks(body.p_pin, "manage_inventory");
+        if (refused) return fail(refused);
         const cat = (body.p_category_id as string) ?? null;
+        // 0114: nor beside an open count job, which would post under it.
+        const job = be.countJobs.find((j) => j.status === "open");
+        if (job) {
+          return fail(`A count (${job.doc_number}) is open. Post it or abandon it before starting a sheet.`);
+        }
         // 0069: two open sheets over the same shelves both snapshot the same
         // expected figure, so posting both takes the shortage off twice.
         const clash = be.stockCounts.find(
@@ -1994,6 +2049,334 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!c || c.status !== "open") return fail("That count cannot be abandoned");
         c.status = "abandoned";
         return json(null);
+      }
+      // 0114: a count by people from outside the shop. -----------------------
+      case "rpc/pos_count_join": {
+        const code = String(body.p_code ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        const name = String(body.p_name ?? "").replace(/\s+/g, " ").trim();
+        if (!name) return fail("Type your name, so the shop knows who counted what");
+        const job = be.countJobs.find(
+          (j) => j.join_code === code && j.status === "open" && j.joining_open);
+        if (!job) return fail("That code is not open for counting");
+        const counter = {
+          id: `cc${job.counters.length + 1}-${job.id}`, name,
+          token: `count-token-${job.id}-${job.counters.length + 1}`, active: true,
+          joined_at: "2026-01-01T08:00:00Z", last_seen_at: null,
+        };
+        job.counters.push(counter);
+        return json([{ token: counter.token, counter_id: counter.id, counter_name: name,
+          job_id: job.id, doc_number: job.doc_number, note: job.note,
+          shop_name: "Ladybrand Hardware" }]);
+      }
+      case "rpc/pos_count_state":
+      case "rpc/pos_count_capture":
+      case "rpc/pos_count_void": {
+        const job = be.countJobs.find((j) => j.counters.some((c) => c.token === body.p_token));
+        const me = job?.counters.find((c) => c.token === body.p_token);
+        if (!job || !me) return fail("This phone is not on a count");
+        if (job.status !== "open") return fail("This count has finished");
+        if (!me.active) return fail("You have been taken off this count");
+
+        if (path === "rpc/pos_count_state") {
+          return json({
+            job: { id: job.id, doc_number: job.doc_number, note: job.note,
+                   shop_name: "Ladybrand Hardware" },
+            counter: { id: me.id, name: me.name },
+            // Names and codes: never a price, a cost or a quantity.
+            products: [...PRODUCTS, ...be.shelfAdded].map((p) => ({
+              id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, unit_code: p.unit_code,
+            })),
+            new_items: job.newItems.filter((n) => n.decision !== "skip").map((n) => ({
+              id: n.id, name: n.name, barcode: n.barcode, unit_code: n.unit_code,
+            })),
+            units: UNITS.map(({ code, name, allows_fraction }) => ({ code, name, allows_fraction })),
+          });
+        }
+
+        const ref = String(body.p_client_ref ?? "").trim();
+        if (path === "rpc/pos_count_void") {
+          const c = job.captures.find((x) => x.counter_id === me.id && x.client_ref === ref);
+          if (c) c.voided = true;
+          return json(!!c);
+        }
+
+        const seen = job.captures.find((x) => x.counter_id === me.id && x.client_ref === ref);
+        if (seen) {
+          return json({ id: seen.id, product_id: seen.product_id,
+                        new_item_id: seen.new_item_id, repeat: true });
+        }
+        const qty = body.p_qty == null ? null : Math.round(Number(body.p_qty) * 1000) / 1000;
+        if (qty == null || Number.isNaN(qty)) return fail("How many are there?");
+        if (qty < 0) return fail("A shelf cannot hold less than nothing");
+        const code = String(body.p_barcode ?? "").trim() || null;
+        const typed = String(body.p_name ?? "").replace(/\s+/g, " ").trim() || null;
+        const all = [...PRODUCTS, ...be.shelfAdded];
+        let product = body.p_product_id
+          ? all.find((p) => p.id === body.p_product_id) ?? null : null;
+        if (body.p_product_id && !product) return fail("That item is not in this shop");
+        let item = body.p_new_item_id
+          ? job.newItems.find((n) => n.id === body.p_new_item_id) ?? null : null;
+        if (body.p_new_item_id && !item) return fail("That item is not on this count");
+        if (!product && !item) {
+          if (code) {
+            product = all.find((p) => p.barcode === code
+                                      || p.sku.toLowerCase() === code.toLowerCase()) ?? null;
+          }
+          if (!product) {
+            if (!code && !typed) return fail("Say what it is: a name, or its barcode");
+            const unit = String(body.p_unit_code ?? "ea");
+            const key = code ? `b:${code}` : `n:${typed!.toLowerCase()}|${unit}`;
+            item = job.newItems.find((n) => n.match_key === key) ?? null;
+            if (!item) {
+              if (!typed) return fail("Nobody has named this one yet — type what it is");
+              if (!UNITS.some((u) => u.code === unit)) return fail(`Unknown unit ${unit}`);
+              item = {
+                id: `ni${job.newItems.length + 1}-${job.id}`, match_key: key, barcode: code,
+                name: typed, unit_code: unit, decision: "pending", merge_into: null,
+                merge_product: null, category_id: null, price_retail: null,
+                price_trade: null, cost: null, product_id: null,
+              };
+              job.newItems.push(item);
+            }
+          }
+        }
+        const unit = product ? product.unit_code : item!.unit_code;
+        if (!UNITS.find((u) => u.code === unit)?.allows_fraction && !Number.isInteger(qty)) {
+          return fail(`${product ? product.name : item!.name} is counted in whole numbers`);
+        }
+        if (product && !(product.id in job.snap)) job.snap[product.id] = product.stock_qty;
+        const cap = {
+          id: `cap${job.captures.length + 1}-${job.id}`, counter_id: me.id, client_ref: ref,
+          product_id: product?.id ?? null, new_item_id: product ? null : item!.id, qty,
+          location: String(body.p_location ?? "").trim() || null,
+          captured_at: String(body.p_captured_at ?? ""), voided: false,
+        };
+        job.captures.push(cap);
+        me.last_seen_at = "2026-01-01T09:00:00Z";
+        return json({ id: cap.id, product_id: cap.product_id, new_item_id: cap.new_item_id,
+                      name: product ? product.name : item!.name, repeat: false });
+      }
+      case "rpc/pos_count_job_open": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const no = pinLacks(body.p_pin, "manage_inventory");
+        if (no) return fail(no);
+        const open = be.countJobs.find((j) => j.status === "open");
+        if (open) return fail(`A count is already open (${open.doc_number}). Post it or abandon it first.`);
+        const sheet = be.stockCounts.find((c) => c.status === "open");
+        if (sheet) return fail(`A stock-take sheet is open (${sheet.doc_number}). Finish it or abandon it first.`);
+        const n = be.countJobs.length + 1;
+        const job: FakeCountJob = {
+          id: `cj${n}`, doc_number: `STK-${String(n).padStart(6, "0")}`,
+          note: String(body.p_note ?? "").trim() || null, status: "open",
+          join_code: `K7M4QXP${"23456789"[n % 8]}`, joining_open: true,
+          opened_at: "2026-01-01T08:00:00Z", posted_by_name: null,
+          counters: [], newItems: [], captures: [], snap: {},
+        };
+        be.countJobs.push(job);
+        return json({ id: job.id, doc_number: job.doc_number, join_code: job.join_code });
+      }
+      case "rpc/pos_count_jobs":
+      case "rpc/pos_count_job_joining":
+      case "rpc/pos_count_job_counters":
+      case "rpc/pos_count_job_remove_counter":
+      case "rpc/pos_count_job_counted":
+      case "rpc/pos_count_job_new_items":
+      case "rpc/pos_count_new_item_review":
+      case "rpc/pos_count_job_post":
+      case "rpc/pos_count_job_abandon": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const no = pinLacks(body.p_pin, "manage_inventory");
+        if (no) return fail(no);
+        const pricing = path === "rpc/pos_count_new_item_review" || path === "rpc/pos_count_job_post";
+        if (pricing) {
+          const cannot = pinLacks(body.p_pin, "manage_catalogue");
+          if (cannot) return fail(cannot);
+        }
+        const all = () => [...PRODUCTS, ...be.shelfAdded];
+        const live = (j: FakeCountJob) => j.captures.filter((c) => !c.voided);
+        // Where a new item's count lands: its own product, or what it was merged into.
+        const landsOn = (j: FakeCountJob, itemId: string): string | null => {
+          const n = j.newItems.find((x) => x.id === itemId)!;
+          if (n.decision !== "merge") return n.product_id;
+          if (n.merge_product) return n.merge_product;
+          return j.newItems.find((x) => x.id === n.merge_into)?.product_id ?? null;
+        };
+        const counted = (j: FakeCountJob) => {
+          const byProduct = new Map<string, { qty: number; n: number; who: Set<string>; where: Set<string> }>();
+          for (const c of live(j)) {
+            const pid = c.product_id ?? landsOn(j, c.new_item_id!);
+            if (!pid) continue;
+            const e = byProduct.get(pid) ?? { qty: 0, n: 0, who: new Set(), where: new Set() };
+            e.qty = Math.round((e.qty + c.qty) * 1000) / 1000;
+            e.n++;
+            e.who.add(j.counters.find((k) => k.id === c.counter_id)!.name);
+            if (c.location) e.where.add(c.location);
+            byProduct.set(pid, e);
+          }
+          return byProduct;
+        };
+
+        if (path === "rpc/pos_count_jobs") {
+          return json([...be.countJobs].reverse().map((j) => ({
+            id: j.id, doc_number: j.doc_number, note: j.note, status: j.status,
+            join_code: j.status === "open" ? j.join_code : null, joining_open: j.joining_open,
+            opened_at: j.opened_at, opened_by_name: "Manager",
+            posted_at: j.status === "posted" ? "2026-01-01T12:00:00Z" : null,
+            posted_by_name: j.posted_by_name,
+            counters: j.counters.length, captures: live(j).length,
+            products_counted: new Set(live(j).filter((c) => c.product_id).map((c) => c.product_id)).size,
+            new_items: j.newItems.filter((n) => n.decision !== "skip").length,
+            new_pending: j.newItems.filter((n) => n.decision === "pending").length,
+          })));
+        }
+        if (path === "rpc/pos_count_job_remove_counter") {
+          const k = be.countJobs.flatMap((j) => j.counters).find((x) => x.id === body.p_counter_id);
+          if (!k) return fail("Unknown counter");
+          k.active = false;
+          return json(null);
+        }
+
+        const job = be.countJobs.find((j) => j.id === body.p_job_id);
+        const item = path === "rpc/pos_count_new_item_review"
+          ? be.countJobs.flatMap((j) => j.newItems).find((n) => n.id === body.p_item_id) : undefined;
+        const j = job ?? (item ? be.countJobs.find((x) => x.newItems.includes(item)) : undefined);
+        if (!j) return fail("Unknown count");
+
+        if (path === "rpc/pos_count_job_counters") {
+          return json(j.counters.map((k) => ({
+            id: k.id, name: k.name, active: k.active, joined_at: k.joined_at,
+            last_seen_at: k.last_seen_at,
+            captures: live(j).filter((c) => c.counter_id === k.id).length,
+          })));
+        }
+        if (path === "rpc/pos_count_job_counted") {
+          return json([...counted(j).entries()].map(([pid, e]) => {
+            const p = all().find((x) => x.id === pid)!;
+            const snap = j.snap[pid] ?? null;
+            const since = snap == null || p.stock_qty == null ? 0 : p.stock_qty - snap;
+            return {
+              product_id: pid, sku: p.sku, name: p.name, unit_code: p.unit_code,
+              counted: e.qty, captures: e.n, counters: [...e.who].join(", "),
+              locations: [...e.where].join(", ") || null,
+              first_counted_at: "2026-01-01T09:00:00Z", on_hand: p.stock_qty,
+              since, becomes: e.qty + since,
+            };
+          }).sort((a, b) => a.name.localeCompare(b.name)));
+        }
+        if (path === "rpc/pos_count_job_new_items") {
+          return json(j.newItems.map((n) => {
+            const mine = live(j).filter((c) => c.new_item_id === n.id);
+            return {
+              id: n.id, barcode: n.barcode, name: n.name, unit_code: n.unit_code,
+              counted: mine.reduce((t, c) => t + c.qty, 0), captures: mine.length,
+              counters: [...new Set(mine.map((c) => j.counters.find((k) => k.id === c.counter_id)!.name))].join(", ") || null,
+              locations: [...new Set(mine.map((c) => c.location).filter(Boolean))].join(", ") || null,
+              decision: n.decision, merge_into: n.merge_into, merge_product: n.merge_product,
+              merge_product_name: all().find((p) => p.id === n.merge_product)?.name ?? null,
+              category_id: n.category_id, price_retail: n.price_retail,
+              price_trade: n.price_trade, cost: n.cost, product_id: n.product_id,
+            };
+          }).sort((a, b) => a.name.localeCompare(b.name)));
+        }
+        if (j.status !== "open") {
+          if (path === "rpc/pos_count_job_abandon") return fail("That count cannot be abandoned");
+          return fail(`That count has already been ${j.status}`);
+        }
+        if (path === "rpc/pos_count_job_joining") {
+          j.joining_open = !!body.p_open;
+          return json(null);
+        }
+        if (path === "rpc/pos_count_job_abandon") {
+          j.status = "abandoned";
+          return json(null);
+        }
+        if (path === "rpc/pos_count_new_item_review") {
+          const n = item!;
+          const decision = String(body.p_decision) as FakeCountJob["newItems"][number]["decision"];
+          const name = String(body.p_name ?? "").replace(/\s+/g, " ").trim() || n.name;
+          const code = body.p_barcode == null ? n.barcode : String(body.p_barcode).trim() || null;
+          const unit = String(body.p_unit_code ?? "").trim() || n.unit_code;
+          const price = body.p_price_retail == null ? null : Number(body.p_price_retail);
+          if (decision === "add" && !(price != null && price > 0)) {
+            return fail(`Give ${name} a price to put it on sale — or leave it for later, and it is added hidden`);
+          }
+          if ((decision === "merge" || decision === "skip")
+              && j.newItems.some((o) => o.merge_into === n.id && o.decision === "merge")) {
+            return fail(`Something else is merged into ${n.name}. Merge that one elsewhere first.`);
+          }
+          if (decision === "merge") {
+            const into = body.p_merge_into as string | null;
+            const prod = body.p_merge_product as string | null;
+            if (!into === !prod) return fail("Merge it into one thing: another new item, or an item the shop has");
+            const target = into
+              ? j.newItems.find((o) => o.id === into && o.id !== n.id && o.decision !== "merge")
+              : all().find((p) => p.id === prod);
+            if (!target) return fail("Merge into a new item on this count that is not merged itself");
+            if (target.unit_code !== unit) {
+              return fail(`${name} is counted in ${unit}, ${target.name} in ${target.unit_code} — they cannot be the same item`);
+            }
+          }
+          if ((decision === "add" || decision === "pending") && code) {
+            const taken = all().find((p) => p.barcode === code);
+            if (taken) return fail(`That barcode is already on ${taken.name} — merge it into that item instead`);
+          }
+          Object.assign(n, {
+            decision, name, barcode: code, unit_code: unit,
+            match_key: code ? `b:${code}` : `n:${name.toLowerCase()}|${unit}`,
+            category_id: (body.p_category_id as string) ?? null, price_retail: price,
+            price_trade: body.p_price_trade == null ? null : Number(body.p_price_trade),
+            cost: body.p_cost == null ? null : Number(body.p_cost),
+            merge_into: decision === "merge" ? (body.p_merge_into as string) ?? null : null,
+            merge_product: decision === "merge" ? (body.p_merge_product as string) ?? null : null,
+          });
+          return json(null);
+        }
+        // Post: new items become products, then every counted product becomes
+        // counted plus whatever moved since it was first counted.
+        let created = 0, hidden = 0, moved = 0, up = 0, down = 0;
+        for (const n of j.newItems) {
+          if (n.decision !== "add" && n.decision !== "pending") continue;
+          const counts = live(j).some((c) => c.new_item_id === n.id
+            || j.newItems.some((m) => m.id === c.new_item_id && m.decision === "merge" && m.merge_into === n.id));
+          if (!counts) continue;
+          const existing = n.barcode ? all().find((p) => p.barcode === n.barcode) : undefined;
+          if (existing) { n.product_id = existing.id; continue; }
+          be.skuSeq++;
+          const unit = UNITS.find((u) => u.code === n.unit_code)!;
+          const made: FakeProduct = {
+            ...mk(`new-count-${be.skuSeq}`, `SKU-${String(be.skuSeq).padStart(6, "0")}`,
+                  n.barcode, n.name, n.unit_code, unit.name, unit.allows_fraction,
+                  n.price_retail ?? 0, n.price_trade, 0, null),
+            category_id: n.category_id, cost: n.cost,
+          };
+          if (n.decision === "add") PRODUCTS.push(made);
+          else be.shelfAdded.push({ ...made, active: false });
+          n.product_id = made.id;
+          j.snap[made.id] = 0;
+          created++;
+          if (n.decision === "pending") hidden++;
+        }
+        const tally = counted(j);
+        for (const [pid, e] of tally) {
+          const p = all().find((x) => x.id === pid);
+          if (!p) continue;
+          const snap = j.snap[pid] ?? null;
+          const since = snap == null || p.stock_qty == null ? 0 : p.stock_qty - snap;
+          const before = p.stock_qty ?? 0;
+          const delta = Math.round((e.qty + since - before) * 1000) / 1000;
+          p.stock_qty = before + delta;
+          if (delta !== 0) {
+            be.stockMoves.push({ product_id: pid, qty_delta: delta, reason: "stocktake",
+              note: `${j.doc_number}: counted ${e.qty}`, unit_cost: p.cost ?? null });
+            moved++;
+            if (delta > 0) up += delta; else down -= delta;
+          }
+        }
+        j.status = "posted";
+        j.posted_by_name = pinHolder(body.p_pin)!.row.name;
+        return json({ products_counted: tally.size, products_created: created,
+                      created_hidden: hidden, lines_moved: moved,
+                      units_up: up, units_down: down });
       }
       // 0068: what walked out of the door without being sold.
       case "rpc/pos_shrinkage": {
@@ -4327,12 +4710,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (be.failRpc === "pos_catalogue") return fail("Catalogue is having a day");
         return json(PRODUCTS);
       case "units_of_measure":
-        return json([
-          { code: "ea", name: "Each", allows_fraction: false, sort_order: 10 },
-          { code: "m", name: "Metre", allows_fraction: true, sort_order: 20 },
-          { code: "kg", name: "Kilogram", allows_fraction: true, sort_order: 50 },
-          { code: "bag", name: "Bag", allows_fraction: false, sort_order: 80 },
-        ]);
+        return json(UNITS);
       default:
         return json([]);
     }

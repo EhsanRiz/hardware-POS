@@ -37,6 +37,21 @@ async function boot() {
     installDemoBackend();
   }
 
+  // /count is the counting phone (src/count): no pairing, no sign-in, no
+  // till. Loaded on its own so a till never carries it and a counter's phone
+  // never runs the till's start-up.
+  if (/^\/count\/?$/.test(location.pathname)) {
+    const { default: CountApp } = await import("./count/CountApp");
+    ReactDOM.createRoot(document.getElementById("root")!).render(
+      <React.StrictMode>
+        <ErrorBoundary>
+          <CountApp />
+        </ErrorBoundary>
+      </React.StrictMode>
+    );
+    return;
+  }
+
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <ErrorBoundary>

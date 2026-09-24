@@ -3746,3 +3746,25 @@ tr.is-void td:last-child { text-decoration: none; }
   font-size: 17px;
   font-weight: 700;
 }
+
+/* ---- A count by a team (stock/CountJobs, 0114) -------------------------- */
+.count-job { border: 1px solid var(--divider); border-radius: var(--radius-lg); padding: 14px; }
+.count-job-code { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.count-job-code > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.count-job-big {
+  font-family: var(--font-heading);
+  font-size: 34px;
+  font-weight: 300;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+.count-job-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.count-job-h { font-family: var(--font-heading); font-size: 16px; font-weight: 500; margin: 18px 0 6px; }
+.count-job-new { list-style: none; margin: 0; padding: 0; }
+.count-job-item { border-bottom: 1px solid var(--divider-row); padding: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.count-job-item-head { display: flex; justify-content: space-between; gap: 12px; }
+.count-job-item-head .num { font-variant-numeric: tabular-nums; }
+.count-job-item-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.count-job-item-form .modal-input { width: auto; flex: 1 1 140px; margin-bottom: 0; min-height: 44px; }
+.count-job-said { color: var(--color-accent-700); }
+.count-job-post { margin-top: 18px; }

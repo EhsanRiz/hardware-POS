@@ -6974,4 +6974,332 @@ begin
 end $$;
 
 
+-- 0114: a count by people from outside the shop -------------------------------
+--
+-- A count job, joined by a code on a phone that belongs to nobody on the
+-- staff. The fixture: a storeman who may count but not price (the review and
+-- the post need manage_catalogue too), three products in known states, and no
+-- sheet open from an earlier test to get in the way.
+
+do $$
+declare v_tok text; v_org uuid; v_store uuid;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  update public.stock_counts set status = 'abandoned' where status = 'open';
+
+  select id into v_store from public.pos_admin_invite_user(
+    v_tok, '1234', 'Count Storeman', '+27820001140',
+    'helper'::user_role, array['manage_inventory']);
+  update public.app_users set status = 'active',
+         pin_hash = crypt('7301', gen_salt('bf')) where id = v_store;
+
+  create temp table cj_fix as select
+    (public.pos_admin_save_product(v_tok, '1234', null, 'CJ-TRACK', '6009114000011',
+      'Count tracked thing', null, null, 'ea', 20, null, 5, 'standard', 40, null, true)).id as tracked,
+    (public.pos_admin_save_product(v_tok, '1234', null, 'CJ-UNTRACK', null,
+      'Count untracked rope', null, null, 'm', 12, null, null, 'standard', null, null, true)).id as untracked,
+    (public.pos_admin_save_product(v_tok, '1234', null, 'CJ-LEFT', null,
+      'Count nobody touched', null, null, 'ea', 9, null, null, 'standard', 17, null, true)).id as untouched;
+end $$;
+
+do $$
+declare
+  v_tok text; v_job public.count_jobs; v_a record; v_b record; v_msg text;
+  v_state jsonb; v_r jsonb; v_r2 jsonb; v_fix record; v_n int; v_item uuid;
+begin
+  select token into v_tok from till;
+  select * into v_fix from cj_fix;
+
+  v_job := public.pos_count_job_open(v_tok, '7301', 'Opening count');
+  perform assert(v_job.doc_number like 'STK-%', 'a count job has its own number, not a credit note''s');
+  perform assert(v_job.join_code ~ '^[2-9A-HJ-NP-Z]{8}$', 'the code is eight characters with no I, O, 0 or 1');
+
+  -- One at a time, and never beside a sheet.
+  perform assert_refuses(format(
+    'select public.pos_count_job_open(%L, ''7301'')', v_tok),
+    'a second job is refused while one is open');
+  begin
+    perform public.pos_stock_count_open(v_tok, '7301');
+    perform assert(false, 'a stock-take sheet is refused while a job is open');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'A count (STK-%) is open%', 'and it says which job: ' || coalesce(v_msg, ''));
+
+  -- The code as it is read across an aisle: lower case, a dash, a space.
+  select * into v_a from public.pos_count_join(
+    lower(substr(v_job.join_code, 1, 4)) || '- ' || substr(v_job.join_code, 5), '  Lerato  ');
+  perform assert_eq(v_a.counter_name, 'Lerato', 'the name is tidied');
+  perform assert_eq(v_a.doc_number, v_job.doc_number, 'the phone is told which count it joined');
+  select * into v_b from public.pos_count_join(v_job.join_code, 'Pieter');
+
+  perform assert_refuses('select public.pos_count_join(''ZZZZZZZZ'', ''Guess'')',
+    'a code that opens nothing is refused');
+  perform assert_refuses(format('select public.pos_count_join(%L, ''   '')', v_job.join_code),
+    'a counter must say who they are');
+
+  -- What the phone is given: names and codes, and no money or quantities.
+  v_state := public.pos_count_state(v_a.token);
+  perform assert(jsonb_array_length(v_state->'products') > 0, 'the phone gets the catalogue');
+  perform assert(not exists (
+      select 1 from jsonb_array_elements(v_state->'products') e
+       where e ? 'price_retail' or e ? 'cost' or e ? 'stock_qty' or e ? 'price_trade'),
+    'no price, cost or stock figure reaches a counter''s phone');
+  perform assert(not exists (
+      select 1 from jsonb_array_elements(v_state->'products') e
+       where e->>'name' = 'Delivery'),
+    'the delivery line is not on a shelf');
+
+  -- A counter token is not a till: it opens nothing in the back office.
+  perform assert_refuses(format('select public.pos_count_jobs(%L, ''7301'')', v_a.token),
+    'a counter''s token cannot list the shop''s counts');
+  perform assert_refuses(format('select public.pos_count_job_post(%L, ''7301'', %L)',
+      v_a.token, v_job.id),
+    'or post one');
+
+  -- Known item, by id, twice in two places by two people: they add up.
+  perform public.pos_count_capture(v_a.token, 'a-1', v_fix.tracked, null, null, null, null,
+    30, 'Aisle 1', now());
+  perform public.pos_count_capture(v_b.token, 'b-1', null, null, '6009114000011', null, null,
+    8, 'Storeroom', now());
+  -- The same capture, sent again through a bad signal, is one capture.
+  v_r := public.pos_count_capture(v_a.token, 'a-1', v_fix.tracked, null, null, null, null,
+    30, 'Aisle 1', now());
+  perform assert_eq(v_r->>'repeat', 'true', 'a capture sent twice is told it was already there');
+  select count(*) into v_n from public.count_captures
+   where job_id = v_job.id and product_id = v_fix.tracked;
+  perform assert_eq(v_n, 2, 'and only two captures exist');
+
+  -- An unknown barcode becomes a new item, and the second person to scan it
+  -- counts the same new item instead of inventing a twin.
+  v_r := public.pos_count_capture(v_a.token, 'a-2', null, null, '6009114999990',
+    'Tile spacers 3mm', 'pack', 12, 'Aisle 4', now());
+  perform assert(v_r->>'new_item_id' is not null, 'an unknown barcode becomes a new item');
+  v_r2 := public.pos_count_capture(v_b.token, 'b-2', null, null, '6009114999990',
+    null, null, 3, 'Storeroom', now());
+  perform assert_eq(v_r2->>'new_item_id', v_r->>'new_item_id',
+    'the second scan of that barcode finds the same new item');
+
+  -- No barcode: the name finds it, whatever the case and spacing.
+  v_r := public.pos_count_capture(v_a.token, 'a-3', null, null, null,
+    'Cable ties 200mm', 'pack', 5, 'Aisle 2', now());
+  v_r2 := public.pos_count_capture(v_b.token, 'b-3', null, null, null,
+    '  cable   TIES 200mm ', 'pack', 2, 'Aisle 2', now());
+  perform assert_eq(v_r2->>'new_item_id', v_r->>'new_item_id',
+    'the same name typed differently is the same new item');
+  -- ...but a different unit is a different thing.
+  v_r2 := public.pos_count_capture(v_b.token, 'b-4', null, null, null,
+    'Cable ties 200mm', 'box', 1, 'Aisle 2', now());
+  perform assert(v_r2->>'new_item_id' <> v_r->>'new_item_id',
+    'the same name in another unit is another item');
+  perform public.pos_count_void(v_b.token, 'b-4');
+
+  -- 2.5 of a pack is a typo, from a counter as from a cashier.
+  begin
+    v_msg := null;
+    perform public.pos_count_capture(v_a.token, 'a-4', null, (v_r->>'new_item_id')::uuid,
+      null, null, null, 2.5, null, now());
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'Cable ties 200mm is counted in whole numbers',
+    'a fraction of a whole-unit item is refused');
+  -- Rope is cut, so a fraction is a count.
+  perform public.pos_count_capture(v_a.token, 'a-5', v_fix.untracked, null, null, null,
+    null, 42.5, 'Yard', now());
+
+  -- A mistake, taken back: it is not counted.
+  perform public.pos_count_capture(v_a.token, 'a-6', v_fix.untouched, null, null, null,
+    null, 999, 'Aisle 9', now());
+  perform assert_eq(public.pos_count_void(v_a.token, 'a-6'), true, 'a counter takes back their own capture');
+  -- Somebody else's is not theirs to take back.
+  perform assert_eq(public.pos_count_void(v_b.token, 'a-1'), false,
+    'a counter cannot take back somebody else''s');
+
+  create temp table cj_state as select v_job.id as job_id, v_a.token as tok_a,
+    v_b.token as tok_b, v_b.counter_id as counter_b;
+end $$;
+
+-- The review: prices need manage_catalogue, and merges must keep counts.
+do $$
+declare
+  v_tok text; v_st record; v_fix record; v_spacers uuid; v_ties uuid; v_extra uuid;
+  v_msg text; v_r jsonb;
+begin
+  select token into v_tok from till;
+  select * into v_st from cj_state;
+  select * into v_fix from cj_fix;
+  select id into v_spacers from public.count_new_items
+   where job_id = v_st.job_id and barcode = '6009114999990';
+  select id into v_ties from public.count_new_items
+   where job_id = v_st.job_id and name = 'Cable ties 200mm' and unit_code = 'pack';
+
+  perform assert_refuses(format(
+    'select public.pos_count_new_item_review(%L, ''7301'', %L, ''add'', null, null, null, null, 25, null, null, null, null)',
+    v_tok, v_spacers),
+    'a storeman who may count may not price');
+  begin
+    perform public.pos_count_new_item_review(v_tok, '1234', v_spacers, 'add',
+      null, null, null, null, null, null, null, null, null);
+    perform assert(false, 'putting an item on sale needs a price');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Give Tile spacers 3mm a price%', 'and says so: ' || coalesce(v_msg, ''));
+
+  perform public.pos_count_new_item_review(v_tok, '1234', v_spacers, 'add',
+    'Tile Spacers 3mm (100)', null, null, null, 24.5, null, 11, null, null);
+  -- Cable ties left pending: it will be created hidden, with its stock.
+
+  -- A third counter-invented item, the same thing under another name: merge it.
+  v_r := public.pos_count_capture(v_st.tok_a, 'a-7', null, null, null,
+    'Cable-tie 200 black', 'pack', 4, 'Till counter', now());
+  v_extra := (v_r->>'new_item_id')::uuid;
+  perform public.pos_count_new_item_review(v_tok, '1234', v_extra, 'merge',
+    null, null, null, null, null, null, null, v_ties, null);
+  -- Now the ties cannot be skipped: what was merged into them would vanish.
+  perform assert_refuses(format(
+    'select public.pos_count_new_item_review(%L, ''1234'', %L, ''skip'', null, null, null, null, null, null, null, null, null)',
+    v_tok, v_ties),
+    'an item others are merged into cannot be skipped out from under them');
+  -- Nor merged into something measured differently.
+  perform assert_refuses(format(
+    'select public.pos_count_new_item_review(%L, ''1234'', %L, ''merge'', null, null, null, null, null, null, null, null, %L)',
+    v_tok, v_spacers, v_fix.untracked),
+    'a pack cannot be merged into a thing sold by the metre');
+
+  -- Merged into a new item nobody else counted: its own count was taken
+  -- back, so only what was merged into it holds it up. Posting must still
+  -- make it, or the count merged into it lands on nothing.
+  v_r := public.pos_count_capture(v_st.tok_a, 'a-8', null, null, null,
+    'Hose clamp 20mm', 'ea', 1, 'Aisle 5', now());
+  perform public.pos_count_void(v_st.tok_a, 'a-8');
+  v_r := public.pos_count_capture(v_st.tok_a, 'a-9', null, null, null,
+    'Hose clip 20', 'ea', 6, 'Aisle 5', now());
+  perform public.pos_count_new_item_review(v_tok, '1234', (v_r->>'new_item_id')::uuid,
+    'merge', null, null, null, null, null, null, null,
+    (select id from public.count_new_items where job_id = v_st.job_id
+        and name = 'Hose clamp 20mm'), null);
+  perform public.pos_count_new_item_review(v_tok, '1234',
+    (select id from public.count_new_items where job_id = v_st.job_id
+        and name = 'Hose clamp 20mm'),
+    'add', null, null, null, null, 18, null, null, null, null);
+
+  -- Whose phone was lost: they come off, what they sent stays.
+  perform public.pos_count_job_remove_counter(v_tok, '7301', v_st.counter_b);
+  perform assert_refuses(format(
+    'select public.pos_count_capture(%L, ''b-9'', %L, null, null, null, null, 1, null, now())',
+    v_st.tok_b, v_fix.tracked),
+    'a counter taken off the count can send nothing more');
+end $$;
+
+-- Posting: counted, plus everything since it was counted.
+do $$
+declare
+  v_tok text; v_st record; v_fix record; v_r jsonb; v_p public.products;
+  v_spacers public.products; v_ties public.products; v_n int; v_row record;
+begin
+  select token into v_tok from till;
+  select * into v_st from cj_state;
+  select * into v_fix from cj_fix;
+
+  -- The count happened ten minutes ago. Something moved before it (already
+  -- on the shelf the counter looked at, so it must NOT count again) and
+  -- something after it (a sale: it must come off).
+  update public.count_captures set captured_at = now() - interval '10 minutes'
+   where job_id = v_st.job_id;
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_fix.tracked, 45, 'before the count');
+  update public.stock_movements set created_at = now() - interval '20 minutes'
+   where product_id = v_fix.tracked and note = 'before the count';
+  -- 45 on the system now. After the count: three sold.
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_fix.tracked, 42, 'sold after the count');
+
+  select * into v_row from public.pos_count_job_counted(v_tok, '7301', v_st.job_id) c
+   where c.product_id = v_fix.tracked;
+  perform assert_eq(v_row.counted, 38::numeric, 'two captures of one item add up (30 + 8)');
+  perform assert_eq(v_row.since, (-3)::numeric, 'only what moved AFTER the count is carried');
+  perform assert_eq(v_row.becomes, 35::numeric, 'the review says what posting will do');
+
+  perform assert_refuses(format('select public.pos_count_job_post(%L, ''7301'', %L)',
+      v_tok, v_st.job_id),
+    'posting creates products, so it needs manage_catalogue too');
+
+  v_r := public.pos_count_job_post(v_tok, '1234', v_st.job_id);
+
+  select * into v_p from public.products where id = v_fix.tracked;
+  perform assert_eq(v_p.stock_qty, 35::numeric,
+    'stock is what was counted, less what sold since — not what was on the system');
+  select * into v_p from public.products where id = v_fix.untracked;
+  perform assert_eq(v_p.stock_qty, 42.5::numeric, 'a never-tracked item is counted into tracking');
+  select * into v_p from public.products where id = v_fix.untouched;
+  perform assert_eq(v_p.stock_qty, 17::numeric,
+    'an item nobody counted is left alone — and a voided capture counted nothing');
+
+  select * into v_spacers from public.products
+   where org_id = (select org_id from fixture) and barcode = '6009114999990';
+  perform assert_eq(v_spacers.name, 'Tile Spacers 3mm (100)', 'a priced new item is created as reviewed');
+  perform assert_eq(v_spacers.active, true, 'and on sale');
+  perform assert_eq(v_spacers.price_retail, 24.5::numeric, 'at its price');
+  perform assert_eq(v_spacers.stock_qty, 15::numeric, 'with both counters'' counts (12 + 3)');
+  perform assert_eq(v_spacers.unit_code, 'pack', 'in the unit it was counted in');
+
+  select * into v_ties from public.products
+   where org_id = (select org_id from fixture) and name = 'Cable ties 200mm';
+  perform assert_eq(v_ties.active, false, 'an unpriced new item is created hidden');
+  perform assert_eq(v_ties.stock_qty, 11::numeric,
+    'with its own counts and the one merged into it (5 + 2 + 4), not the voided box');
+  select count(*) into v_n from public.products
+   where org_id = (select org_id from fixture) and name ilike 'Cable-tie 200 black';
+  perform assert_eq(v_n, 0, 'a merged item makes no product of its own');
+  select * into v_p from public.products
+   where org_id = (select org_id from fixture) and name = 'Hose clamp 20mm';
+  perform assert_eq(v_p.stock_qty, 6::numeric,
+    'an item whose own count was taken back is still made for what was merged into it');
+
+  select count(*) into v_n from public.stock_movements
+   where ref_table = 'count_jobs' and ref_id = v_st.job_id and reason = 'stocktake';
+  perform assert_eq(v_n, (v_r->>'lines_moved')::int, 'every change is a stocktake movement on the job');
+  perform assert_eq((v_r->>'products_created')::int, 3, 'three products were made');
+  perform assert_eq((v_r->>'created_hidden')::int, 1, 'one of them hidden');
+
+  -- Finished means finished, for the phone as for the till.
+  perform assert_refuses(format('select public.pos_count_state(%L)', v_st.tok_a),
+    'a phone on a posted count opens nothing');
+  perform assert_refuses(format('select public.pos_count_job_post(%L, ''1234'', %L)',
+      v_tok, v_st.job_id),
+    'a count posts once');
+  perform assert_refuses(format(
+    'select public.pos_count_capture(%L, ''late'', %L, null, null, null, null, 1, null, now())',
+    v_st.tok_a, v_fix.tracked),
+    'a capture arriving after posting is refused, not quietly added');
+end $$;
+
+-- A reset shop keeps no count jobs, and an abandoned one moves nothing.
+do $$
+declare v_org uuid; v_job public.count_jobs; v_tok text; v_a record; v_n int;
+begin
+  select token into v_tok from till;
+  -- The other direction of the sheet rule: no job beside an open sheet.
+  perform public.pos_stock_count_open(v_tok, '7301');
+  perform assert_refuses(format('select public.pos_count_job_open(%L, ''7301'')', v_tok),
+    'a job is refused while a stock-take sheet is open');
+  update public.stock_counts set status = 'abandoned' where status = 'open';
+
+  v_job := public.pos_count_job_open(v_tok, '7301', 'Abandon me');
+  select * into v_a from public.pos_count_join(v_job.join_code, 'Somebody');
+  perform public.pos_count_job_joining(v_tok, '7301', v_job.id, false);
+  perform assert_refuses(format('select public.pos_count_join(%L, ''Third'')', v_job.join_code),
+    'a closed door lets nobody else in');
+  perform public.pos_count_state(v_a.token);  -- but those inside carry on
+  perform public.pos_count_job_abandon(v_tok, '7301', v_job.id);
+  perform assert_refuses(format('select public.pos_count_state(%L)', v_a.token),
+    'an abandoned count opens nothing');
+
+  v_org := public.innova_create_org('Count Reset Shop', 'Old Manager', '+27820001148');
+  insert into public.count_jobs (org_id, doc_number, join_code)
+  values (v_org, 'STK-000001', 'RESETME2');
+  perform public.innova_reset_org(v_org, 'Count Reset Shop', 'Owner', '+27820001149');
+  select count(*) into v_n from public.count_jobs where org_id = v_org;
+  perform assert_eq(v_n, 0, 'a wiped shop keeps no count jobs');
+end $$;
+
+
 select 'all database tests passed' as result;
