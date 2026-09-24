@@ -1,0 +1,113 @@
+/* The counting phone (src/count). A single column, one thumb, 390 wide. */
+
+.count-app {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--space-4) 16px 48px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.count-app *,
+.count-app *::before,
+.count-app *::after { box-sizing: border-box; }
+
+.count-title {
+  font-family: var(--font-heading);
+  font-size: 24px;
+  font-weight: 400;
+  margin: 0 0 4px;
+}
+.count-h2 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 500;
+  margin: var(--space-4) 0 var(--space-2);
+}
+.count-lede { color: var(--color-neutral-800); margin: 0 0 var(--space-4); }
+.count-sub { color: var(--color-neutral-700); font-size: 14px; margin: 0 0 var(--space-3); }
+.count-bad { color: var(--color-owing); }
+
+.count-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--divider);
+  margin-bottom: var(--space-3);
+}
+.count-sync {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-accent-700);
+  margin: 6px 0 0;
+  text-align: right;
+}
+
+.count-label {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  color: var(--color-neutral-800);
+}
+.count-label .modal-input { margin-top: 4px; }
+.count-code { letter-spacing: 0.15em; text-transform: uppercase; }
+.count-qty { font-size: 22px; font-variant-numeric: tabular-nums; }
+
+.count-go {
+  width: 100%;
+  justify-content: center;
+  min-height: 52px;
+  border-color: var(--color-accent);
+  font-size: 16px;
+}
+.count-add { width: 100%; justify-content: center; margin-top: var(--space-2); }
+
+.count-find-row { display: flex; gap: 8px; align-items: flex-start; }
+.count-find-row .modal-input { flex: 1; min-width: 0; }
+.count-find-row .btn-line { flex-shrink: 0; }
+
+.count-results { list-style: none; margin: 0; padding: 0; }
+.count-result {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--divider-row);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+}
+.count-result-meta { color: var(--color-neutral-700); font-size: 13px; flex-shrink: 0; }
+
+.count-sheet {
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+}
+.count-sheet .count-h2 { margin-top: 0; }
+.count-sheet-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+
+.count-mine ul { list-style: none; margin: 0; padding: 0; }
+.count-row { border-bottom: 1px solid var(--divider-row); padding: 8px 0; }
+.count-row-main { display: flex; justify-content: space-between; gap: 12px; }
+.count-row-name { overflow-wrap: anywhere; }
+.count-row-qty { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.count-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--color-neutral-700);
+}
+.count-row.is-failed .count-row-meta { color: var(--color-owing); }
+.count-undo { min-height: 44px; margin-left: auto; padding: 0 10px; }

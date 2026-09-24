@@ -459,6 +459,44 @@ the function and by the staff screen, and held to GSM 7-bit and two segments
 by `test/invite-message.test.mjs`. Deploy with
 `npx supabase functions deploy auth`.
 
+## Counting a shop with a team
+
+For a shop coming onto the Till, or any time its stock needs counting from
+scratch, by people who are not on its staff — 4D's counters, on their own
+phones. Migration 0114; screens in `src/count/` (the phone) and
+`src/components/stock/CountJobs.tsx` (the shop).
+
+1. **Start it.** On the till: Stock → *Count with a team* → *Start a count*.
+   It shows a code like `K7M4-QXP3`. One count open per shop at a time, and
+   not beside a stock-take sheet (either would post over the other).
+2. **Join it.** Each counter opens `till.innovaearth.com/count` (or
+   `/count?c=K7M4QXP3`, which fills the code), types the code and their own
+   name. No pairing, no PIN, no staff record. The phone can see the shop's
+   items by name and barcode and **never a price, cost or stock figure**; it
+   can do nothing but count on this one job, and stops working the moment the
+   job is posted or abandoned. *Let nobody else join* closes the door;
+   *Take off* stops one phone (a lost one) and keeps what it sent.
+3. **Count.** Say where you are once ("Aisle 3"), then scan or type, and say
+   how many. The same item in two places is two counts, and they add up.
+   Something the catalogue does not know is written down by name (and
+   barcode, if it has one), and the next counter to scan or search for it
+   finds the same thing instead of inventing a twin. Every count is kept on
+   the phone first and sent when there is signal.
+4. **Review.** Back on the till: who is counting; each item the shop has with
+   what was counted, what the till holds now and what posting will make it;
+   and the new items. For each new item: *Put on sale* (needs a price), *Add
+   hidden, price later*, *Same as…* (another new item or an existing one —
+   the count goes there), or *Not stock — skip*.
+5. **Post.** One press does it all: new items become products, and every
+   counted item's stock becomes **what was counted plus whatever has moved
+   since it was counted** — a sale after the counter walked past comes off, a
+   delivery after it goes on. Items nobody counted are left alone; a blank on
+   the list is not a zero. New items nobody priced go in hidden, with their
+   stock, for Manage → Catalogue.
+
+Reviewing prices and posting need `manage_catalogue` as well as
+`manage_inventory`: a storeman can run the count, the owner prices it.
+
 ## Wiping a shop, or deleting it
 
 A shop that was used for testing must start its books at invoice number 1

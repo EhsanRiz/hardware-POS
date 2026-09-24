@@ -14,6 +14,7 @@ import type { Product } from "../../lib/types";
 import { fmtDayMonthTime } from "../../lib/dates";
 import ScanButton from "../ScanButton";
 import StockTake from "./StockTake";
+import CountJobs from "./CountJobs";
 
 const CATALOGUE_KEY = "catalogue.products";
 
@@ -39,7 +40,7 @@ export default function Stock({ pin }: { pin: string }) {
     cacheGet<Product[]>(CATALOGUE_KEY, [])
   );
   const [tab, setTab] = useState<
-    "low" | "receive" | "count" | "all" | "moves"
+    "low" | "receive" | "count" | "team" | "all" | "moves"
   >("low");
   const [term, setTerm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -259,6 +260,14 @@ export default function Stock({ pin }: { pin: string }) {
         >
           Stock take
         </button>
+        {/* The whole shop, counted by people who are not on the staff —
+            4D's counters on their own phones, joined by a code (0114). */}
+        <button
+          className={`btn-line${tab === "team" ? " is-on" : ""}`}
+          onClick={() => setTab("team")}
+        >
+          Count with a team
+        </button>
         <button
           className={`btn-line${tab === "all" ? " is-on" : ""}`}
           onClick={() => setTab("all")}
@@ -281,7 +290,7 @@ export default function Stock({ pin }: { pin: string }) {
         </p>
       )}
 
-      {tab !== "moves" && tab !== "count" && (
+      {tab !== "moves" && tab !== "count" && tab !== "team" && (
         <div className="stock-receive-bar">
           <input
             value={term}
@@ -329,6 +338,8 @@ export default function Stock({ pin }: { pin: string }) {
               ).values(),
             ].sort((a, b) => a.name.localeCompare(b.name))}
           />
+        ) : tab === "team" ? (
+          <CountJobs pin={pin} online={online} products={products} />
         ) : tab === "moves" ? (
           <MovementsTable moves={moves} />
         ) : (
