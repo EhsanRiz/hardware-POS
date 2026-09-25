@@ -7434,4 +7434,100 @@ begin
 end $$;
 
 
+-- 0116: a counted item goes into the catalogue now, not at posting ----------
+
+do $$
+declare
+  v_tok text; v_org uuid; v_job public.count_jobs; v_a record; v_r jsonb;
+  v_item uuid; v_wrong public.products; v_prod public.products; v_n int;
+  v_row record; v_msg text; v_state jsonb;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  v_job := public.pos_count_job_open(v_tok, '7301', 'Mid-count catalogue');
+  select * into v_a from public.pos_count_join(v_job.join_code, 'Mary');
+
+  -- Mary meets a filing pocket nobody has listed, and photographs it.
+  v_r := public.pos_count_capture(v_a.token, 'm-1', null, null, '9343266001987',
+    'Filing Pocket', 'ea', 50, 'Aisle 2', now());
+  v_item := (v_r->>'new_item_id')::uuid;
+  perform public.pos_count_add_photo(v_a.token, 'm-1', 'mp-1',
+    v_org::text || '/count/' || v_job.id::text || '/pocket.jpg');
+
+  -- The owner fills in the catalogue form now, while Mary is still counting.
+  -- First with the wrong unit: twelve each are not twelve packs.
+  v_wrong := public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'Filing Pocket (pack)', null, null, 'pack', 200, null, null, 'standard', 0, null, true);
+  begin
+    perform public.pos_count_new_item_link(v_tok, '1234', v_item, v_wrong.id);
+    perform assert(false, 'a product in another unit is refused');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Filing Pocket was counted in ea, and the product is sold in pack%',
+    'and it says why: ' || coalesce(v_msg, ''));
+
+  v_prod := public.pos_admin_save_product(v_tok, '1234', null, null, '9343266001987',
+    'Filing Pocket A4', null, null, 'ea', 200, 180, 95, 'standard', 0, null, true);
+  perform assert_refuses(format(
+    'select public.pos_count_new_item_link(%L, ''7301'', %L, %L)', v_tok, v_item, v_prod.id),
+    'linking needs manage_catalogue, as pricing does');
+  perform public.pos_count_new_item_link(v_tok, '1234', v_item, v_prod.id);
+
+  -- In the catalogue now, on sale, with Mary's photo as its picture.
+  select * into v_prod from public.products where id = v_prod.id;
+  perform assert_eq(v_prod.active, true, 'the item is on sale before the count is posted');
+  perform assert(v_prod.image_url like '%/pocket.jpg', 'the counter''s photo is its picture at once');
+  perform assert_eq((select count(*)::int from public.product_images where product_id = v_prod.id), 1,
+    'one photo, once');
+
+  -- The review list says where it went.
+  select * into v_row from public.pos_count_job_new_items(v_tok, '7301', v_job.id)
+   where id = v_item;
+  perform assert_eq(v_row.merge_product_name, 'Filing Pocket A4', 'the review names the product');
+  perform assert_eq(v_row.merge_product_price, 200::numeric, 'and its price');
+  perform assert_eq(v_row.merge_product_active, true, 'and that it is on sale');
+
+  -- Mary's phone no longer offers the placeholder; the product is there instead.
+  v_state := public.pos_count_state(v_a.token);
+  perform assert(not exists (select 1 from jsonb_array_elements(v_state->'new_items') e
+                              where e->>'id' = v_item::text),
+    'a catalogued item is no longer a "new" one on the phone');
+  perform assert(exists (select 1 from jsonb_array_elements(v_state->'products') e
+                          where e->>'barcode' = '9343266001987'),
+    'the phone finds the real product by its barcode');
+
+  -- Her next scan lands on the product; so does an old phone's placeholder id.
+  v_r := public.pos_count_capture(v_a.token, 'm-2', null, null, '9343266001987',
+    null, null, 20, 'Storeroom', now());
+  perform assert_eq((v_r->>'product_id')::uuid, v_prod.id, 'a new scan counts the product itself');
+  perform public.pos_count_capture(v_a.token, 'm-3', null, v_item, null, null, null,
+    5, 'Aisle 7', now());
+
+  select * into v_row from public.pos_count_job_counted(v_tok, '7301', v_job.id) c
+   where c.product_id = v_prod.id;
+  perform assert_eq(v_row.counted, 75::numeric, 'every count of it lands on the product (50 + 20 + 5)');
+
+  -- Linked twice is refused rather than silently moved — to a second product
+  -- in the SAME unit, so it is this guard that refuses and not the unit's.
+  v_wrong := public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'Filing Pocket spare', null, null, 'ea', 199, null, null, 'standard', 0, null, true);
+  begin
+    v_msg := null;
+    perform public.pos_count_new_item_link(v_tok, '1234', v_item, v_wrong.id);
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'Filing Pocket is already counted as another item',
+    'an item already in the catalogue is not linked again');
+
+  -- Posting: the stock arrives, the photo is not added twice.
+  perform public.pos_count_finish(v_a.token);
+  v_r := public.pos_count_job_post(v_tok, '1234', v_job.id);
+  select * into v_prod from public.products where id = v_prod.id;
+  perform assert_eq(v_prod.stock_qty, 75::numeric, 'the stock arrives when the count is posted');
+  perform assert_eq((v_r->>'products_created')::int, 0, 'and posting makes no twin of it');
+  perform assert_eq((select count(*)::int from public.product_images where product_id = v_prod.id), 1,
+    'nor adds its photo a second time');
+end $$;
+
+
 select 'all database tests passed' as result;

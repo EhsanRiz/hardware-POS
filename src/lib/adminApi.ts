@@ -57,11 +57,12 @@ export interface ProductInput {
   max_discount_amount?: number | null;
 }
 
+/** Saves, and returns the product's id — a new one's, when it was created. */
 export async function adminSaveProduct(
   pin: string,
   p: ProductInput
-): Promise<void> {
-  const { error } = await supabase.rpc("pos_admin_save_product", {
+): Promise<string> {
+  const { data, error } = await supabase.rpc("pos_admin_save_product", {
     p_register_token: requireToken(),
     p_pin: pin,
     p_id: p.id ?? null,
@@ -88,6 +89,9 @@ export async function adminSaveProduct(
     p_price_cut_trade: p.price_cut_trade ?? null,
   });
   if (error) throw error;
+  // One products row: PostgREST sends it as an object.
+  const row = (Array.isArray(data) ? data[0] : data) as { id: string } | null;
+  return row?.id ?? p.id ?? "";
 }
 
 /** Returns "deactivated" for a product with sale history, "deleted" otherwise. */

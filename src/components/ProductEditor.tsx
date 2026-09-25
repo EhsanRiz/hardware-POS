@@ -31,6 +31,8 @@ export default function ProductEditor({
   onSave,
   onDelete,
   onClose,
+  initial,
+  fromCount,
 }: {
   pin: string;
   product: AdminProduct | null;
@@ -40,6 +42,14 @@ export default function ProductEditor({
   onSave: (p: ProductInput) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onClose: () => void;
+  /** What a new product starts with — a counted item's name, barcode, unit. */
+  initial?: Partial<ProductInput>;
+  /**
+   * Opened from a count's review list (0116): the stock figure is the
+   * count's to set when it is posted, so there is no opening stock to type,
+   * and the counters' photos go onto the product when it is saved.
+   */
+  fromCount?: { photos: string[] };
 }) {
   const [f, setF] = useState<ProductInput>(() => ({
     id: product?.id ?? null,
@@ -64,6 +74,7 @@ export default function ProductEditor({
     pack_label: product?.pack_label ?? null,
     price_cut_retail: product?.price_cut_retail ?? null,
     price_cut_trade: product?.price_cut_trade ?? null,
+    ...(product ? {} : initial),
   }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +243,7 @@ export default function ProductEditor({
       <div className="bg-white rounded-2xl w-full max-w-2xl my-6">
         <div className="flex items-center justify-between p-4 border-b border-stone-200">
           <h2 className="text-lg font-semibold">
-            {isNew ? "New product" : f.name}
+            {fromCount && isNew ? "Add to the catalogue" : isNew ? "New product" : f.name}
           </h2>
           <button onClick={onClose} className="text-stone-400 text-2xl leading-none">
             ×
@@ -508,6 +519,11 @@ export default function ProductEditor({
               </select>
             </Field>
 
+            {fromCount && isNew ? (
+              <Field label="Stock" hint="Comes from the count when it is posted — with anything sold meanwhile taken off.">
+                <input value="From the count" disabled aria-label="Stock" className={inputCls + " bg-stone-100"} />
+              </Field>
+            ) : (
             <Field
               label={isNew ? "Opening stock" : "On hand"}
               // Greyed after creation on purpose: stock moves through the
@@ -532,6 +548,7 @@ export default function ProductEditor({
                 className={inputCls + (isNew ? "" : " bg-stone-100")}
               />
             </Field>
+            )}
 
             <Field
               label="Reorder at"
@@ -614,7 +631,25 @@ export default function ProductEditor({
                 </p>
               </div>
             )}
-            <ProductPhotos productId={product?.id ?? null} pin={pin} />
+            {fromCount && isNew ? (
+              fromCount.photos.length ? (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Counters' photos">
+                  {fromCount.photos.map((p, i) => (
+                    <img key={p} src={imageSrc(p) ?? undefined} alt={`Counter's photo ${i + 1}`}
+                      className="w-24 h-24 object-cover rounded border border-stone-200 bg-stone-50" />
+                  ))}
+                  <p className="text-xs text-stone-500 w-full">
+                    The counters' photos. They become this product's pictures when you save.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-stone-500">
+                  No photos from the count. Add some after saving, in Manage → Catalogue.
+                </p>
+              )
+            ) : (
+              <ProductPhotos productId={product?.id ?? null} pin={pin} />
+            )}
           </Field>
 
           <label className="flex items-center gap-2 text-sm">
