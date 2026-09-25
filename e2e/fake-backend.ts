@@ -5085,7 +5085,9 @@ function matchSameVariant(a: string, b: string) {
 
 function matchNotStock(code: string | null, description: string, price: number | null) {
   return (code ?? "").trim().toUpperCase() === "NOTE"
-    || /(surcharge|delivery|transport|freight|fuel|diesel|^\s*\*|^\s*note\b|^\s*income\b)/i.test(description)
+    // 0118: a charge named as a charge. Not a leading "*": Turf-Ag print one
+    // in front of real products.
+    || /(surcharge|freight|transport (fee|charge|cost)|delivery (fee|charge|cost)|^\s*delivery\s*$|fuel levy|^\s*note\b)/i.test(description)
     || price === 0;
 }
 
