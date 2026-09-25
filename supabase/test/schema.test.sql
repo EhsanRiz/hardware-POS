@@ -7788,4 +7788,101 @@ begin
 end $$;
 
 
+-- 0119: what a delivery line actually cost — after discount, without VAT -----
+do $$
+declare v_tok text; v_org uuid; v_r record; v_sup uuid; v_row record;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  -- Switch off: nothing worked out, the screen is what it was.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Cost Supplies', '4990077766', null, null,
+    'invoice', 'CS-0', current_date, 14.70, 2.21, 16.91, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'E40', 'description', 'NYLON 40MM ELBOW',
+      'qty', 1, 'unit_price', 21, 'line_total', 14.70)));
+  v_sup := v_r.supplier_id;
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+  perform assert(v_row.net_cost is null and v_row.price_basis is null,
+    'with the switch off no cost is worked out');
+
+  update public.organizations set sort_deliveries = true where id = v_org;
+
+  -- Turf-Ag: 30% off every line, lines without VAT, VAT on the total.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'CS-1', current_date, 217.70, 32.66, 250.36, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'E40', 'description', 'NYLON 40MM ELBOW',
+        'qty', 1, 'unit_price', 21, 'line_total', 14.70),
+      jsonb_build_object('supplier_code', 'T40', 'description', 'NYLON 40MM TEE',
+        'qty', 10, 'unit_price', 29, 'line_total', 203.00)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 1;
+  perform assert_eq(v_row.price_basis, 'ex_vat', 'lines that add up to the subtotal are ex VAT');
+  perform assert_eq(v_row.net_cost, 14.70::numeric,
+    'the elbow cost R14.70 after 30% off, not the R21.00 it lists at');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 2;
+  perform assert_eq(v_row.net_cost, 20.30::numeric, 'and a tee R20.30 each');
+
+  -- GC Central Coatings: the line total includes VAT, the list price beside
+  -- it does not. The invoice's own subtotal/total takes the VAT out.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'CS-2', current_date, 1269.57, 190.43, 1460.00, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'STOEPENRED',
+      'description', 'STOEP ENAMEL: Red 5L', 'qty', 5, 'unit_price', 292, 'line_total', 1460.00)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+  perform assert_eq(v_row.price_basis, 'incl_vat', 'lines that add up to the total include VAT');
+  perform assert_eq(v_row.net_cost, 253.91::numeric, 'and the cost is without it: 1460 / 1.15 / 5');
+
+  -- GC's own shape: VAT-inclusive paint beside a surcharge printed without
+  -- VAT, which pulls subtotal/total away from 1/1.15. The rate, not that
+  -- ratio, takes the VAT out: Blue Chip 20L is R130.00, not R130.62.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'CS-2B', current_date, 4046.00, 606.90, 4652.90, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'BLCHBLU20', 'description', 'Blue Chip Blue 20L',
+        'qty', 30, 'unit_price', 130, 'line_total', 4485.00),
+      jsonb_build_object('supplier_code', '1010', 'description', 'Income - fuel surcharge',
+        'qty', 1, 'unit_price', 146, 'line_total', 146.00)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 1;
+  perform assert_eq(v_row.price_basis, 'incl_vat', 'a skewed total still reads as VAT-inclusive');
+  perform assert_eq(v_row.net_cost, 130.00::numeric, 'and the VAT comes out at the rate: R130.00');
+
+  -- MZ Cement: not VAT registered, so what was paid is the cost.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'CS-3', current_date, 1000, 0, 1000, null,
+    jsonb_build_array(jsonb_build_object('description', 'CEMENT 32.5N 50KG',
+      'qty', 10, 'unit_price', 100, 'line_total', 1000)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+  perform assert_eq(v_row.net_cost, 100::numeric, 'no VAT on the invoice: the price paid is the cost');
+
+  -- A reading that does not add up (a page read twice): no guess.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'CS-4', current_date, 1000, 150, 1150, null,
+    jsonb_build_array(
+      jsonb_build_object('description', 'CEMENT 42.5N 50KG', 'qty', 10, 'unit_price', 100, 'line_total', 1000),
+      jsonb_build_object('description', 'CEMENT 42.5N 50KG', 'qty', 10, 'unit_price', 100, 'line_total', 1000)));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 1;
+  perform assert_eq(v_row.price_basis, 'unclear', 'lines that match neither total are unclear');
+  perform assert(v_row.net_cost is null, 'and no cost is guessed');
+
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_receive_lines'), 1,
+    'pos_purchasing_receive_lines still has exactly one signature');
+
+  update public.organizations set sort_deliveries = false where id = v_org;
+  delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+end $$;
+
+
 select 'all database tests passed' as result;

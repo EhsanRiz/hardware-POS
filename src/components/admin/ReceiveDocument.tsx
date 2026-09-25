@@ -122,7 +122,12 @@ export default function ReceiveDocument({
           productName: line.product_name,
           // What the paper says arrived, which the person checking corrects.
           qty: line.qty != null ? String(line.qty) : "",
-          cost: line.unit_price != null ? String(line.unit_price) : "",
+          // What one actually cost, when the server could work it out
+          // (0119) — the listed price is before discount, and sometimes
+          // with VAT. Otherwise the listed price, for a person to check.
+          cost:
+            line.net_cost != null ? String(line.net_cost)
+            : line.unit_price != null ? String(line.unit_price) : "",
           picking: false,
           costNow: line.current_cost,
           // Sorted by the server (0117) when the shop has switched it on;
@@ -257,6 +262,18 @@ export default function ReceiveDocument({
               .join(" · ")}
           </p>
         )}
+        {sorted && rows && rows[0]?.line.price_basis && (
+          <p
+            className={rows[0].line.price_basis === "unclear" ? "acc-note is-warning" : "acc-note"}
+            aria-label="How costs were worked out"
+          >
+            {rows[0].line.price_basis === "ex_vat"
+              ? "Costs are what one cost after any discount, without VAT — this invoice adds VAT on its total."
+              : rows[0].line.price_basis === "incl_vat"
+              ? "This invoice's prices include VAT. Costs are what one cost after any discount, without VAT."
+              : "The lines don't add up to this invoice's totals, so each cost is the listed price. Check them before booking in."}
+          </p>
+        )}
         {clashing.size > 0 && (
           <p className="acc-note is-warning">
             {clashing.size} new items would have the same name as another. Give each one a
@@ -286,6 +303,14 @@ export default function ReceiveDocument({
                   <span className="acc-sub">
                     {[r.line.supplier_code, r.line.unit_price != null ? `${money(r.line.unit_price)} each` : null]
                       .filter(Boolean).join(" · ")}
+                    {r.line.net_cost != null && r.line.unit_price != null &&
+                      Math.abs(r.line.net_cost - r.line.unit_price) > 0.005 && (
+                      <span aria-label={`What line ${r.line.line_no} cost`}>
+                        {" · "}paid {money(r.line.net_cost)} ex VAT
+                        {r.line.price_basis === "ex_vat" && r.line.net_cost < r.line.unit_price
+                          ? ` (${Math.round((1 - r.line.net_cost / r.line.unit_price) * 100)}% off)` : ""}
+                      </span>
+                    )}
                   </span>
                   {r.productId ? (
                     <span className="acc-sub">

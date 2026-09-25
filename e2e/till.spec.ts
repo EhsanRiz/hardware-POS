@@ -6041,16 +6041,18 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
   be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "PDL50", product_id: "p5" });
   be.supplierDocs.push({
     id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "IN17330",
-    doc_date: "2026-09-22", total: 5000, note: null, status: "read",
+    doc_date: "2026-09-22", note: null, status: "read",
     created_at: "2026-09-22T08:00:00Z",
+    // Lines without VAT, VAT added on the total, as 40 of 5 Star's 58 are.
+    subtotal: 4809.24, tax_total: 721.39, total: 5530.63,
   });
   const line = (line_no: number, supplier_code: string | null, description: string,
-    qty: number, unit_price: number) => ({
-    document_id: "doc1", line_no, supplier_code, description, qty, unit_price,
-    line_total: qty * unit_price,
+    qty: number, unit_price: number, line_total = qty * unit_price) => ({
+    document_id: "doc1", line_no, supplier_code, description, qty, unit_price, line_total,
   });
   be.supplierLines.push(
-    line(1, "PDL50", "PADLOCK 50MM BRASS", 4, 55),
+    // Listed at R55, charged at 30% off: R154 for four (0119).
+    line(1, "PDL50", "PADLOCK 50MM BRASS", 4, 55, 154),
     line(2, null, "CEMENT 42.5N 50KG BAG", 10, 82.8),
     line(3, "STPE001", "Stay Peg 150mm Legend Carded", 10, 10),
     line(4, "STPE001", "Stay Peg 150mm Legend Carded", 10, 12),
@@ -6078,6 +6080,12 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
     .toHaveText("1 matched · 5 new · 2 left off · 3 to check");
   // The remembered code, whose words agree with it: nothing to do.
   await expect(recv).toContainText("→ Padlock 50mm Brass · remembered");
+  // Its cost is what one cost — after the 30% off, without VAT — and the
+  // screen says how it got there, not the R55 it is listed at (0119).
+  await expect(recv.getByLabel("How costs were worked out"))
+    .toHaveText("Costs are what one cost after any discount, without VAT — this invoice adds VAT on its total.");
+  await expect(recv.getByLabel("Unit cost of PADLOCK 50MM BRASS")).toHaveValue("38.5");
+  await expect(recv.getByLabel("What line 1 cost")).toHaveText(" · paid R 38.50 ex VAT (30% off)");
   // A name is only ever OFFERED.
   await expect(recv).toContainText("Is it Cement 42.5N 50kg?");
   // The second Stay Peg line is the first one's item, not a second item.

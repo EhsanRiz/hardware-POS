@@ -1231,6 +1231,14 @@ export interface ReceiveLine {
    * line whose words say it is a different variant.
    */
   sort_note?: string | null;
+  /**
+   * What one actually cost, after discount and without VAT (0119): the line
+   * total over the quantity, with VAT taken out when the lines add up to the
+   * invoice's total. Null when the lines do not add up to either total.
+   */
+  net_cost?: number | null;
+  /** ex_vat | incl_vat | unclear — how this invoice prints its lines. */
+  price_basis?: "ex_vat" | "incl_vat" | "unclear" | null;
 }
 
 export type ReceiveSort = "sure" | "likely" | "same_as_line" | "new" | "not_stock";
