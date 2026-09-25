@@ -2175,6 +2175,9 @@
 .is-owing { color: var(--color-text); font-weight: 600; }
 .is-late { color: var(--color-accent-700); font-weight: 600; }
 .is-bad { color: var(--color-owing); font-weight: 600; }
+/* Something waiting on a person, not something wrong: an offered match, a
+   delivery line to check. */
+.is-warning { color: var(--color-accent-700); font-weight: 600; }
 tr.is-void td { opacity: 0.5; text-decoration: line-through; }
 tr.is-void td:last-child { text-decoration: none; }
 

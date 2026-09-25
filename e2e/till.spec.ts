@@ -5930,6 +5930,10 @@ test("a delivery is booked in from its own invoice, and the pairing is remembere
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  // Sorting is off, as in every shop until it is switched on (0117): no
+  // waiting list, and — below — every line for a person to match.
+  await expect(page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Waiting to be booked in" })).toHaveCount(0);
   await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
   await page.getByRole("dialog", { name: "Supplier Jasbro Plumbing" })
     .getByRole("button", { name: /Invoice INV-8812/ }).click();
@@ -6021,6 +6025,126 @@ test("the second delivery from a supplier matches itself, and cannot be booked i
   const view = page.getByRole("dialog", { name: "Delivery note DN-77" });
   await expect(view).toContainText("Booked in.");
   await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+});
+
+/*
+ * 0117: a delivery sorts itself. Every line arrives already decided except the
+ * ones that need a person, and those say what they need.
+ */
+test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, notes are left off, clashing names get named", async ({ page }) => {
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Sorting Supplies", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4990011122", notes: null,
+  });
+  // A code this supplier has used for the padlock before.
+  be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "PDL50", product_id: "p5" });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "IN17330",
+    doc_date: "2026-09-22", total: 5000, note: null, status: "read",
+    created_at: "2026-09-22T08:00:00Z",
+  });
+  const line = (line_no: number, supplier_code: string | null, description: string,
+    qty: number, unit_price: number) => ({
+    document_id: "doc1", line_no, supplier_code, description, qty, unit_price,
+    line_total: qty * unit_price,
+  });
+  be.supplierLines.push(
+    line(1, "PDL50", "PADLOCK 50MM BRASS", 4, 55),
+    line(2, null, "CEMENT 42.5N 50KG BAG", 10, 82.8),
+    line(3, "STPE001", "Stay Peg 150mm Legend Carded", 10, 10),
+    line(4, "STPE001", "Stay Peg 150mm Legend Carded", 10, 12),
+    line(5, "T2311", "cornice", 72, 13.95),
+    line(6, "T2411", "cornice", 64, 13.95),
+    line(7, "NOTE", "* 1BOX", 1, 0),
+    line(8, "DELDIV", "Diesel Surcharge", 1, 1420.04),
+  );
+  const padlockBefore = PRODUCTS.find((p) => p.id === "p5")!.stock_qty!;
+  const cementBefore = PRODUCTS.find((p) => p.id === "p1")!.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+
+  // Filed on a phone, finished here: the till lists what is waiting.
+  const waiting = page.getByRole("region", { name: "Waiting to be booked in" });
+  await expect(waiting).toContainText("Waiting to be booked in (1)");
+  await waiting.getByText("Sorting Supplies · Invoice IN17330").click();
+
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await expect(recv.getByLabel("How the delivery was sorted"))
+    .toHaveText("1 matched · 4 new · 2 left off · 3 to check");
+  // The remembered code, whose words agree with it: nothing to do.
+  await expect(recv).toContainText("→ Padlock 50mm Brass · remembered");
+  // A name is only ever OFFERED.
+  await expect(recv).toContainText("Is it Cement 42.5N 50kg?");
+  // The second Stay Peg line is the first one's item, not a second item.
+  await expect(recv).toContainText("→ the same item as line 3");
+  await expect(recv).toContainText("Not stock — a note or a charge, left off");
+  await expect(recv).toContainText("2 new items would have the same name as another");
+  await expect(recv.getByRole("button", { name: /^Book in/ })).toBeDisabled();
+
+  await recv.getByRole("button", { name: "Yes, line 2 is Cement 42.5N 50kg" }).click();
+  await expect(recv).toContainText("→ Cement 42.5N 50kg");
+  // Confirmed the offer; the cornices still share a name, so still refused.
+  // This is the assertion that pins the clash rule on its own.
+  await expect(recv.getByRole("button", { name: /^Book in/ })).toBeDisabled();
+  await recv.getByLabel("Name for the new item on line 5").fill("Cornice T2311 90mm");
+  await recv.getByLabel("Name for the new item on line 6").fill("Cornice T2411 120mm");
+  await expect(recv.getByLabel("How the delivery was sorted"))
+    .toHaveText("2 matched · 4 new · 2 left off");
+
+  await recv.getByRole("button", { name: "Book in 6 lines" }).click();
+  await expect(page.getByText(/6 lines booked in, 3 new items created and waiting to be priced/)).toBeVisible();
+
+  expect(PRODUCTS.find((p) => p.id === "p5")!.stock_qty).toBe(padlockBefore + 4);
+  expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(cementBefore + 10);
+  const pegs = PRODUCTS.filter((p) => p.name === "Stay Peg 150mm Legend Carded");
+  expect(pegs).toHaveLength(1);
+  expect(pegs[0].stock_qty).toBe(20);
+  expect(PRODUCTS.filter((p) => /cornice/i.test(p.name)).map((p) => p.name).sort())
+    .toEqual(["Cornice T2311 90mm", "Cornice T2411 120mm"]);
+  expect(PRODUCTS.some((p) => p.name === "* 1BOX" || p.name === "Diesel Surcharge")).toBe(false);
+  // Booked in, it is no longer waiting.
+  await expect(waiting).toHaveCount(0);
+});
+
+test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4370229645", notes: null,
+  });
+  be.documentReading = { ...be.documentReading, kind: "invoice", doc_number: "27181" };
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  const scanIt = async () => {
+    await page.getByRole("button", { name: "Scan a document" }).first().click();
+    const scan = page.getByRole("dialog", { name: "Scan a document" });
+    await scan.getByLabel("Add PDF or photos").setInputFiles([
+      { name: "p1.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 fake") },
+    ]);
+    await scan.getByRole("button", { name: "Read 1 page" }).click();
+    await scan.getByRole("button", { name: "File it" }).click();
+    return scan;
+  };
+
+  await scanIt();
+  // The phone's part is done, and it says where the rest happens.
+  await expect(page.getByText(/It is waiting to be booked in — that can be done on the till/)).toBeVisible();
+  expect(be.supplierDocs).toHaveLength(1);
+
+  // The same paper again: refused, naming what is already there.
+  await page.getByRole("button", { name: "Close document" }).click();
+  await page.getByRole("button", { name: "← Suppliers" }).click();
+  await expect(page.getByRole("region", { name: "Waiting to be booked in" }))
+    .toContainText("Jasbro Plumbing · Invoice 27181");
+  const scan = await scanIt();
+  await expect(scan.getByRole("alert"))
+    .toContainText(/Invoice 27181 from Jasbro Plumbing is already filed \(.+\)\. Open that one instead/);
+  expect(be.supplierDocs).toHaveLength(1);
 });
 
 test("a quote is not offered for receiving, because nothing has been bought", async ({ page }) => {

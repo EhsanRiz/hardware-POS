@@ -7530,4 +7530,249 @@ begin
 end $$;
 
 
+-- 0117: a delivery sorts itself, and the same invoice is not filed twice ------
+
+-- The comparisons first, on descriptions off 5 Star's own invoices.
+do $$
+begin
+  perform assert_eq(public.match_conflict('STOEP ENAMEL: Red 5L', 'STOEP ENAMEL: Red 1L'), 'size',
+    'one code on the Red 5L and the Red 1L: the size says they differ');
+  perform assert(public.match_conflict('HRC 32.5', 'HRC 32,5 ECO CEMENT') is null,
+    'a decimal comma is the same number');
+  perform assert(public.match_conflict('HIGH GLOSS BLACK 1LT', 'High Gloss Black 1 L') is null,
+    '1LT and 1 L are the same size');
+  perform assert_eq(public.match_conflict('Blue Chip Blue 5L', 'Blue Chip - Cream 5L'), 'colour',
+    'two colours of one paint differ');
+  perform assert_eq(public.match_conflict('MEDIUM DUTY 115 DOORFRAME L/H', 'MEDIUM DUTY 115 DOORFRAME R/H'),
+    'side', 'and so do a left and a right hand');
+  perform assert(public.match_not_stock('NOTE', '* 1BOX', 0), 'a note is not stock');
+  -- One per rule, because each of the others would catch '* 1BOX' at R0.
+  perform assert(public.match_not_stock('NOTE', '1 BOX', null),
+    'NAZ''s notes carry the code NOTE and nothing else to go on');
+  perform assert(public.match_not_stock('X1', 'PLAIN WASHER', 0), 'a line at R0 is not stock');
+  perform assert(public.match_not_stock('DELDIV', 'Diesel Surcharge', 1420.04), 'nor is a surcharge');
+  perform assert(not public.match_not_stock('HGBLA1', 'HIGH GLOSS BLACK 1LT', 65),
+    'a priced line of paint is');
+  perform assert(not public.match_not_stock('RSW', 'ROOFING SCREWS 75MM', null),
+    'and a line the reader found no price for is still stock, not a note');
+  perform assert(public.match_similarity('Stay Peg 150mm Legend Carded', 'STAY PEG 150MM LEGEND') >= 0.75,
+    'the same words in other capitals are alike');
+  perform assert(not public.match_same_variant('ECONO GLOSS PWD Brown 1L', 'HIGH GLOSS PWD BROWN 5LT'),
+    'a different size is never offered on its name');
+end $$;
+
+do $$
+declare v_tok text; v_org uuid; v_r record; v_a uuid; v_b uuid; v_sup uuid; v_row record;
+        v_msg text; v_n int; v_red5 uuid; v_red1 uuid; v_cem uuid; v_peg uuid;
+        v_lines jsonb; v_names text[];
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  v_cem := (public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'CEM II 32.5 N BAG', null, null, 'ea', 105, null, null, 'standard', 40, null, true)).id;
+  perform public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'HIGH GLOSS PWD BROWN 5LT', null, null, 'ea', 320, null, null, 'standard', 3, null, true);
+
+  -- SWITCH OFF: today's screen, exactly. Nothing sorted, and the same number
+  -- files twice, because nothing has been switched on to stop it.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Sorting Supplies', '4990011122', null, null,
+    'invoice', 'SS-1', current_date, null, null, 100, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'NOTE', 'description', '* 1BOX',
+                                         'qty', 1, 'unit_price', 0)));
+  v_sup := v_r.supplier_id;
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+  perform assert(v_row.sorted is null, 'with the switch off, nothing is sorted');
+  perform assert(v_row.suggestion_id is null and v_row.same_as_line is null
+    and v_row.sort_note is null, 'and nothing is suggested');
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'SS-1', current_date, null, null, 100, null, '[]'::jsonb);
+  perform assert_eq((select count(*)::int from public.supplier_documents
+    where supplier_id = v_sup and doc_number = 'SS-1'), 2,
+    'with the switch off, the same number files twice as it always has');
+  delete from public.supplier_documents where supplier_id = v_sup;
+
+  update public.organizations set sort_deliveries = true where id = v_org;
+  perform assert(public.pos_purchasing_sorts_deliveries(v_tok, '1234'),
+    'the screen can ask whether the shop sorts');
+
+  -- The first delivery: Red 5L and Red 1L under ONE code, as GC Central
+  -- Coatings print it.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'IN 140910', current_date, null, null, 1500, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'STOEPENRED', 'description', 'STOEP ENAMEL: Red 5L',
+                         'qty', 5, 'unit_price', 292),
+      jsonb_build_object('supplier_code', 'STOEPENRED', 'description', 'STOEP ENAMEL: Red 1L',
+                         'qty', 15, 'unit_price', 81)));
+  v_a := v_r.document_id;
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_a) where line_no = 2;
+  perform assert_eq(v_row.sorted, 'new', 'the second size under the same code is its own new item');
+  perform assert_eq(v_row.sort_note, 'code_reused_size', 'and says the code was reused');
+  perform assert(v_row.same_as_line is null, 'not "the same as line 1"');
+  perform public.pos_purchasing_receive_document(v_tok, '1234', v_a, jsonb_build_array(
+    jsonb_build_object('line_no', 1, 'create', true, 'qty', 5, 'unit_cost', 292),
+    jsonb_build_object('line_no', 2, 'create', true, 'qty', 15, 'unit_cost', 81)));
+  select product_id into v_red5 from public.supplier_document_lines where document_id = v_a and line_no = 1;
+  select product_id into v_red1 from public.supplier_document_lines where document_id = v_a and line_no = 2;
+  perform assert(v_red5 <> v_red1, 'two items were made');
+  perform assert_eq((select product_id from public.supplier_product_codes
+     where supplier_id = v_sup and supplier_code = 'STOEPENRED'), v_red5,
+    'the code keeps its FIRST pairing — the 1L does not silently take the 5L''s code');
+
+  -- The same invoice again, typed differently by the reader: refused, and
+  -- the refusal names what is already there.
+  begin
+    v_msg := null;
+    perform public.pos_purchasing_file_document(
+      v_tok, '1234', v_sup, null, null, null, null,
+      'invoice', 'in140910', current_date, null, null, 1500, null, '[]'::jsonb);
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Invoice in140910 from Sorting Supplies is already filed (%). Open that one instead of filing it again.',
+    'the same invoice is not filed twice: ' || coalesce(v_msg, 'it was allowed'));
+  -- Only the same KIND of paper with the same number: a quote may share it.
+  perform public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'quote', 'IN140910', current_date, null, null, 1500, null, '[]'::jsonb);
+
+  -- The second delivery: every group, on one invoice.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', 'SS-2', current_date, null, null, 5000, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'STOEPENRED', 'description', 'STOEP ENAMEL: Red 5L',
+                         'qty', 2, 'unit_price', 292),
+      jsonb_build_object('supplier_code', 'STOEPENRED', 'description', 'STOEP ENAMEL: Red 1L',
+                         'qty', 6, 'unit_price', 81),
+      jsonb_build_object('description', 'CEM II 32.5 N BAG', 'qty', 10, 'unit_price', 82.80),
+      jsonb_build_object('supplier_code', 'HGPWD1', 'description', 'HIGH GLOSS PWD BROWN 1LT',
+                         'qty', 15, 'unit_price', 60.50),
+      jsonb_build_object('supplier_code', 'STPE001', 'description', 'Stay Peg 150mm Legend Carded',
+                         'qty', 10, 'unit_price', 10),
+      jsonb_build_object('supplier_code', 'STPE001', 'description', 'Stay Peg 150mm Legend Carded',
+                         'qty', 10, 'unit_price', 12),
+      jsonb_build_object('supplier_code', 'T2311', 'description', 'cornice', 'qty', 72, 'unit_price', 13.95),
+      jsonb_build_object('supplier_code', 'T2411', 'description', 'cornice', 'qty', 64, 'unit_price', 13.95),
+      jsonb_build_object('supplier_code', 'NOTE', 'description', '* 1BOX', 'qty', 1, 'unit_price', 0),
+      jsonb_build_object('supplier_code', 'DELDIV', 'description', 'Diesel Surcharge',
+                         'qty', 1, 'unit_price', 1420.04),
+      jsonb_build_object('supplier_code', 'STOEPWINGR', 'description', 'STOEP ENAMEL: Windsor Green',
+                         'qty', 2, 'unit_price', 317),
+      jsonb_build_object('supplier_code', 'STOEPWINGR', 'description', 'STOEP ENAMEL Windsor Green',
+                         'qty', 5, 'unit_price', 83.50)));
+  v_b := v_r.document_id;
+
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 1;
+  perform assert_eq(v_row.sorted, 'sure', 'a remembered code whose words agree is sure');
+  perform assert_eq(v_row.product_id, v_red5, 'and matched');
+  -- The same code and words at a fraction of what the item cost: questioned.
+  update public.supplier_document_lines set unit_price = 81 where document_id = v_b and line_no = 1;
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 1;
+  perform assert_eq(v_row.sort_note, 'code_reused_price',
+    'a remembered code at a quarter of what the item cost is questioned');
+  perform assert(v_row.product_id is null, 'not matched on trust');
+  update public.supplier_document_lines set unit_price = 292 where document_id = v_b and line_no = 1;
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 2;
+  perform assert_eq(v_row.sort_note, 'code_reused_size',
+    'the remembered code on the other size is questioned');
+  perform assert(v_row.product_id is null, 'and NOT matched to the item it is not');
+  perform assert_eq(v_row.sorted, 'likely', 'the 1L is found by its name instead');
+  perform assert_eq(v_row.suggestion_id, v_red1, 'offered as the 1L');
+  perform assert_eq(v_row.suggestion_name, 'STOEP ENAMEL: Red 1L', 'by name');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 3;
+  perform assert_eq(v_row.sorted, 'likely', 'a line with no code, named like an item on the shelf');
+  perform assert_eq(v_row.suggestion_id, v_cem, 'offers that item');
+  perform assert(v_row.product_id is null, 'but only offers it: a name is never taken on trust');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 4;
+  -- 0.8 alike by name, and the only candidate: only the size stands between
+  -- this line and an offer of the wrong tin.
+  perform assert(public.match_similarity('HIGH GLOSS PWD BROWN 1LT', 'HIGH GLOSS PWD BROWN 5LT') >= 0.75,
+    'the 1LT and the 5LT are named alike enough to be offered');
+  perform assert_eq(v_row.sorted, 'new', 'but the 1LT is not offered the 5LT');
+  perform assert(v_row.suggestion_id is null, 'no suggestion across a size');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 5;
+  perform assert_eq(v_row.sorted, 'new', 'Stay Peg, first seen');
+  perform assert(v_row.sort_note is null, 'with a name nothing else has');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 6;
+  perform assert_eq(v_row.sorted, 'same_as_line', 'the same code again on one invoice');
+  perform assert_eq(v_row.same_as_line, 5, 'is the same item as line 5');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 7;
+  perform assert_eq(v_row.sorted, 'new', 'a cornice');
+  perform assert_eq(v_row.sort_note, 'name_clash',
+    'whose name the till could not tell from the next line''s');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 9;
+  perform assert_eq(v_row.sorted, 'not_stock', 'a note is left off');
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 10;
+  perform assert_eq(v_row.sorted, 'not_stock', 'and so is a surcharge');
+  -- One code, no size on either line, R317 and R83.50: a 5L and a 1L, not one.
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 12;
+  perform assert_eq(v_row.sorted, 'new', 'the same code at a quarter of the price is not the same item');
+  perform assert_eq(v_row.sort_note, 'code_reused_price', 'and says it is the price that differs');
+
+  -- "The same as line 5" needs line 5 to be received too.
+  perform assert_refuses(format($f$select * from public.pos_purchasing_receive_document(%L, %L, %L,
+      jsonb_build_array(jsonb_build_object('line_no', 6, 'same_as_line', 5, 'qty', 10))) $f$,
+      v_tok, '1234', v_b),
+    'a line cannot follow one that is not being received');
+
+  -- Booked in as the screen sends it after a person confirmed the two offers
+  -- and named the cornices.
+  select count(*) into v_n from public.pos_purchasing_receive_document(v_tok, '1234', v_b, jsonb_build_array(
+    jsonb_build_object('line_no', 1, 'product_id', v_red5, 'qty', 2, 'unit_cost', 292),
+    jsonb_build_object('line_no', 2, 'product_id', v_red1, 'qty', 6, 'unit_cost', 81),
+    jsonb_build_object('line_no', 3, 'product_id', v_cem, 'qty', 10, 'unit_cost', 82.80),
+    jsonb_build_object('line_no', 4, 'create', true, 'qty', 15, 'unit_cost', 60.50),
+    jsonb_build_object('line_no', 5, 'create', true, 'qty', 10, 'unit_cost', 10),
+    jsonb_build_object('line_no', 6, 'same_as_line', 5, 'qty', 10, 'unit_cost', 12),
+    jsonb_build_object('line_no', 7, 'create', true, 'name', 'Cornice T2311 90mm', 'qty', 72, 'unit_cost', 13.95),
+    jsonb_build_object('line_no', 8, 'create', true, 'name', 'Cornice T2411 120mm', 'qty', 64, 'unit_cost', 13.95)));
+  perform assert_eq(v_n, 8, 'eight lines booked in, the note and the surcharge left off');
+
+  perform assert_eq((select count(*)::int from public.products
+    where org_id = v_org and name = 'Stay Peg 150mm Legend Carded'), 1,
+    'Stay Peg on two lines is ONE item');
+  select product_id into v_peg from public.supplier_document_lines where document_id = v_b and line_no = 5;
+  perform assert_eq((select stock_qty from public.products where id = v_peg), 20::numeric,
+    'holding both lines'' quantities');
+  perform assert_eq((select product_id from public.supplier_document_lines
+    where document_id = v_b and line_no = 6), v_peg, 'and line 6 says so');
+  select array_agg(name order by name) into v_names from public.products
+   where org_id = v_org and name ilike 'cornice%';
+  perform assert_eq(v_names, array['Cornice T2311 90mm', 'Cornice T2411 120mm'],
+    'the cornices carry the names a person gave them');
+  perform assert(not exists (select 1 from public.products where org_id = v_org
+    and name in ('* 1BOX', 'Diesel Surcharge')), 'no note or surcharge became a product');
+  perform assert_eq((select product_id from public.supplier_product_codes
+     where supplier_id = v_sup and supplier_code = 'STOEPENRED'), v_red5,
+    'the code still means the 5L after a delivery of both');
+  perform assert_eq((select stock_qty from public.products where id = v_cem), 50::numeric,
+    'the confirmed offer received onto the item on the shelf');
+
+  -- Booked in, nothing is left to sort.
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_b) where line_no = 9;
+  perform assert(v_row.sorted is null, 'a received delivery is not sorted again');
+
+  perform assert_refuses(
+    format('select public.pos_purchasing_sorts_deliveries(%L, %L)', v_tok, '2222'),
+    'asking needs the purchasing right');
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_receive_lines'), 1,
+    'pos_purchasing_receive_lines has exactly one signature');
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_receive_document'), 1,
+    'and so does pos_purchasing_receive_document');
+
+  update public.organizations set sort_deliveries = false where id = v_org;
+  delete from public.stock_movements where ref_id in (v_a, v_b);
+  delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.supplier_product_codes where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+end $$;
+
+
 select 'all database tests passed' as result;
