@@ -7550,6 +7550,19 @@ begin
   perform assert(public.match_not_stock('NOTE', '1 BOX', null),
     'NAZ''s notes carry the code NOTE and nothing else to go on');
   perform assert(public.match_not_stock('X1', 'PLAIN WASHER', 0), 'a line at R0 is not stock');
+  -- 0118: Turf-Ag print a star in front of real products. CN000068973 lost
+  -- five of its twelve lines to that rule.
+  perform assert(not public.match_not_stock('58159LD403',
+    '*NON SABS 40MM X 100M CL3 LOPE PIPE - *NON SABS 40MM X 100M', 1607),
+    'a starred product with a price is stock');
+  perform assert(not public.match_not_stock('BFN NFP',
+    'BFN NON FACING PLASTER Price includes transport', 2090),
+    'an item whose price includes transport is still the item');
+  perform assert(not public.match_not_stock('FC20', 'FUEL CAN 20L', 145),
+    'a fuel can is stock');
+  perform assert(public.match_not_stock('1010', 'Income - fuel surcharge', 1460),
+    'a fuel surcharge is still a charge');
+  perform assert(public.match_not_stock('DEL', 'DELIVERY', 350), 'and a bare delivery line');
   perform assert(public.match_not_stock('DELDIV', 'Diesel Surcharge', 1420.04), 'nor is a surcharge');
   perform assert(not public.match_not_stock('HGBLA1', 'HIGH GLOSS BLACK 1LT', 65),
     'a priced line of paint is');

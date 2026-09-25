@@ -6058,6 +6058,8 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
     line(6, "T2411", "cornice", 64, 13.95),
     line(7, "NOTE", "* 1BOX", 1, 0),
     line(8, "DELDIV", "Diesel Surcharge", 1, 1420.04),
+    // Turf-Ag print a star in front of real products (0118).
+    line(9, "83130BV40", "*ECONO PVC THREADED BALL VALVE 40MM", 5, 58),
   );
   const padlockBefore = PRODUCTS.find((p) => p.id === "p5")!.stock_qty!;
   const cementBefore = PRODUCTS.find((p) => p.id === "p1")!.stock_qty!;
@@ -6073,7 +6075,7 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
 
   const recv = page.getByRole("dialog", { name: "Receive this delivery" });
   await expect(recv.getByLabel("How the delivery was sorted"))
-    .toHaveText("1 matched · 4 new · 2 left off · 3 to check");
+    .toHaveText("1 matched · 5 new · 2 left off · 3 to check");
   // The remembered code, whose words agree with it: nothing to do.
   await expect(recv).toContainText("→ Padlock 50mm Brass · remembered");
   // A name is only ever OFFERED.
@@ -6092,10 +6094,10 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
   await recv.getByLabel("Name for the new item on line 5").fill("Cornice T2311 90mm");
   await recv.getByLabel("Name for the new item on line 6").fill("Cornice T2411 120mm");
   await expect(recv.getByLabel("How the delivery was sorted"))
-    .toHaveText("2 matched · 4 new · 2 left off");
+    .toHaveText("2 matched · 5 new · 2 left off");
 
-  await recv.getByRole("button", { name: "Book in 6 lines" }).click();
-  await expect(page.getByText(/6 lines booked in, 3 new items created and waiting to be priced/)).toBeVisible();
+  await recv.getByRole("button", { name: "Book in 7 lines" }).click();
+  await expect(page.getByText(/7 lines booked in, 4 new items created and waiting to be priced/)).toBeVisible();
 
   expect(PRODUCTS.find((p) => p.id === "p5")!.stock_qty).toBe(padlockBefore + 4);
   expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(cementBefore + 10);
@@ -6105,6 +6107,7 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
   expect(PRODUCTS.filter((p) => /cornice/i.test(p.name)).map((p) => p.name).sort())
     .toEqual(["Cornice T2311 90mm", "Cornice T2411 120mm"]);
   expect(PRODUCTS.some((p) => p.name === "* 1BOX" || p.name === "Diesel Surcharge")).toBe(false);
+  expect(PRODUCTS.find((p) => p.name === "*ECONO PVC THREADED BALL VALVE 40MM")?.stock_qty).toBe(5);
   // Booked in, it is no longer waiting.
   await expect(waiting).toHaveCount(0);
 });
