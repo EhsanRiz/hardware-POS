@@ -316,8 +316,11 @@ export default function ReceiveDocument({
                           `${r.line.sort_note.slice("code_reused_".length)} of this`}
                     </span>
                   )}
+                  {/* Every new item's name, when the delivery was sorted: it is
+                      what the till will show, and a supplier's "*EMJAY® …" is
+                      not how the counter says it. */}
                   {r.create && !r.productId && r.sameAs == null && Number(r.qty) > 0 &&
-                    (r.line.sort_note === "name_clash" || clashing.has(r.line.line_no)) && (
+                    (sorted || clashing.has(r.line.line_no)) && (
                     <input
                       className={clashing.has(r.line.line_no) ? "modal-input is-bad" : "modal-input"}
                       style={{ marginTop: 4, marginBottom: 0 }}
@@ -352,7 +355,39 @@ export default function ReceiveDocument({
                       disabled={busy}
                     />
                   </label>
-                  {r.offer && !r.productId ? (
+                  {sorted ? (
+                    <>
+                      {/* Sorted, every line has the same one button, whatever
+                          state it is in: Change. An offer adds a Yes beside
+                          it. "Match" on one line and "Receive it" on the next
+                          read as two different jobs, and they were one. */}
+                      {r.offer && !r.productId && (
+                        <button
+                          type="button"
+                          className="btn-fill"
+                          onClick={() =>
+                            set(i, {
+                              productId: r.offer!.id, productName: r.offer!.name, create: false,
+                              costNow: products.find((p) => p.id === r.offer!.id)?.cost ?? null,
+                            })
+                          }
+                          disabled={busy}
+                          aria-label={`Yes, line ${r.line.line_no} is ${r.offer.name}`}
+                        >
+                          Yes
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-line"
+                        onClick={() => { set(i, { picking: !r.picking, offer: null }); setTerm(""); }}
+                        disabled={busy}
+                        aria-label={`Change line ${r.line.line_no}`}
+                      >
+                        Change
+                      </button>
+                    </>
+                  ) : r.offer && !r.productId ? (
                     <>
                       <button
                         type="button"
@@ -451,11 +486,29 @@ export default function ReceiveDocument({
                         set(i, {
                           create: true, productId: null, productName: null,
                           picking: false, costNow: null, sameAs: null, offer: null,
+                          // Left off as a note, and a person says it is stock.
+                          ...(r.leftOff && !(Number(r.qty) > 0)
+                            ? { qty: r.line.qty != null ? String(r.line.qty) : "1", leftOff: false }
+                            : {}),
                         })
                       }
                     >
                       Not on our list — create it
                     </button>
+                    {sorted && !(r.leftOff && !(Number(r.qty) > 0)) && (
+                      <button
+                        type="button"
+                        className="btn-line"
+                        onClick={() =>
+                          set(i, {
+                            qty: "0", leftOff: true, create: false, productId: null,
+                            productName: null, sameAs: null, offer: null, picking: false,
+                          })
+                        }
+                      >
+                        Leave it off — not stock
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

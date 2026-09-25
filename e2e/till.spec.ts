@@ -6085,6 +6085,14 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
   await expect(recv).toContainText("Not stock — a note or a charge, left off");
   await expect(recv).toContainText("2 new items would have the same name as another");
   await expect(recv.getByRole("button", { name: /^Book in/ })).toBeDisabled();
+  // One button, one name, on every line, whatever the line's state: not
+  // "Match" on some and "Receive it" on others. An offer adds a Yes.
+  await expect(recv.getByRole("button", { name: /^Change line \d+$/ })).toHaveCount(9);
+  await expect(recv.getByRole("button", { name: "Match", exact: true })).toHaveCount(0);
+  await expect(recv.getByRole("button", { name: "Receive it", exact: true })).toHaveCount(0);
+  // Every new item can be named before it exists, so a supplier's "*" never
+  // reaches the till.
+  await recv.getByLabel("Name for the new item on line 9").fill("ECONO PVC Ball Valve 40mm");
 
   await recv.getByRole("button", { name: "Yes, line 2 is Cement 42.5N 50kg" }).click();
   await expect(recv).toContainText("→ Cement 42.5N 50kg");
@@ -6107,9 +6115,37 @@ test("a delivery arrives sorted: an offer is confirmed, a repeat is one item, no
   expect(PRODUCTS.filter((p) => /cornice/i.test(p.name)).map((p) => p.name).sort())
     .toEqual(["Cornice T2311 90mm", "Cornice T2411 120mm"]);
   expect(PRODUCTS.some((p) => p.name === "* 1BOX" || p.name === "Diesel Surcharge")).toBe(false);
-  expect(PRODUCTS.find((p) => p.name === "*ECONO PVC THREADED BALL VALVE 40MM")?.stock_qty).toBe(5);
+  expect(PRODUCTS.find((p) => p.name === "ECONO PVC Ball Valve 40mm")?.stock_qty).toBe(5);
+  expect(PRODUCTS.some((p) => p.name.startsWith("*"))).toBe(false);
   // Booked in, it is no longer waiting.
   await expect(waiting).toHaveCount(0);
+});
+
+test("with sorting on, a phone files and is never offered booking in", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Turf-Ag Products", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4870106079", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "CN000068973",
+    doc_date: "2026-09-21", total: 23724.96, note: null, status: "read",
+    created_at: "2026-09-25T08:00:00Z",
+  });
+  be.supplierLines.push({ document_id: "doc1", line_no: 1, supplier_code: "R64152E40",
+    description: "\"EMJAY\" NYLON 40MM ELBOW", qty: 1, unit_price: 21, line_total: 14.7 });
+
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await openManageOnPhone(page, "Suppliers");
+  // The phone sees what is waiting, and opening it shows the paper, not the
+  // receive screen.
+  const waiting = page.getByRole("region", { name: "Waiting to be booked in" });
+  await waiting.getByText("Turf-Ag Products · Invoice CN000068973").click();
+  const view = page.getByRole("dialog", { name: "Invoice CN000068973" });
+  await expect(view).toContainText("Waiting to be booked in on the till.");
+  await expect(view.getByRole("button", { name: "Receive this delivery" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Receive this delivery" })).toHaveCount(0);
 });
 
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {

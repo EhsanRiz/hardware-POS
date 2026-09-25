@@ -26,6 +26,7 @@ import { useOnline } from "../../lib/offline";
 import ReceiveDocument from "./ReceiveDocument";
 import ScanDocument from "./ScanDocument";
 import { useCamera } from "../../lib/useCamera";
+import { deviceKind } from "../../lib/device";
 
 /**
  * Suppliers, and the paper they send.
@@ -67,14 +68,26 @@ export default function Suppliers({
   // filed on a phone, finished on the till (0117). Null while the shop has
   // not switched sorting on, and then this screen is what it always was.
   const [waiting, setWaiting] = useState<SupplierDocument[] | null>(null);
+  // A phone files; the till books in. With sorting on, a phone is not offered
+  // booking in at all: it is the till's screen, and on a phone it was the part
+  // staff struggled with.
+  //
+  // Hidden until the shop's setting is KNOWN to be off, so it cannot flash up
+  // on a phone in the moment before the answer arrives.
+  const [sorts, setSorts] = useState<boolean | null>(null);
+  const phoneOnly = deviceKind() === "personal" && sorts !== false;
+  const receiveHere = phoneOnly ? undefined : (d: SupplierDocument) => { setViewing(null); setReceiving(d); };
 
   const loadWaiting = useCallback(async () => {
     try {
-      if (!(await purchasingSortsDeliveries(pin))) return setWaiting(null);
+      const on = await purchasingSortsDeliveries(pin);
+      setSorts(on);
+      if (!on) return setWaiting(null);
       const all = await purchasingDocuments(pin, null);
       setWaiting(all.filter((d) => d.lines > 0 && d.status !== "received" && d.kind !== "quote"));
     } catch {
       // A list that helps; never a reason the suppliers cannot open.
+      setSorts(false);
       setWaiting(null);
     }
   }, [pin]);
@@ -297,7 +310,8 @@ export default function Suppliers({
               setBanner("Document removed.");
               await Promise.all([loadDocs(), loadSuppliers()]);
             }}
-            onReceive={(d) => { setViewing(null); setReceiving(d); }}
+            onReceive={receiveHere}
+            bookedInOnTill={phoneOnly}
             onRead={async (n) => {
               setViewing(null);
               setBanner(`Read: ${n} ${n === 1 ? "line" : "lines"} found. Open it to receive them.`);
@@ -355,7 +369,8 @@ export default function Suppliers({
           <table className="acc-table">
             <tbody>
               {waiting.map((d) => (
-                <tr key={d.id} className="acc-row" onClick={() => online && setReceiving(d)}>
+                <tr key={d.id} className="acc-row"
+                  onClick={() => online && (phoneOnly ? setViewing(d) : setReceiving(d))}>
                   <td>
                     <span className="acc-name">
                       {d.supplier_name} · {DOCUMENT_KIND_LABEL[d.kind]} {d.doc_number ?? ""}
@@ -450,7 +465,8 @@ export default function Suppliers({
             setBanner("Document removed.");
             await loadSuppliers();
           }}
-          onReceive={(d) => { setViewing(null); setReceiving(d); }}
+          onReceive={receiveHere}
+            bookedInOnTill={phoneOnly}
           onRead={async (n) => {
             setViewing(null);
             setBanner(`Read: ${n} ${n === 1 ? "line" : "lines"} found. Open it to receive them.`);
@@ -928,6 +944,7 @@ function DocumentView({
   onClose,
   onDeleted,
   onReceive,
+  bookedInOnTill,
   onRead,
 }: {
   pin: string;
@@ -936,6 +953,8 @@ function DocumentView({
   onDeleted: () => Promise<void>;
   /** Book what is on this document onto the shelves. */
   onReceive?: (d: SupplierDocument) => void;
+  /** On a phone with sorting on: booking in is the till's, so say so (0117). */
+  bookedInOnTill?: boolean;
   /** The filed pages have been read and their lines have landed (0082). */
   onRead?: (lines: number) => Promise<void>;
 }) {
@@ -1102,6 +1121,9 @@ function DocumentView({
               lines to receive, and only once: a delivery booked in twice is
               stock the shop does not have. A quote is a promise, so it is not
               offered here — nothing has been bought yet. */}
+          {!onReceive && bookedInOnTill && doc.lines > 0 && doc.status !== "received" && doc.kind !== "quote" && (
+            <span className="acc-note" style={{ margin: 0 }}>Waiting to be booked in on the till.</span>
+          )}
           {onReceive && doc.lines > 0 && doc.status !== "received" && doc.kind !== "quote" && (
             <button
               className="py-2.5 px-4 rounded-xl bg-colophon text-paper"
