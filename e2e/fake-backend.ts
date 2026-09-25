@@ -2116,7 +2116,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             products: [...PRODUCTS, ...be.shelfAdded].map((p) => ({
               id: p.id, name: p.name, sku: p.sku, barcode: p.barcode, unit_code: p.unit_code,
             })),
-            new_items: job.newItems.filter((n) => n.decision !== "skip").map((n) => ({
+            // 0116: a catalogued or merged item is found as its product now.
+            new_items: job.newItems.filter((n) => n.decision !== "skip" && n.decision !== "merge").map((n) => ({
               id: n.id, name: n.name, barcode: n.barcode, unit_code: n.unit_code,
             })),
             units: UNITS.map(({ code, name, allows_fraction }) => ({ code, name, allows_fraction })),
@@ -2223,12 +2224,14 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_count_job_counted":
       case "rpc/pos_count_job_new_items":
       case "rpc/pos_count_new_item_review":
+      case "rpc/pos_count_new_item_link":
       case "rpc/pos_count_job_post":
       case "rpc/pos_count_job_abandon": {
         if (!tokenOk) return fail("Register not paired or revoked");
         const no = pinLacks(body.p_pin, "manage_inventory");
         if (no) return fail(no);
-        const pricing = path === "rpc/pos_count_new_item_review" || path === "rpc/pos_count_job_post";
+        const pricing = path === "rpc/pos_count_new_item_review" || path === "rpc/pos_count_job_post"
+          || path === "rpc/pos_count_new_item_link";
         if (pricing) {
           const cannot = pinLacks(body.p_pin, "manage_catalogue");
           if (cannot) return fail(cannot);
@@ -2278,7 +2281,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }
 
         const job = be.countJobs.find((j) => j.id === body.p_job_id);
-        const item = path === "rpc/pos_count_new_item_review"
+        const item = path === "rpc/pos_count_new_item_review" || path === "rpc/pos_count_new_item_link"
           ? be.countJobs.flatMap((j) => j.newItems).find((n) => n.id === body.p_item_id) : undefined;
         const j = job ?? (item ? be.countJobs.find((x) => x.newItems.includes(item)) : undefined);
         if (!j) return fail("Unknown count");
@@ -2321,6 +2324,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
                 .filter((ph) => mine.some((c) => c.client_ref === ph.capture_ref
                                                  && c.counter_id === ph.counter_id))
                 .map((ph) => ph.path),
+              merge_product_price: all().find((p) => p.id === n.merge_product)?.price_retail ?? null,
+              merge_product_active: n.merge_product
+                ? !be.shelfAdded.some((p) => p.id === n.merge_product) : null,
             };
           }).sort((a, b) => a.name.localeCompare(b.name)));
         }
@@ -2334,6 +2340,27 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }
         if (path === "rpc/pos_count_job_abandon") {
           j.status = "abandoned";
+          return json(null);
+        }
+        // 0116: the item goes into the catalogue now, as the product the form saved.
+        if (path === "rpc/pos_count_new_item_link") {
+          const n = item!;
+          if (n.decision === "merge") return fail(`${n.name} is already counted as another item`);
+          const prod = all().find((p) => p.id === body.p_product_id);
+          if (!prod) return fail("That item is not in this shop");
+          if (prod.unit_code !== n.unit_code) {
+            return fail(`${n.name} was counted in ${n.unit_code}, and the product is sold in ${prod.unit_code} — make them the same`);
+          }
+          Object.assign(n, { decision: "merge", merge_product: prod.id, merge_into: null, product_id: prod.id });
+          if (!prod.image_url && !(prod.photos ?? []).length) {
+            const mine = j.photos.filter((ph) => live(j).some((c) =>
+              c.client_ref === ph.capture_ref && c.counter_id === ph.counter_id
+              && (c.new_item_id === n.id
+                  || j.newItems.some((m) => m.id === c.new_item_id && m.merge_into === n.id))));
+            prod.photos = mine.slice(0, 4).map((ph) => ph.path);
+            prod.image_url = prod.photos[0] ?? null;
+            prod.image_count = prod.photos.length || null;
+          }
           return json(null);
         }
         if (path === "rpc/pos_count_new_item_review") {
@@ -3516,11 +3543,30 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const bc = String(body.p_barcode ?? "").trim();
           const onIt = bc ? barcodeHeldBy(bc) : null;
           if (onIt) return fail(`That barcode is already on ${onIt}`);
-          const made = mk("new" + PRODUCTS.length, sku, (body.p_barcode as string) || null,
-            String(body.p_name), "ea", "Each", false, Number(body.p_price_retail ?? 0),
-            null, Number(body.p_stock_qty ?? 0), null);
+          // As the server keeps it: the unit, department, trade price, cost and
+          // on-sale flag the form sent, and blank stock as untracked. This
+          // made every new product an untracked-looking "Each" on sale with
+          // zero stock whatever the form said, which no test read until the
+          // count (0116) created products through this door and needed them
+          // back as saved.
+          const unit = UNITS.find((u) => u.code === body.p_unit_code) ?? UNITS[0];
+          const made: FakeProduct & { active?: boolean } = {
+            ...mk("new" + PRODUCTS.length, sku, (body.p_barcode as string) || null,
+              String(body.p_name), unit.code, unit.name, unit.allows_fraction,
+              Number(body.p_price_retail ?? 0),
+              body.p_price_trade == null ? null : Number(body.p_price_trade),
+              body.p_stock_qty == null ? null : Number(body.p_stock_qty), null),
+            category_id: (body.p_category_id as string) ?? null,
+            cost: body.p_cost == null ? null : Number(body.p_cost),
+          };
+          if (body.p_active === false) {
+            be.shelfAdded.push({ ...made, active: false });
+            return json({ ...made, active: false });
+          }
           PRODUCTS.push(made);
-          return json([{ ...made }]);
+          // A function returning one products row: PostgREST sends an OBJECT,
+          // not a one-row array.
+          return json({ ...made, active: true });
         }
         const p = PRODUCTS.find((x) => x.id === body.p_id);
         if (!p) return fail("Product not found");
@@ -3549,7 +3595,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           body.p_max_discount_amount == null ? null : Number(body.p_max_discount_amount);
         p.name = String(body.p_name ?? p.name);
         p.price_retail = Number(body.p_price_retail ?? p.price_retail);
-        return json([{ ...p }]);
+        return json({ ...p });
       }
       // ---- 0055: suppliers and their paperwork. manage_purchasing. ----
       case "rpc/pos_purchasing_suppliers": {

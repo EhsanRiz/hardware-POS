@@ -294,6 +294,9 @@ export interface CountNewItemRow {
   product_id: string | null;
   /** Storage paths of the photos counters took of it (0115). */
   photos: string[];
+  /** The product it went to, once in the catalogue (0116). */
+  merge_product_price: number | null;
+  merge_product_active: boolean | null;
 }
 
 export async function countJobNewItems(pin: string, jobId: string): Promise<CountNewItemRow[]> {
@@ -335,6 +338,20 @@ export async function reviewNewItem(pin: string, itemId: string, r: NewItemRevie
     p_cost: r.cost,
     p_merge_into: r.merge_into,
     p_merge_product: r.merge_product,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Put a counted item into the catalogue now (0116): the product the form
+ * just saved takes every count of it, and the counters' photos.
+ */
+export async function linkNewItem(pin: string, itemId: string, productId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_count_new_item_link", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_item_id: itemId,
+    p_product_id: productId,
   });
   if (error) throw error;
 }

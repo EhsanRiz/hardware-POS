@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchUnits } from "../../lib/adminApi";
+import { adminSaveProduct, fetchUnits, type ProductInput } from "../../lib/adminApi";
 import { fetchCategories } from "../../lib/api";
 import {
   abandonCountJob,
@@ -7,6 +7,7 @@ import {
   countJobCounters,
   countJobNewItems,
   countJobs,
+  linkNewItem,
   openCountJob,
   postCountJob,
   removeCountCounter,
@@ -21,7 +22,11 @@ import {
 import { fmtDayMonthTime } from "../../lib/dates";
 import { errorMessage } from "../../lib/errors";
 import { imageSrc } from "../../lib/images";
+import { money } from "../../lib/money";
+import { can } from "../../lib/permissions";
 import { fmtQty } from "../../lib/receipt";
+import { useAuth } from "../../context/AuthContext";
+import ProductEditor from "../ProductEditor";
 import type { Category, Product, UnitOfMeasure } from "../../lib/types";
 
 /**
@@ -38,11 +43,15 @@ import type { Category, Product, UnitOfMeasure } from "../../lib/types";
  *   - ITEMS THE SHOP HAS: what was counted, what the till says now, and what
  *     posting will make it — counted, plus whatever has sold or arrived since
  *     it was counted, so a sale in the middle of the count still counts.
- *   - NEW ITEMS: things the catalogue did not know. Price one to put it on
- *     sale, leave it to be added hidden, merge it into what it really is, or
- *     skip it.
+ *   - NEW ITEMS: things the catalogue did not know. Its name opens the
+ *     ordinary product form, and saving puts it in the catalogue there and
+ *     then (0116) — nobody waits for the counters to finish to start selling
+ *     it. Or: merge it into what it really is, skip it, or leave it to be
+ *     added hidden at posting.
  *
- * Posting does all of it at once. Nothing on a shelf moves before that.
+ * The screen refreshes itself every few seconds while a count is open.
+ * Posting waits for every counter to say they are done (0115), and it is
+ * posting that sets the stock: nothing on a shelf moves before that.
  */
 export default function CountJobs({
   pin,
@@ -65,12 +74,15 @@ export default function CountJobs({
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [confirmPost, setConfirmPost] = useState(false);
+  /** The new item whose catalogue form is open (0116). */
+  const [cataloguing, setCataloguing] = useState<CountNewItemRow | null>(null);
+  const { user } = useAuth();
 
   const open = jobs?.find((j) => j.status === "open") ?? null;
   const openId = open?.id ?? null;
 
-  const load = useCallback(async () => {
-    setError(null);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setError(null);
     try {
       const js = await countJobs(pin);
       setJobs(js);
@@ -90,7 +102,8 @@ export default function CountJobs({
         setFresh([]);
       }
     } catch (e) {
-      setError(errorMessage(e, "Could not load the counts"));
+      // A background refresh that misses keeps what is on screen.
+      if (!quiet) setError(errorMessage(e, "Could not load the counts"));
     }
   }, [pin]);
 
@@ -114,6 +127,20 @@ export default function CountJobs({
       setBusy(false);
     }
   }
+
+  /**
+   * Live while a count is open: what the counters send shows up on its own,
+   * every few seconds, with no Refresh to press. Paused while something here
+   * is being done — a form open, a save on its way — so the screen does not
+   * move under the owner's hand, and while the tab is out of sight.
+   */
+  useEffect(() => {
+    if (!openId || !online || busy || cataloguing || confirmPost) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void load(true);
+    }, 5000);
+    return () => clearInterval(t);
+  }, [openId, online, busy, cataloguing, confirmPost, load]);
 
   const link = `${location.origin}/count`;
 
@@ -309,11 +336,11 @@ export default function CountJobs({
                   others={fresh.filter((o) => o.id !== n.id && o.decision !== "merge")}
                   products={products}
                   units={units}
-                  departments={departments}
                   busy={busy || !online}
                   onSave={(r) =>
                     act(() => reviewNewItem(pin, n.id, r), "That could not be saved")
                   }
+                  onCatalogue={() => setCataloguing(n)}
                 />
               ))}
             </ul>
@@ -421,52 +448,104 @@ export default function CountJobs({
       {openId === null && jobs.length === 0 && (
         <p className="acc-note">No counts yet.</p>
       )}
+      {cataloguing && (
+        <ProductEditor
+          pin={pin}
+          product={null}
+          categories={departments}
+          units={units}
+          canSeeCost={can(user, "view_cost_prices")}
+          initial={{
+            name: cataloguing.name,
+            barcode: cataloguing.barcode,
+            unit_code: cataloguing.unit_code,
+            category_id: cataloguing.category_id,
+          }}
+          fromCount={{ photos: cataloguing.photos }}
+          onSave={async (f: ProductInput) => {
+            const item = cataloguing;
+            // Counted in the counter's unit: sold in another, the stock would
+            // be out by a pack size. Said here, before a product exists.
+            if (f.unit_code !== item.unit_code) {
+              const counted = units.find((u) => u.code === item.unit_code)?.name ?? item.unit_code;
+              throw new Error(
+                `${item.name} was counted in ${counted.toLowerCase()} — sell it the same way, or ask the counter to recount it`
+              );
+            }
+            // Tracked from zero; posting sets it to what was counted.
+            const id = await adminSaveProduct(pin, { ...f, id: null, stock_qty: 0 });
+            await linkNewItem(pin, item.id, id);
+            setCataloguing(null);
+            setBanner(`${f.name} is in the catalogue${f.active ? " and on sale" : ""}. Its stock arrives when the count is posted.`);
+            await load();
+          }}
+          onDelete={async () => {}}
+          onClose={() => setCataloguing(null)}
+        />
+      )}
     </div>
   );
 }
 
 const DECISIONS: { value: NewItemDecision; label: string }[] = [
-  { value: "pending", label: "Add hidden, price later" },
-  { value: "add", label: "Put on sale" },
+  { value: "pending", label: "Leave for now" },
   { value: "merge", label: "Same as…" },
   { value: "skip", label: "Not stock — skip" },
 ];
 
+/**
+ * One thing the catalogue did not know.
+ *
+ * Its name opens the catalogue form (0116): that is where it is priced and
+ * put on sale, now, with the whole form rather than a price box squeezed into
+ * a row. What stays on the row is what the form cannot say: that this is
+ * really something else ("Same as…"), or not stock at all. Left alone, it is
+ * added hidden when the count is posted, so counted stock is never lost.
+ */
 function NewItemReviewRow({
   item,
   others,
   products,
   units,
-  departments,
   busy,
   onSave,
+  onCatalogue,
 }: {
   item: CountNewItemRow;
   others: CountNewItemRow[];
   products: Product[];
   units: UnitOfMeasure[];
-  departments: Category[];
   busy: boolean;
   onSave: (r: Parameters<typeof reviewNewItem>[2]) => Promise<void>;
+  onCatalogue: () => void;
 }) {
-  const [decision, setDecision] = useState<NewItemDecision>(item.decision);
-  const [name, setName] = useState(item.name);
-  const [barcode, setBarcode] = useState(item.barcode ?? "");
-  const [unit, setUnit] = useState(item.unit_code);
-  const [dept, setDept] = useState(item.category_id ?? "");
-  const [price, setPrice] = useState(item.price_retail == null ? "" : String(item.price_retail));
+  const linked = item.decision === "merge" && item.merge_product != null;
+  const [decision, setDecision] = useState<NewItemDecision>(
+    item.decision === "add" ? "pending" : item.decision
+  );
   const [target, setTarget] = useState(
     item.merge_into ? `n:${item.merge_into}` : item.merge_product ? `p:${item.merge_product}` : ""
   );
 
-  const num = (s: string) => (s.trim() === "" ? null : Number(s.replace(",", ".")));
   const unitName = units.find((u) => u.code === item.unit_code)?.name ?? item.unit_code;
   const where = [item.locations, item.counters].filter(Boolean).join(" · ");
 
   return (
     <li className="count-job-item" aria-label={`New item ${item.name}`}>
       <div className="count-job-item-head">
-        <span className="acc-name">{item.name}</span>
+        {linked ? (
+          <span className="acc-name">{item.name}</span>
+        ) : (
+          <button
+            type="button"
+            className="count-job-name"
+            disabled={busy}
+            onClick={onCatalogue}
+            aria-label={`Add ${item.name} to the catalogue`}
+          >
+            {item.name}
+          </button>
+        )}
         <span className="num">{fmtQty(item.counted)} {unitName}</span>
       </div>
       <span className="acc-sub">
@@ -485,113 +564,82 @@ function NewItemReviewRow({
           ))}
         </ul>
       )}
-      <div className="count-job-item-form">
-        <select
-          className="modal-input"
-          value={decision}
-          onChange={(e) => setDecision(e.target.value as NewItemDecision)}
-          aria-label={`What to do with ${item.name}`}
-        >
-          {DECISIONS.map((d) => (
-            <option key={d.value} value={d.value}>{d.label}</option>
-          ))}
-        </select>
-        {decision === "merge" ? (
-          <select
-            className="modal-input"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            aria-label={`${item.name} is the same as`}
-          >
-            <option value="">Choose what it really is…</option>
-            {others.length > 0 && (
-              <optgroup label="New on this count">
-                {others.map((o) => (
-                  <option key={o.id} value={`n:${o.id}`}>{o.name}</option>
-                ))}
-              </optgroup>
-            )}
-            <optgroup label="Already in the shop">
-              {products.map((p) => (
-                <option key={p.id} value={`p:${p.id}`}>{p.name}</option>
-              ))}
-            </optgroup>
-          </select>
-        ) : decision !== "skip" ? (
-          <>
-            <input
-              className="modal-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              aria-label={`Name for ${item.name}`}
-            />
-            <input
-              className="modal-input"
-              value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
-              placeholder="Barcode"
-              aria-label={`Barcode for ${item.name}`}
-            />
-            <select
-              className="modal-input"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              aria-label={`Unit for ${item.name}`}
-            >
-              {(units.length ? units : [{ code: unit, name: unit }]).map((u) => (
-                <option key={u.code} value={u.code}>{u.name}</option>
-              ))}
-            </select>
-            <select
-              className="modal-input"
-              value={dept}
-              onChange={(e) => setDept(e.target.value)}
-              aria-label={`Department for ${item.name}`}
-            >
-              <option value="">No department</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-            <input
-              className="modal-input"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              inputMode="decimal"
-              placeholder="Price"
-              aria-label={`Price for ${item.name}`}
-            />
-          </>
-        ) : null}
-        <button
-          className="btn-line"
-          disabled={busy}
-          onClick={() =>
-            void onSave({
-              decision,
-              name,
-              barcode: barcode.trim(),
-              unit_code: unit,
-              category_id: dept || null,
-              price_retail: num(price),
-              price_trade: item.price_trade,
-              cost: item.cost,
-              merge_into: target.startsWith("n:") ? target.slice(2) : null,
-              merge_product: target.startsWith("p:") ? target.slice(2) : null,
-            })
-          }
-        >
-          Save
-        </button>
-      </div>
-      {item.decision !== "pending" && (
+      {linked ? (
         <span className="acc-sub count-job-said">
-          {item.decision === "add"
-            ? "Goes on sale when the count is posted."
-            : item.decision === "skip"
-              ? "Skipped: not stock."
-              : `Counted as ${item.merge_product_name ?? others.find((o) => o.id === item.merge_into)?.name ?? "another item"}.`}
+          In the catalogue as {item.merge_product_name}
+          {item.merge_product_price != null ? ` · ${money(item.merge_product_price)}` : ""}
+          {item.merge_product_active === false ? " · hidden" : " · on sale"}. Its stock
+          arrives when the count is posted.
         </span>
+      ) : (
+        <>
+          <div className="count-job-item-form">
+            <button type="button" className="btn-line" disabled={busy} onClick={onCatalogue}>
+              Add to the catalogue…
+            </button>
+            <select
+              className="modal-input"
+              value={decision}
+              onChange={(e) => setDecision(e.target.value as NewItemDecision)}
+              aria-label={`What to do with ${item.name}`}
+            >
+              {DECISIONS.map((d) => (
+                <option key={d.value} value={d.value}>{d.label}</option>
+              ))}
+            </select>
+            {decision === "merge" && (
+              <select
+                className="modal-input"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                aria-label={`${item.name} is the same as`}
+              >
+                <option value="">Choose what it really is…</option>
+                {others.length > 0 && (
+                  <optgroup label="New on this count">
+                    {others.map((o) => (
+                      <option key={o.id} value={`n:${o.id}`}>{o.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label="Already in the shop">
+                  {products.map((p) => (
+                    <option key={p.id} value={`p:${p.id}`}>{p.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+            )}
+            <button
+              className="btn-line"
+              disabled={busy}
+              onClick={() =>
+                void onSave({
+                  decision,
+                  name: item.name,
+                  barcode: null,
+                  unit_code: item.unit_code,
+                  category_id: item.category_id,
+                  price_retail: item.price_retail,
+                  price_trade: item.price_trade,
+                  cost: item.cost,
+                  merge_into: target.startsWith("n:") ? target.slice(2) : null,
+                  merge_product: target.startsWith("p:") ? target.slice(2) : null,
+                })
+              }
+            >
+              Save
+            </button>
+          </div>
+          <span className="acc-sub count-job-said">
+            {item.decision === "skip"
+              ? "Skipped: not stock."
+              : item.decision === "merge"
+                ? `Counted as ${others.find((o) => o.id === item.merge_into)?.name ?? "another item"}.`
+                : item.decision === "add"
+                  ? "Goes on sale when the count is posted."
+                  : "Not in the catalogue yet — added hidden when the count is posted, unless you add it now."}
+          </span>
+        </>
       )}
     </li>
   );

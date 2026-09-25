@@ -491,11 +491,15 @@ phones. Migration 0114; screens in `src/count/` (the phone) and
    until the count is posted. Nothing else ends their count: the code stays
    valid and the phone keeps its place across reloads. "Done" is refused on
    the phone while anything is still unsent.
-5. **Review.** Back on the till: who is counting; each item the shop has with
-   what was counted, what the till holds now and what posting will make it;
-   and the new items. For each new item: *Put on sale* (needs a price), *Add
-   hidden, price later*, *Same as…* (another new item or an existing one —
-   the count goes there), or *Not stock — skip*.
+5. **Review — while they count.** The till's screen updates itself every few
+   seconds: who is counting and who is done; each item the shop has with what
+   was counted, what the till holds now and what posting will make it; and
+   the new items, with the counters' photos. Tap a new item's **name** and
+   the ordinary product form opens, filled in from the count (name, barcode,
+   unit, photos); saving puts it in the catalogue **straight away**, on sale
+   if the form says so (0116). Its stock arrives at posting. Otherwise: *Same
+   as…* (another new item or an existing one — the count goes there), *Not
+   stock — skip*, or leave it, and it is added hidden at posting.
 6. **Post.** Refused while anybody on the count has not said they are done
    (the till names them; *Take off* is the override for a lost phone). One
    press does it all: new items become products, and every

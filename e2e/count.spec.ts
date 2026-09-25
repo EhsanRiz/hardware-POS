@@ -161,12 +161,23 @@ test("a counter joins with the code, counts what the shop has and what it does n
   await expect(cells.nth(2)).toHaveText(String(cement.stock_qty));
   await expect(cells.nth(3)).toHaveText("29-1 since it was counted");
 
-  // Price the spacers; leave the cable ties for later.
+  // The spacers go into the catalogue NOW, through the ordinary product form,
+  // while Lerato is still counting (0116). The cable ties are left for later.
   const spacers = page.getByRole("listitem", { name: "New item Tile spacers 3mm" });
-  await spacers.getByLabel("What to do with Tile spacers 3mm").selectOption("add");
-  await spacers.getByLabel("Price for Tile spacers 3mm").fill("24.50");
-  await spacers.getByRole("button", { name: "Save" }).click();
-  await expect(spacers).toContainText("Goes on sale when the count is posted.");
+  await spacers.getByRole("button", { name: "Add Tile spacers 3mm to the catalogue" }).click();
+  const form = page.getByRole("heading", { name: "Add to the catalogue" }).locator("../..");
+  await expect(form.getByLabel("Name")).toHaveValue("Tile spacers 3mm");
+  await expect(form.getByLabel(/^Barcode/)).toHaveValue("6009114999990");
+  // The stock is the count's to set, not a box to type in.
+  await expect(form.getByLabel("Stock", { exact: true })).toHaveValue("From the count");
+  await expect(form.getByLabel("Counters' photos").getByRole("img")).toHaveCount(1);
+  await form.getByLabel(/^Retail/).fill("24.50");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(spacers).toContainText(/In the catalogue as Tile spacers 3mm · R\s?24\.50 · on sale/);
+  // On sale before anybody has said they are done, with the counter's photo.
+  const onSale = PRODUCTS.find((p) => p.name === "Tile spacers 3mm")!;
+  expect(onSale).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, unit_code: "pack" });
+  expect(onSale.image_url).toBe(job.photos[0].path);
   await expect(spacers.getByRole("list", { name: "Photos of Tile spacers 3mm" })
     .getByRole("img")).toHaveCount(1);
 
@@ -191,8 +202,9 @@ test("a counter joins with the code, counts what the shop has and what it does n
   await page.getByRole("button", { name: "Post the count" }).click();
   await expect(page.getByText(/1 of them hidden, with no price yet/)).toBeVisible();
   await page.getByRole("button", { name: "Yes, post STK-000001" }).click();
+  // The spacers were catalogued already: only the cable ties are made here.
   await expect(page.getByText(
-    "STK-000001 posted: 5 items counted, 2 added to the catalogue (1 hidden until priced), 1 photo added.")).toBeVisible();
+    "STK-000001 posted: 5 items counted, 1 added to the catalogue (1 hidden until priced).")).toBeVisible();
 
   // Counted, plus what sold since — not what the till held before.
   expect(cement.stock_qty).toBe(29);
@@ -326,13 +338,16 @@ test("a second counter meeting the same new thing counts it, not a twin — and 
   await ties.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(
     "Something else is merged into Cable ties 200mm. Merge that one elsewhere first.")).toBeVisible();
-  await ties.getByLabel("What to do with Cable ties 200mm").selectOption("add");
-  await ties.getByLabel("Price for Cable ties 200mm").fill("65");
-  await ties.getByRole("button", { name: "Save" }).click();
+  // Into the catalogue now; what was merged into it comes too.
+  await ties.getByRole("button", { name: "Add Cable ties 200mm to the catalogue" }).click();
+  const form = page.getByRole("heading", { name: "Add to the catalogue" }).locator("../..");
+  await form.getByLabel(/^Retail/).fill("65");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(ties).toContainText("In the catalogue as Cable ties 200mm");
 
   await page.getByRole("button", { name: "Post the count" }).click();
   await page.getByRole("button", { name: "Yes, post STK-000001" }).click();
-  await expect(page.getByText(/posted: 1 item counted, 1 added to the catalogue\./)).toBeVisible();
+  await expect(page.getByText(/posted: 1 item counted, 0 added to the catalogue\./)).toBeVisible();
   const made = PRODUCTS.filter((p) => /cable/i.test(p.name));
   expect(made).toHaveLength(1);
   expect(made[0]).toMatchObject({ name: "Cable ties 200mm", stock_qty: 11, price_retail: 65 });
@@ -438,5 +453,59 @@ test("a counter who carries on after the till last looked still holds the post",
   await count(phone, "6001234000060", "4");
   await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent");
   expect(be.countJobs[0].captures).toHaveLength(2);
+  await phone.context().close();
+});
+
+test("what a counter sends shows on the till by itself, and a counted item can go on sale mid-count", async ({ page, browser }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const code = await startCount(page);
+  const phone = await openPhone(browser);
+  await join(phone, code, "Mary");
+
+  // Mary writes down something the shop has never listed. Nobody touches
+  // the till: it shows up there on its own.
+  const box = phone.getByLabel("Find an item");
+  await box.fill("9343266001987");
+  await box.press("Enter");
+  await phone.getByLabel("What is it?").fill("Filing Pocket");
+  await phone.getByLabel("How many of the new item").fill("50");
+  await phone.getByRole("button", { name: "Save count" }).click();
+  await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent");
+  const pocket = page.getByRole("listitem", { name: "New item Filing Pocket" });
+  await expect(pocket).toContainText("50 Each", { timeout: 15_000 });
+  await expect(page.getByRole("table", { name: "Counters" })).toContainText("Mary");
+
+  // Sold by the pack in the form, counted each on the shelf: refused before
+  // any product is made, and it says what to do.
+  await pocket.getByRole("button", { name: "Add Filing Pocket to the catalogue" }).click();
+  const form = page.getByRole("heading", { name: "Add to the catalogue" }).locator("../..");
+  await form.getByLabel("Sold by").selectOption("pack");
+  await form.getByLabel(/^Retail/).fill("200");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form).toContainText("Filing Pocket was counted in each");
+  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")).toBeUndefined();
+
+  // Sold each: on sale now, while Mary is still counting.
+  await form.getByLabel("Sold by").selectOption("ea");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(pocket).toContainText(/In the catalogue as Filing Pocket · R\s?200\.00 · on sale/);
+  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")).toMatchObject({ price_retail: 200, stock_qty: 0 });
+  await expect(page.getByRole("status", { name: "Waiting for" })).toContainText("Mary");
+
+  // Her next scan of it counts the product itself, and shows up by itself too.
+  await phone.reload();
+  await box.fill("9343266001987");
+  await box.press("Enter");
+  await phone.getByLabel("How many Filing Pocket").fill("20");
+  await phone.getByRole("button", { name: "Save count" }).click();
+  const counted = page.getByRole("table", { name: "Counted items" }).locator("tr", { hasText: "Filing Pocket" });
+  await expect(counted.locator("td").nth(1)).toHaveText("70 Each", { timeout: 15_000 });
+
+  await done(phone);
+  await expect(page.getByRole("button", { name: "Post the count" })).toBeEnabled({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Post the count" }).click();
+  await page.getByRole("button", { name: "Yes, post STK-000001" }).click();
+  await expect(page.getByText(/STK-000001 posted: 1 item counted, 0 added/)).toBeVisible();
+  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")!.stock_qty).toBe(70);
   await phone.context().close();
 });
