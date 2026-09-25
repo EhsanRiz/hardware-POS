@@ -509,6 +509,8 @@ export class Backend {
     bank_account_number?: string | null; bank_branch_code?: string | null }[] = [];
   supplierDocs: { id: string; supplier_id: string; kind: string; doc_number: string | null;
     doc_date: string | null; total: number | null; note: string | null; status: string;
+    /** 0119 reads the lines' VAT basis off these; the fake kept only the total. */
+    subtotal?: number | null; tax_total?: number | null;
     created_at: string;
     // 0066: what is owed on it and when. Filing a bill and paying it are two
     // different days, and the fake modelled only the first one.
@@ -3721,6 +3723,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           doc_number: (String(body.p_doc_number ?? "").trim() || null),
           doc_date: (body.p_doc_date as string) ?? null,
           total: body.p_total == null ? null : Number(body.p_total),
+          subtotal: body.p_subtotal == null ? null : Number(body.p_subtotal),
+          tax_total: body.p_tax_total == null ? null : Number(body.p_tax_total),
           note: (String(body.p_note ?? "").trim() || null),
           status: body.p_read ? "read" : "stored",
           created_at: new Date().toISOString(),
@@ -3760,6 +3764,21 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           codesByName.get(k)!.add(l.supplier_code ?? String(l.line_no));
         }
         const first = new Map<string, { line_no: number; description: string; unit_price: number | null }>();
+        // 0119: whether the lines include VAT, read off the invoice's totals.
+        let basis: string | null = null;
+        let factor: number | null = null;
+        if (sorting) {
+          const ex = d.subtotal ?? (d.total != null && d.tax_total != null ? d.total - d.tax_total : null);
+          const withTotals = onDoc.filter((l) => l.line_total != null);
+          const sum = withTotals.reduce((t, l) => t + (l.line_total ?? 0), 0);
+          if (ex != null && ex > 0 && sum > 0) {
+            const ratio = ex / sum;
+            if (Math.abs(ratio - 1) <= 0.015) { basis = "ex_vat"; factor = 1; }
+            // The rate takes the VAT out, not the invoice's own ratio (0119).
+            else if (Math.abs(ratio - 1 / 1.15) <= 0.015) { basis = "incl_vat"; factor = 1 / 1.15; }
+            else basis = "unclear";
+          } else basis = "unclear";
+        }
         return json(onDoc
           .map((l) => {
             const code = be.supplierCodes.find(
@@ -3827,6 +3846,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
               sorted, suggestion_id,
               suggestion_name: suggestion_id ? PRODUCTS.find((p) => p.id === suggestion_id)?.name ?? null : null,
               same_as_line, sort_note,
+              price_basis: basis,
+              net_cost: factor != null && l.line_total != null && (l.qty ?? 0) > 0
+                ? Math.round((l.line_total * factor / l.qty!) * 100) / 100 : null,
             };
           }));
       }

@@ -122,7 +122,12 @@ export default function ReceiveDocument({
           productName: line.product_name,
           // What the paper says arrived, which the person checking corrects.
           qty: line.qty != null ? String(line.qty) : "",
-          cost: line.unit_price != null ? String(line.unit_price) : "",
+          // What one actually cost, when the server could work it out
+          // (0119) — the listed price is before discount, and sometimes
+          // with VAT. Otherwise the listed price, for a person to check.
+          cost:
+            line.net_cost != null ? String(line.net_cost)
+            : line.unit_price != null ? String(line.unit_price) : "",
           picking: false,
           costNow: line.current_cost,
           // Sorted by the server (0117) when the shop has switched it on;
@@ -257,6 +262,18 @@ export default function ReceiveDocument({
               .join(" · ")}
           </p>
         )}
+        {sorted && rows && rows[0]?.line.price_basis && (
+          <p
+            className={rows[0].line.price_basis === "unclear" ? "acc-note is-warning" : "acc-note"}
+            aria-label="How costs were worked out"
+          >
+            {rows[0].line.price_basis === "ex_vat"
+              ? "Costs are what one cost after any discount, without VAT — this invoice adds VAT on its total."
+              : rows[0].line.price_basis === "incl_vat"
+              ? "This invoice's prices include VAT. Costs are what one cost after any discount, without VAT."
+              : "The lines don't add up to this invoice's totals, so each cost is the listed price. Check them before booking in."}
+          </p>
+        )}
         {clashing.size > 0 && (
           <p className="acc-note is-warning">
             {clashing.size} new items would have the same name as another. Give each one a
@@ -286,6 +303,14 @@ export default function ReceiveDocument({
                   <span className="acc-sub">
                     {[r.line.supplier_code, r.line.unit_price != null ? `${money(r.line.unit_price)} each` : null]
                       .filter(Boolean).join(" · ")}
+                    {r.line.net_cost != null && r.line.unit_price != null &&
+                      Math.abs(r.line.net_cost - r.line.unit_price) > 0.005 && (
+                      <span aria-label={`What line ${r.line.line_no} cost`}>
+                        {" · "}paid {money(r.line.net_cost)} ex VAT
+                        {r.line.price_basis === "ex_vat" && r.line.net_cost < r.line.unit_price
+                          ? ` (${Math.round((1 - r.line.net_cost / r.line.unit_price) * 100)}% off)` : ""}
+                      </span>
+                    )}
                   </span>
                   {r.productId ? (
                     <span className="acc-sub">
@@ -316,8 +341,11 @@ export default function ReceiveDocument({
                           `${r.line.sort_note.slice("code_reused_".length)} of this`}
                     </span>
                   )}
+                  {/* Every new item's name, when the delivery was sorted: it is
+                      what the till will show, and a supplier's "*EMJAY® …" is
+                      not how the counter says it. */}
                   {r.create && !r.productId && r.sameAs == null && Number(r.qty) > 0 &&
-                    (r.line.sort_note === "name_clash" || clashing.has(r.line.line_no)) && (
+                    (sorted || clashing.has(r.line.line_no)) && (
                     <input
                       className={clashing.has(r.line.line_no) ? "modal-input is-bad" : "modal-input"}
                       style={{ marginTop: 4, marginBottom: 0 }}
@@ -352,7 +380,39 @@ export default function ReceiveDocument({
                       disabled={busy}
                     />
                   </label>
-                  {r.offer && !r.productId ? (
+                  {sorted ? (
+                    <>
+                      {/* Sorted, every line has the same one button, whatever
+                          state it is in: Change. An offer adds a Yes beside
+                          it. "Match" on one line and "Receive it" on the next
+                          read as two different jobs, and they were one. */}
+                      {r.offer && !r.productId && (
+                        <button
+                          type="button"
+                          className="btn-fill"
+                          onClick={() =>
+                            set(i, {
+                              productId: r.offer!.id, productName: r.offer!.name, create: false,
+                              costNow: products.find((p) => p.id === r.offer!.id)?.cost ?? null,
+                            })
+                          }
+                          disabled={busy}
+                          aria-label={`Yes, line ${r.line.line_no} is ${r.offer.name}`}
+                        >
+                          Yes
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-line"
+                        onClick={() => { set(i, { picking: !r.picking, offer: null }); setTerm(""); }}
+                        disabled={busy}
+                        aria-label={`Change line ${r.line.line_no}`}
+                      >
+                        Change
+                      </button>
+                    </>
+                  ) : r.offer && !r.productId ? (
                     <>
                       <button
                         type="button"
@@ -451,11 +511,29 @@ export default function ReceiveDocument({
                         set(i, {
                           create: true, productId: null, productName: null,
                           picking: false, costNow: null, sameAs: null, offer: null,
+                          // Left off as a note, and a person says it is stock.
+                          ...(r.leftOff && !(Number(r.qty) > 0)
+                            ? { qty: r.line.qty != null ? String(r.line.qty) : "1", leftOff: false }
+                            : {}),
                         })
                       }
                     >
                       Not on our list — create it
                     </button>
+                    {sorted && !(r.leftOff && !(Number(r.qty) > 0)) && (
+                      <button
+                        type="button"
+                        className="btn-line"
+                        onClick={() =>
+                          set(i, {
+                            qty: "0", leftOff: true, create: false, productId: null,
+                            productName: null, sameAs: null, offer: null, picking: false,
+                          })
+                        }
+                      >
+                        Leave it off — not stock
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
