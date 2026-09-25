@@ -527,6 +527,8 @@ export class Backend {
     received_qty: number }[] = [];
   /** 0058: what a supplier's own code is known to mean. */
   supplierCodes: { supplier_id: string; supplier_code: string; product_id: string }[] = [];
+  /** 0117: organizations.sort_deliveries — off, as every shop starts. */
+  sortDeliveries = false;
   /**
    * 0056: what the reader says the pages contain. A browser test cannot run a
    * vision model, and should not: what it must pin is what the till DOES with
@@ -3632,6 +3634,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         be.suppliers.push(made);
         return json({ ...made });
       }
+      case "rpc/pos_purchasing_sorts_deliveries": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
+        return json(be.sortDeliveries);
+      }
       case "rpc/pos_purchasing_match_supplier": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
@@ -3669,6 +3676,21 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           };
           be.suppliers.push(sup);
           created = true;
+        }
+        // 0117: the same invoice twice is the same stock twice.
+        const number = String(body.p_doc_number ?? "").trim();
+        if (be.sortDeliveries && ["invoice", "delivery_note"].includes(kind) && number) {
+          const squash = (v: string | null) => (v ?? "").replace(/\s/g, "").toUpperCase();
+          const dup = be.supplierDocs
+            .filter((d) => d.supplier_id === sup!.id && ["invoice", "delivery_note"].includes(d.kind)
+              && squash(d.doc_number) === squash(number))
+            .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+          if (dup) {
+            const when = new Date(dup.created_at).toLocaleDateString("en-GB",
+              { day: "2-digit", month: "short", year: "numeric" });
+            return fail(`${kind === "invoice" ? "Invoice" : "Delivery note"} ${number} from ${sup.name} ` +
+              `is already filed (${when}). Open that one instead of filing it again.`);
+          }
         }
         // 0057: fill the blanks on a supplier we already had, never overwrite.
         let filled = 0;
@@ -3727,8 +3749,18 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (!purchasing(body.p_pin)) return fail("Not permitted: manage_purchasing");
         const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
         if (!d) return fail("Document not found");
-        return json(be.supplierLines
-          .filter((l) => l.document_id === d.id)
+        const sorting = be.sortDeliveries && d.status !== "received";
+        const onDoc = be.supplierLines.filter((l) => l.document_id === d.id)
+          .sort((a, b) => a.line_no - b.line_no);
+        // 0117: how many different codes share each description.
+        const codesByName = new Map<string, Set<string>>();
+        for (const l of onDoc) {
+          const k = matchNorm(l.description);
+          if (!codesByName.has(k)) codesByName.set(k, new Set());
+          codesByName.get(k)!.add(l.supplier_code ?? String(l.line_no));
+        }
+        const first = new Map<string, { line_no: number; description: string; unit_price: number | null }>();
+        return json(onDoc
           .map((l) => {
             const code = be.supplierCodes.find(
               (c) => c.supplier_id === d.supplier_id && c.supplier_code === l.supplier_code
@@ -3738,13 +3770,63 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             const bySku = l.supplier_code
               ? PRODUCTS.find((p) => p.sku.toLowerCase() === l.supplier_code!.toLowerCase())
               : undefined;
-            const pid = l.product_id ?? code?.product_id ?? bySku?.id ?? null;
+            let pid: string | null = l.product_id ?? code?.product_id ?? bySku?.id ?? null;
+            // 0117: sorted, as pos_purchasing_receive_lines sorts it.
+            let sorted: string | null = null;
+            let suggestion_id: string | null = null;
+            let same_as_line: number | null = null;
+            let sort_note: string | null = null;
+            if (sorting) {
+              const paired = code ? PRODUCTS.find((p) => p.id === code.product_id) : undefined;
+              // The fake's cost is its flat 50, as current_cost reports it.
+              const pairConf = code
+                ? matchConflict(l.description, paired?.name ?? "") ??
+                  (matchPriceDiffers(l.unit_price, paired ? 50 : null) ? "price" : null)
+                : null;
+              if (l.product_id) sorted = "sure";
+              else if (matchNotStock(l.supplier_code, l.description, l.unit_price)) {
+                sorted = "not_stock"; pid = null;
+              } else if (code && !pairConf) sorted = "sure";
+              else if (code) {
+                sort_note = "code_reused_" + pairConf;
+                pid = null;
+              } else if (pid) sorted = "sure";
+              else if (l.supplier_code && first.has(l.supplier_code)) {
+                const was = first.get(l.supplier_code)!;
+                const conf = matchConflict(l.description, was.description) ??
+                  (matchPriceDiffers(l.unit_price, was.unit_price) ? "price" : null);
+                if (!conf) { sorted = "same_as_line"; same_as_line = was.line_no; }
+                else { sorted = "new"; sort_note = "code_reused_" + conf; }
+              }
+              if (sorted === null) {
+                const best = PRODUCTS
+                  .filter((p) => p.stock_qty != null && matchSameVariant(l.description, p.name))
+                  .map((p) => ({ id: p.id, s: matchSimilarity(l.description, p.name) }))
+                  .sort((a, b) => b.s - a.s)
+                  .slice(0, 2);
+                if (best.length && best[0].s >= 0.75 && best[0].s - (best[1]?.s ?? 0) >= 0.05) {
+                  sorted = "likely"; suggestion_id = best[0].id;
+                } else {
+                  sorted = "new";
+                  if (sort_note === null && (
+                    (codesByName.get(matchNorm(l.description))?.size ?? 0) > 1 ||
+                    PRODUCTS.some((p) => matchNorm(p.name) === matchNorm(l.description))
+                  )) sort_note = "name_clash";
+                }
+                if (l.supplier_code) {
+                  first.set(l.supplier_code, { line_no: l.line_no, description: l.description, unit_price: l.unit_price });
+                }
+              }
+            }
             const prod = PRODUCTS.find((p) => p.id === pid);
             return {
               ...l, product_id: pid, product_name: prod?.name ?? null,
               product_sku: prod?.sku ?? null, stock_qty: prod?.stock_qty ?? null,
               current_cost: prod ? 50 : null, retail: prod?.price_retail ?? null,
               remembered: !!code,
+              sorted, suggestion_id,
+              suggestion_name: suggestion_id ? PRODUCTS.find((p) => p.id === suggestion_id)?.name ?? null : null,
+              same_as_line, sort_note,
             };
           }));
       }
@@ -3756,6 +3838,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         if (d.status === "received") return fail("This document has already been booked in");
         const wanted = (body.p_lines as Record<string, unknown>[]) ?? [];
         const out: Record<string, unknown>[] = [];
+        // 0117: what each line and each code went to in THIS booking.
+        const got = new Map<number, string>();
+        const codes = new Map<string, string>();
         for (const w of wanted) {
           const qty = Number(w.qty ?? 0);
           if (!(qty > 0)) continue;
@@ -3763,13 +3848,21 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             (l) => l.document_id === d.id && l.line_no === Number(w.line_no)
           );
           if (!src) return fail(`No line ${w.line_no} on this document`);
-          let pid = (w.product_id as string) ?? null;
+          let pid: string | null = (w.product_id as string) ?? null;
           let created = false;
+          if (!pid && w.same_as_line != null) {
+            pid = got.get(Number(w.same_as_line)) ?? null;
+            if (!pid) {
+              return fail(`Line ${w.line_no} is the same item as line ${w.same_as_line}, which is not being received`);
+            }
+          }
           if (!pid) {
             if (!w.create) return fail(`Line ${w.line_no} has nothing to receive it against`);
-            // Born inactive and unpriced, as the shelf's captures are.
+            // Born inactive and unpriced, as the shelf's captures are — under
+            // the name a person gave it, if they gave one (0117).
+            const named = String(w.name ?? "").trim() || src.description;
             const made = mk("new" + PRODUCTS.length, "SKU-" + String(++be.skuSeq).padStart(6, "0"),
-              null, src.description, "ea", "Each", false, 0, null, 0, null);
+              null, named, "ea", "Each", false, 0, null, 0, null);
             PRODUCTS.push(made);
             pid = made.id;
             created = true;
@@ -3782,7 +3875,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           be.stockMoves.push({ product_id: pid, qty_delta: qty, reason: "receipt",
             note: d.doc_number ?? "Goods received" });
           src.product_id = pid;
-          if ((w.remember ?? true) && src.supplier_code) {
+          got.set(Number(w.line_no), pid);
+          const keepFirst = be.sortDeliveries && src.supplier_code != null
+            && codes.has(src.supplier_code) && codes.get(src.supplier_code) !== pid;
+          if ((w.remember ?? true) && src.supplier_code && !keepFirst) {
+            codes.set(src.supplier_code, pid);
             const at = be.supplierCodes.findIndex(
               (c) => c.supplier_id === d.supplier_id && c.supplier_code === src.supplier_code
             );
@@ -4914,4 +5011,84 @@ function matchSupplier(be: Backend, vat: unknown, name: unknown) {
   const n = String(name ?? "").trim().toLowerCase();
   if (n) return be.suppliers.find((s) => s.name.trim().toLowerCase() === n);
   return undefined;
+}
+
+// ---- 0117: how a delivery line is compared, as the migration's match_* ----
+
+export function matchNorm(p: string | null | undefined): string {
+  return (p ?? "").toLowerCase()
+    .replace(/(\d),(\d)/g, "$1.$2")
+    .replace(/(\d)\s*(litres|litre|liters|liter|ltrs|ltr|lt|l)\b/g, "$1l")
+    .replace(/(\d)\s*(mtrs|mtr|mt)\b/g, "$1m")
+    .replace(/(\d)\s*(mm|cm|ml|mic|kg|m|g|w)\b/g, "$1$2")
+    .replace(/(\d)\s*[x×*]\s*(?=\d)/g, "$1 x ")
+    .replace(/[^a-z0-9./ ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const MATCH_STOP = new Set(["", ".", "/", "the", "and", "of", "with", "for", "in", "x",
+  "each", "pc", "pcs", "box", "bag", "carded", "loose"]);
+const MATCH_COLOURS = new Set(("black white red green blue grey gray cream peach brown gold silver " +
+  "yellow orange sahara charcoal clear bronze brz chrome maple cherry oak ash slate onyx stone " +
+  "roseg pink purple burgandy burgundy maroon beige ivory navy tan khaki olive teal").split(" "));
+
+const words = (p: string) => matchNorm(p).split(" ");
+const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
+
+function matchTokens(p: string) {
+  return new Set(words(p).filter((t) => !MATCH_STOP.has(t)));
+}
+
+export function matchSimilarity(a: string, b: string): number {
+  const ta = matchTokens(a), tb = matchTokens(b);
+  if (!ta.size || !tb.size) return 0;
+  const both = [...ta].filter((t) => tb.has(t)).length;
+  return Math.round((2 * both / (ta.size + tb.size)) * 1000) / 1000;
+}
+
+function matchSizes(p: string) {
+  const out = new Set<string>();
+  for (const m of matchNorm(p).matchAll(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)([a-z]*)/g)) {
+    out.add(`${m[2]}:${Number(m[1])}`);
+  }
+  return out;
+}
+const matchColours = (p: string) => new Set(words(p).filter((t) => MATCH_COLOURS.has(t)));
+const matchSides = (p: string) => new Set(words(p)
+  .filter((t) => ["left", "right", "l/h", "r/h", "lh", "rh"].includes(t))
+  .map((t) => (["left", "l/h", "lh"].includes(t) ? "L" : "R")));
+
+export function matchConflict(a: string, b: string): string | null {
+  const ca = matchColours(a), cb = matchColours(b);
+  if (ca.size && cb.size && !sameSet(ca, cb)) return "colour";
+  const sa = matchSides(a), sb = matchSides(b);
+  if (sa.size && sb.size && !sameSet(sa, sb)) return "side";
+  const byUnit = (xs: Set<string>) => {
+    const m = new Map<string, Set<string>>();
+    for (const x of xs) {
+      const [u, v] = x.split(":");
+      if (!m.has(u)) m.set(u, new Set());
+      m.get(u)!.add(v);
+    }
+    return m;
+  };
+  const ua = byUnit(matchSizes(a)), ub = byUnit(matchSizes(b));
+  for (const [u, v] of ua) if (ub.has(u) && !sameSet(v, ub.get(u)!)) return "size";
+  return null;
+}
+
+function matchSameVariant(a: string, b: string) {
+  return sameSet(matchSizes(a), matchSizes(b)) && sameSet(matchColours(a), matchColours(b))
+    && sameSet(matchSides(a), matchSides(b));
+}
+
+function matchNotStock(code: string | null, description: string, price: number | null) {
+  return (code ?? "").trim().toUpperCase() === "NOTE"
+    || /(surcharge|delivery|transport|freight|fuel|diesel|^\s*\*|^\s*note\b|^\s*income\b)/i.test(description)
+    || price === 0;
+}
+
+function matchPriceDiffers(a: number | null, b: number | null) {
+  return a != null && b != null && a > 0 && b > 0 && Math.max(a, b) / Math.min(a, b) > 1.5;
 }

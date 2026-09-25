@@ -1211,6 +1211,38 @@ export interface ReceiveLine {
   retail: number | null;
   /** True when a person confirmed this pairing before, rather than a guess. */
   remembered: boolean;
+  /**
+   * How the server sorted the line (0117), or null when the shop has not
+   * switched sorting on — and then the screen is exactly what it was.
+   *
+   *   sure          matched, nothing to decide
+   *   likely        an item with a very similar name is OFFERED as suggestion_id
+   *   same_as_line  the same code earlier on this delivery: the same item
+   *   new           nothing like it: made at booking in, inactive, unpriced
+   *   not_stock     a note or a charge: left off unless a person says otherwise
+   */
+  sorted?: ReceiveSort | null;
+  suggestion_id?: string | null;
+  suggestion_name?: string | null;
+  same_as_line?: number | null;
+  /**
+   * name_clash: a new item whose name the till could not tell from another's.
+   * code_reused_size / _colour / _side: the supplier's remembered code, on a
+   * line whose words say it is a different variant.
+   */
+  sort_note?: string | null;
+}
+
+export type ReceiveSort = "sure" | "likely" | "same_as_line" | "new" | "not_stock";
+
+/** Does this shop sort its deliveries (0117)? */
+export async function purchasingSortsDeliveries(pin: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("pos_purchasing_sorts_deliveries", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+  });
+  if (error) throw error;
+  return data === true;
 }
 
 export async function purchasingReceiveLines(
@@ -1250,6 +1282,10 @@ export async function purchasingReceiveDocument(
     line_no: number;
     product_id: string | null;
     create?: boolean;
+    /** The same item as an earlier line of this delivery, received with it. */
+    same_as_line?: number | null;
+    /** The name a new item is made under, when the supplier's is not enough. */
+    name?: string | null;
     qty: number;
     unit_cost: number | null;
     remember?: boolean;

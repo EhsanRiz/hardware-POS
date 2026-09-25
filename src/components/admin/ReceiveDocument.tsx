@@ -42,7 +42,18 @@ interface Row {
    * comparison is the whole point of showing it.
    */
   costNow: number | null;
+  /** The same item as this earlier line of the delivery (0117). */
+  sameAs: number | null;
+  /** What a new item will be called, starting from the supplier's words. */
+  newName: string;
+  /** An item offered on its name, waiting for a person to say yes or no. */
+  offer: { id: string; name: string } | null;
+  /** Sorted as a note or a charge, and so left off until someone says not. */
+  leftOff: boolean;
 }
+
+/** Two new items the till could not tell apart. */
+const nameKey = (n: string) => n.trim().toLowerCase().replace(/\s+/g, " ");
 
 /**
  * Booking a delivery in from the supplier's own paperwork.
@@ -109,12 +120,23 @@ export default function ReceiveDocument({
           line,
           productId: line.product_id,
           productName: line.product_name,
-          create: false,
           // What the paper says arrived, which the person checking corrects.
           qty: line.qty != null ? String(line.qty) : "",
           cost: line.unit_price != null ? String(line.unit_price) : "",
           picking: false,
           costNow: line.current_cost,
+          // Sorted by the server (0117) when the shop has switched it on;
+          // otherwise every one of these is its empty value and the screen
+          // is what it always was.
+          ...(line.sorted === "not_stock" ? { qty: "0" } : {}),
+          create: line.sorted === "new",
+          sameAs: line.sorted === "same_as_line" ? line.same_as_line ?? null : null,
+          newName: line.description,
+          offer:
+            line.sorted === "likely" && line.suggestion_id
+              ? { id: line.suggestion_id, name: line.suggestion_name ?? "" }
+              : null,
+          leftOff: line.sorted === "not_stock",
         }))
       );
     } catch (e) {
@@ -129,14 +151,36 @@ export default function ReceiveDocument({
   const set = (i: number, patch: Partial<Row>) =>
     setRows((rs) => rs?.map((r, j) => (j === i ? { ...r, ...patch } : r)) ?? rs);
 
-  const ready = useMemo(
-    () => (rows ?? []).filter((r) => Number(r.qty) > 0 && (r.productId || r.create)),
+  const sorted = (rows ?? []).some((r) => r.line.sorted != null);
+
+  /** Lines being received, by line number, for "the same as line N". */
+  const coming = useMemo(
+    () => new Set((rows ?? []).filter((r) => Number(r.qty) > 0).map((r) => r.line.line_no)),
     [rows]
+  );
+  const decided = (r: Row) =>
+    !!r.productId || r.create || (r.sameAs != null && coming.has(r.sameAs));
+  const ready = useMemo(
+    () => (rows ?? []).filter((r) => Number(r.qty) > 0 && decided(r)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, coming]
   );
   const undecided = useMemo(
-    () => (rows ?? []).filter((r) => Number(r.qty) > 0 && !r.productId && !r.create),
-    [rows]
+    () => (rows ?? []).filter((r) => Number(r.qty) > 0 && !decided(r)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, coming]
   );
+  /**
+   * New items that would share a name: Meinan's nine "cornice". Made like
+   * that, the till shows nine identical rows and a cashier guesses. Booking
+   * in waits until each has a name of its own.
+   */
+  const clashing = useMemo(() => {
+    const makes = (rows ?? []).filter((r) => Number(r.qty) > 0 && r.create && !r.productId);
+    const seen = new Map<string, number>();
+    for (const r of makes) seen.set(nameKey(r.newName), (seen.get(nameKey(r.newName)) ?? 0) + 1);
+    return new Set(makes.filter((r) => (seen.get(nameKey(r.newName)) ?? 0) > 1).map((r) => r.line.line_no));
+  }, [rows]);
 
   async function receive() {
     setBusy(true);
@@ -148,7 +192,12 @@ export default function ReceiveDocument({
         ready.map((r) => ({
           line_no: r.line.line_no,
           product_id: r.productId,
-          create: r.create,
+          create: !r.productId && r.sameAs == null && r.create,
+          same_as_line: r.productId ? null : r.sameAs,
+          name:
+            r.create && !r.productId && r.sameAs == null && r.newName.trim() !== r.line.description.trim()
+              ? r.newName.trim()
+              : null,
           qty: Number(r.qty),
           unit_cost: r.cost.trim() === "" ? null : Number(r.cost),
           remember: true,
@@ -195,6 +244,26 @@ export default function ReceiveDocument({
           </p>
         )}
 
+        {sorted && rows && (
+          <p className="acc-note" aria-label="How the delivery was sorted">
+            {[
+              [ready.filter((r) => r.productId).length, "matched"],
+              [ready.filter((r) => !r.productId).length, "new"],
+              [rows.filter((r) => r.leftOff && !(Number(r.qty) > 0)).length, "left off"],
+              [undecided.length + clashing.size, "to check"],
+            ]
+              .filter(([n]) => (n as number) > 0)
+              .map(([n, what]) => `${n} ${what}`)
+              .join(" · ")}
+          </p>
+        )}
+        {clashing.size > 0 && (
+          <p className="acc-note is-warning">
+            {clashing.size} new items would have the same name as another. Give each one a
+            name the till can tell apart — the colour or size is usually enough.
+          </p>
+        )}
+
         <div className="modal-list">
           {rows?.map((r, i) => {
             const costNow = r.costNow;
@@ -221,13 +290,42 @@ export default function ReceiveDocument({
                   {r.productId ? (
                     <span className="acc-sub">
                       → {r.productName}
-                      {r.line.remembered ? " · remembered" : ""}
-                      {r.line.stock_qty != null ? ` · ${fmtQty(r.line.stock_qty)} on hand` : ""}
+                      {r.line.remembered && r.productId === r.line.product_id ? " · remembered" : ""}
+                      {r.line.stock_qty != null && r.productId === r.line.product_id
+                        ? ` · ${fmtQty(r.line.stock_qty)} on hand` : ""}
+                    </span>
+                  ) : r.sameAs != null ? (
+                    <span className={coming.has(r.sameAs) ? "acc-sub" : "acc-sub is-bad"}>
+                      → the same item as line {r.sameAs}
+                      {coming.has(r.sameAs) ? "" : ", which is left off"}
                     </span>
                   ) : r.create ? (
                     <span className="acc-sub">→ a new item, priced later</span>
+                  ) : r.leftOff && !(Number(r.qty) > 0) ? (
+                    <span className="acc-sub">Not stock — a note or a charge, left off</span>
+                  ) : r.offer ? (
+                    <span className="acc-sub is-warning">Is it {r.offer.name}?</span>
                   ) : (
                     <span className="acc-sub is-bad">not matched yet</span>
+                  )}
+                  {r.line.sort_note?.startsWith("code_reused_") && !r.productId && (
+                    <span className="acc-sub">
+                      {r.line.sort_note === "code_reused_price"
+                        ? `Their code ${r.line.supplier_code} is already on something at a very different price`
+                        : `Their code ${r.line.supplier_code} is already on a different ` +
+                          `${r.line.sort_note.slice("code_reused_".length)} of this`}
+                    </span>
+                  )}
+                  {r.create && !r.productId && r.sameAs == null && Number(r.qty) > 0 &&
+                    (r.line.sort_note === "name_clash" || clashing.has(r.line.line_no)) && (
+                    <input
+                      className={clashing.has(r.line.line_no) ? "modal-input is-bad" : "modal-input"}
+                      style={{ marginTop: 4, marginBottom: 0 }}
+                      value={r.newName}
+                      onChange={(e) => set(i, { newName: e.target.value })}
+                      aria-label={`Name for the new item on line ${r.line.line_no}`}
+                      disabled={busy}
+                    />
                   )}
                 </div>
 
@@ -254,14 +352,54 @@ export default function ReceiveDocument({
                       disabled={busy}
                     />
                   </label>
-                  <button
-                    type="button"
-                    className="btn-line"
-                    onClick={() => { set(i, { picking: !r.picking }); setTerm(""); }}
-                    disabled={busy}
-                  >
-                    {r.productId ? "Change" : "Match"}
-                  </button>
+                  {r.offer && !r.productId ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-fill"
+                        onClick={() =>
+                          set(i, {
+                            productId: r.offer!.id, productName: r.offer!.name, create: false,
+                            costNow: products.find((p) => p.id === r.offer!.id)?.cost ?? null,
+                          })
+                        }
+                        disabled={busy}
+                        aria-label={`Yes, line ${r.line.line_no} is ${r.offer.name}`}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-line"
+                        onClick={() => { set(i, { offer: null, picking: true }); setTerm(""); }}
+                        disabled={busy}
+                        aria-label={`No, line ${r.line.line_no} is something else`}
+                      >
+                        No
+                      </button>
+                    </>
+                  ) : r.leftOff && !(Number(r.qty) > 0) ? (
+                    <button
+                      type="button"
+                      className="btn-line"
+                      onClick={() =>
+                        set(i, { qty: r.line.qty != null ? String(r.line.qty) : "1", leftOff: false })
+                      }
+                      disabled={busy}
+                      aria-label={`Receive line ${r.line.line_no} anyway`}
+                    >
+                      Receive it
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-line"
+                      onClick={() => { set(i, { picking: !r.picking }); setTerm(""); }}
+                      disabled={busy}
+                    >
+                      {r.productId || r.sameAs != null ? "Change" : "Match"}
+                    </button>
+                  )}
                 </div>
 
                 {/* Said before it is done: a cost that moved is the thing that
@@ -296,7 +434,7 @@ export default function ReceiveDocument({
                         onClick={() =>
                           set(i, {
                             productId: p.id, productName: p.name, create: false,
-                            picking: false, costNow: p.cost,
+                            picking: false, costNow: p.cost, sameAs: null, offer: null,
                           })
                         }
                       >
@@ -312,7 +450,7 @@ export default function ReceiveDocument({
                       onClick={() =>
                         set(i, {
                           create: true, productId: null, productName: null,
-                          picking: false, costNow: null,
+                          picking: false, costNow: null, sameAs: null, offer: null,
                         })
                       }
                     >
@@ -332,7 +470,7 @@ export default function ReceiveDocument({
           <button
             type="button"
             className="btn-fill"
-            disabled={busy || ready.length === 0 || undecided.length > 0}
+            disabled={busy || ready.length === 0 || undecided.length > 0 || clashing.size > 0}
             onClick={() => void receive()}
           >
             {busy ? "Booking in…" : `Book in ${ready.length} ${ready.length === 1 ? "line" : "lines"}`}

@@ -12,8 +12,14 @@ unfinished, and what I learned the hard way so you do not learn it again.
 - **Counter machine**: a PinnPOS Windows all-in-one, 1024×768 at 100%, run
   **windowed** — so the page is about **1024×620**, not 768. Design to that.
   It has **no camera**. It has a laser scanner that types into the scan box.
-- **Supabase**: project `krkatpesfwqnjitcxkco`. One org,
-  `fc022aa6-13de-4797-817b-ce994b2292f0`, 72 products across 8 departments.
+- **Supabase**: project `krkatpesfwqnjitcxkco`. **Two orgs** — filter every
+  query by `org_id`, or the two shops' data reads as one (it did, once, and
+  "duplicate" suppliers turned out to be one in each shop):
+  - **IE Test Shop** `fc022aa6-13de-4797-817b-ce994b2292f0` — the trial org.
+  - **5 Star Hardware** `a9ffe512-7fa8-4a42-8b2c-d01439468878` — the live shop.
+- **Per-shop switches** on `organizations`: `sort_deliveries` (0117) sorts a
+  scanned delivery's lines and refuses an invoice filed twice. Off by default;
+  turned on for one shop at a time with a one-line `update`.
 - **Hosting**: Cloudflare Worker `hardware-pos` at app.innovaearth.com.
 
 ## How work reaches the shop
@@ -153,3 +159,6 @@ read-only for Workers** — no deploys through it.
 - Camera screens are gated on **whether a camera exists**, not on device kind —
   an iPad till has one and keeps them.
 - `Void sale` has no border. It is the one destructive control in that row.
+- A delivery line matched by **name alone** is only ever *offered* ("Is it …?"),
+  never booked in on trust. On 5 Star's own invoices a name match offered
+  HIGH GLOSS PWD BROWN 1LT for ECONO GLOSS PWD Brown 1L — a different range.

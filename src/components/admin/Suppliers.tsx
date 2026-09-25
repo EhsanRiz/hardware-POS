@@ -8,6 +8,7 @@ import {
   purchasingDeleteDocument,
   purchasingDocuments,
   purchasingSaveSupplier,
+  purchasingSortsDeliveries,
   purchasingSuppliers,
   signSupplierPages,
   uploadSupplierPage,
@@ -62,6 +63,25 @@ export default function Suppliers({
   const camera = useCamera();
   // The delivery being booked in off its own paperwork.
   const [receiving, setReceiving] = useState<SupplierDocument | null>(null);
+  // Invoices read off the page but not yet booked in, from every supplier —
+  // filed on a phone, finished on the till (0117). Null while the shop has
+  // not switched sorting on, and then this screen is what it always was.
+  const [waiting, setWaiting] = useState<SupplierDocument[] | null>(null);
+
+  const loadWaiting = useCallback(async () => {
+    try {
+      if (!(await purchasingSortsDeliveries(pin))) return setWaiting(null);
+      const all = await purchasingDocuments(pin, null);
+      setWaiting(all.filter((d) => d.lines > 0 && d.status !== "received" && d.kind !== "quote"));
+    } catch {
+      // A list that helps; never a reason the suppliers cannot open.
+      setWaiting(null);
+    }
+  }, [pin]);
+
+  useEffect(() => {
+    void loadWaiting();
+  }, [loadWaiting]);
 
   const loadSuppliers = useCallback(async () => {
     setError(null);
@@ -116,8 +136,11 @@ export default function Suppliers({
         // Said out loud, because a record changed that nobody asked to change.
         (r.filled
           ? ` Learnt ${r.filled} missing ${r.filled === 1 ? "detail" : "details"} about them from the letterhead.`
-          : "")
+          : "") +
+        // The phone's part is done. Booking in is a screen for the till.
+        (r.lines && waiting !== null ? " It is waiting to be booked in — that can be done on the till." : "")
       );
+      void loadWaiting();
       const all = await purchasingSuppliers(pin).catch(() => null);
       if (all) {
         setSuppliers(all);
@@ -127,7 +150,7 @@ export default function Suppliers({
       const list = await purchasingDocuments(pin, null).catch(() => null);
       if (list) setViewing(list.find((d) => d.id === r.documentId) ?? null);
     },
-    [pin]
+    [pin, waiting, loadWaiting]
   );
 
   const shown = useMemo(() => {
@@ -259,7 +282,7 @@ export default function Suppliers({
             onDone={async (summary) => {
               setReceiving(null);
               setBanner(summary);
-              await Promise.all([loadSuppliers(), loadDocs()]);
+              await Promise.all([loadSuppliers(), loadDocs(), loadWaiting()]);
             }}
           />
         )}
@@ -324,6 +347,32 @@ export default function Suppliers({
       {banner && <p className="acc-note is-good">{banner}</p>}
       {error && <p className="acc-note is-bad">{error}</p>}
 
+      {waiting !== null && waiting.length > 0 && (
+        <section aria-label="Waiting to be booked in" style={{ marginBottom: 12 }}>
+          <h3 className="acc-name" style={{ margin: "4px 0" }}>
+            Waiting to be booked in ({waiting.length})
+          </h3>
+          <table className="acc-table">
+            <tbody>
+              {waiting.map((d) => (
+                <tr key={d.id} className="acc-row" onClick={() => online && setReceiving(d)}>
+                  <td>
+                    <span className="acc-name">
+                      {d.supplier_name} · {DOCUMENT_KIND_LABEL[d.kind]} {d.doc_number ?? ""}
+                    </span>
+                    <span className="acc-sub">
+                      {d.lines} {d.lines === 1 ? "line" : "lines"} · filed {fmtDate(d.created_at)}
+                      {d.created_by_name ? ` by ${d.created_by_name}` : ""}
+                    </span>
+                  </td>
+                  <td className="num">{d.total != null ? money(d.total) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <div className="acc-scroll">
         <table className="acc-table">
           <thead>
@@ -373,7 +422,7 @@ export default function Suppliers({
           onDone={async (summary) => {
             setReceiving(null);
             setBanner(summary);
-            await Promise.all([loadSuppliers(), loadDocs()]);
+            await Promise.all([loadSuppliers(), loadDocs(), loadWaiting()]);
           }}
         />
       )}
