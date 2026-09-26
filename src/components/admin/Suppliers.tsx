@@ -154,6 +154,29 @@ export default function Suppliers({
     void loadDocs();
   }, [loadDocs]);
 
+  // The waiting list keeps itself current. Booked in on the till, it used to
+  // stay "waiting" on the phone that filed it until somebody reloaded. Now it
+  // is read again when the screen comes back into view and every half
+  // minute — but not while a form or a scan is open, so nothing someone is
+  // working on moves under them.
+  const busy = scanning || !!receiving || !!editing || adding;
+  useEffect(() => {
+    if (busy) return;
+    const again = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadWaiting();
+      void loadDocs();
+    };
+    const timer = window.setInterval(again, 30_000);
+    document.addEventListener("visibilitychange", again);
+    window.addEventListener("focus", again);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", again);
+      window.removeEventListener("focus", again);
+    };
+  }, [busy, loadWaiting, loadDocs]);
+
   /** After a scan: say what happened, and land where the document is. */
   const afterFiling = useCallback(
     async (r: {

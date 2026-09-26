@@ -200,6 +200,7 @@ const SEED_COST = new Map(PRODUCTS.map((p) => [p.id, p.cost ?? null]));
 // line on the reorder list left it moved for every test after it in the same
 // worker — an order of the pass, not of the code.
 const SEED_REORDER = new Map(PRODUCTS.map((p) => [p.id, p.reorder_level]));
+const SEED_BARCODE = new Map(PRODUCTS.map((p) => [p.id, p.barcode]));
 
 export interface RecordedSale {
   client_ref: string | null;
@@ -530,6 +531,8 @@ export class Backend {
     received_qty: number }[] = [];
   /** 0058: what a supplier's own code is known to mean. */
   supplierCodes: { supplier_id: string; supplier_code: string; product_id: string }[] = [];
+  /** 0121: what each merged-away item was merged into. */
+  mergedInto = new Map<string, string>();
   /** 0117: organizations.sort_deliveries — off, as every shop starts. */
   sortDeliveries = false;
   /**
@@ -707,6 +710,7 @@ export class Backend {
     this.customers = [];
     this.accountPayments = [];
     this.stockMoves = [];
+    this.mergedInto = new Map();
     this.quotes = [];
     this.offline = false;
     this.seq = 0;
@@ -1273,6 +1277,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     // Booking a delivery in against an order writes cost onto module state too.
     p.cost = SEED_COST.get(p.id) ?? null;
     p.reorder_level = SEED_REORDER.get(p.id) ?? null;
+    // A merge (0121) takes a barcode across and takes an item off sale.
+    p.barcode = SEED_BARCODE.get(p.id) ?? null;
+    delete (p as { active?: boolean }).active;
   }
 
   // Connectivity probe. offline.ts deliberately does not trust navigator.onLine
@@ -3431,10 +3438,83 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // catalogue's "hidden" filter can show a reviewer what the aisle
         // captured — hardcoding active:true here would hide exactly the rows
         // this screen exists to review.
+        // The real active flag: items booked in from a delivery are born off
+        // sale (0117), and this said active:true of everything, so "Not
+        // priced yet" could not show them. Merged-away items are not listed
+        // at all (0121).
         return json([
-          ...PRODUCTS.map((p) => ({ ...p, description: null, active: true })),
+          ...PRODUCTS.map((p) => ({
+            ...p, description: null, active: (p as { active?: boolean }).active ?? true,
+          })),
           ...be.shelfAdded.map((p) => ({ ...p, cost: null, description: null })),
-        ]);
+        ].filter((p) => !be.mergedInto.has(p.id)));
+      }
+      case "rpc/pos_admin_merge_product": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const keepId = String(body.p_keep), dupId = String(body.p_duplicate);
+        if (keepId === dupId) return fail("An item cannot be merged into itself");
+        const find = (id: string) =>
+          (PRODUCTS.find((p) => p.id === id) ?? be.shelfAdded.find((p) => p.id === id)) as
+            (FakeProduct & { active?: boolean; sold_in_packs?: boolean; pack_size?: number | null }) | undefined;
+        const keep = find(keepId), dup = find(dupId);
+        if (!keep || !dup) return fail("Product not found");
+        if (be.mergedInto.has(dupId)) return fail(`${dup.name} was already merged into another item`);
+        if (be.mergedInto.has(keepId)) {
+          return fail(`${keep.name} was merged away. Merge into the item it went to instead.`);
+        }
+        if (keep.unit_code !== dup.unit_code) {
+          return fail(`${keep.name} is sold by the ${keep.unit_code} and ${dup.name} by the ${dup.unit_code} — they cannot be one item`);
+        }
+        if (!!keep.sold_in_packs !== !!dup.sold_in_packs
+            || (keep.sold_in_packs && keep.pack_size !== dup.pack_size)) {
+          return fail(`${keep.name} and ${dup.name} are not sold in the same packs — they cannot be one item`);
+        }
+        if ((keep.stock_qty == null) !== (dup.stock_qty == null)) {
+          return fail("Stock is counted for one of these and not the other — they cannot be one item");
+        }
+        let moved = 0;
+        if (dup.stock_qty != null && dup.stock_qty !== 0) {
+          moved = dup.stock_qty;
+          dup.stock_qty = 0;
+          keep.stock_qty = Math.round(((keep.stock_qty ?? 0) + moved) * 1000) / 1000;
+          be.stockMoves.push({ product_id: dupId, qty_delta: -moved, reason: "adjustment",
+            note: `Merged into ${keep.name}` });
+          be.stockMoves.push({ product_id: keepId, qty_delta: moved, reason: "adjustment",
+            note: `Merged from ${dup.name}` });
+        }
+        let codes = 0;
+        for (const c of be.supplierCodes) if (c.product_id === dupId) { c.product_id = keepId; codes++; }
+        for (const l of be.supplierLines) if (l.product_id === dupId) l.product_id = keepId;
+        let saleLines = 0;
+        for (const sale of be.sales) {
+          for (const it of sale.items) if (it.product_id === dupId) { it.product_id = keepId; saleLines++; }
+        }
+        for (const l of be.poLines.filter((x) => x.product_id === dupId)) {
+          const k = be.poLines.find((x) => x.po_id === l.po_id && x.product_id === keepId);
+          if (k) {
+            k.qty += l.qty;
+            k.received_qty += l.received_qty;
+            be.poLines.splice(be.poLines.indexOf(l), 1);
+          } else {
+            l.product_id = keepId;
+          }
+        }
+        if (!keep.image_url && dup.image_url) keep.image_url = dup.image_url;
+        let barcodeKept: string | null = null;
+        if (!keep.barcode && dup.barcode) {
+          keep.barcode = dup.barcode;
+          dup.barcode = null;
+        } else if (keep.barcode && dup.barcode) {
+          barcodeKept = dup.barcode;
+        }
+        dup.active = false;
+        be.mergedInto.set(dupId, keepId);
+        return json({
+          kept: keep.name, merged: dup.name, stock_moved: moved,
+          supplier_codes: codes, sale_lines: saleLines,
+          barcode_kept: barcodeKept, stock_now: keep.stock_qty,
+        });
       }
       case "rpc/pos_shelf_lookup": {
         if (!tokenOk) return fail("Register not paired or revoked");
@@ -3898,8 +3978,11 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             // Born inactive and unpriced, as the shelf's captures are — under
             // the name a person gave it, if they gave one (0117).
             const named = String(w.name ?? "").trim() || src.description;
-            const made = mk("new" + PRODUCTS.length, "SKU-" + String(++be.skuSeq).padStart(6, "0"),
-              null, named, "ea", "Each", false, 0, null, 0, null);
+            const made: FakeProduct & { active?: boolean } = {
+              ...mk("new" + PRODUCTS.length, "SKU-" + String(++be.skuSeq).padStart(6, "0"),
+                null, named, "ea", "Each", false, 0, null, 0, null),
+              active: false,
+            };
             PRODUCTS.push(made);
             pid = made.id;
             created = true;

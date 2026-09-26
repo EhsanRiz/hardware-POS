@@ -108,6 +108,38 @@ export async function adminDeleteProduct(
   return data as string;
 }
 
+/** What a merge did, in words the screen can say back (0121). */
+export interface MergeResult {
+  kept: string;
+  merged: string;
+  stock_moved: number;
+  supplier_codes: number;
+  sale_lines: number;
+  /** The duplicate's barcode, when the kept item already had its own. */
+  barcode_kept: string | null;
+  stock_now: number | null;
+}
+
+/**
+ * Fold a duplicate into the item it duplicates: its stock, supplier codes,
+ * sales and orders move across and it is taken off sale (0121). Refused, with
+ * a sentence, when the two cannot honestly be one item.
+ */
+export async function adminMergeProduct(
+  pin: string,
+  keepId: string,
+  duplicateId: string
+): Promise<MergeResult> {
+  const { data, error } = await supabase.rpc("pos_admin_merge_product", {
+    p_register_token: requireToken(),
+    p_pin: pin,
+    p_keep: keepId,
+    p_duplicate: duplicateId,
+  });
+  if (error) throw error;
+  return data as MergeResult;
+}
+
 /** Set stock to a counted figure; the difference is written to the ledger. */
 /**
  * Correct the balance of something already counted, through the ledger.
