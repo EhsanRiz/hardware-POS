@@ -5164,8 +5164,36 @@ export function matchWithoutTail(p: string | null | undefined): string {
   return m[1].trim();
 }
 
+/**
+ * 0123: an inch fraction as a decimal — "1 1/2", "1-1/2", "11/2" and "1½"
+ * are all 1.5 — so two suppliers' ways of printing a size compare equal.
+ */
+export function matchFractions(p: string): string {
+  const DEN = [2, 4, 8, 16, 32, 64];
+  const KEPT = "\u0001";
+  const dec = (x: number) => String(Number(x.toFixed(6)));
+  let v = p.replace(/½/g, " 1/2").replace(/¼/g, " 1/4").replace(/¾/g, " 3/4");
+  const pass = (re: RegExp, read: (m: RegExpExecArray) => number | null, keep: (m: RegExpExecArray) => string) => {
+    for (let m = re.exec(v); m; m = re.exec(v)) {
+      const n = read(m);
+      v = v.slice(0, m.index) + m[1] + (n == null ? keep(m) : dec(n)) + v.slice(m.index + m[0].length);
+    }
+    v = v.split(KEPT).join("/");
+  };
+  pass(/(^|[^0-9./])(\d+)[ -]+(\d+)\/(\d+)(?![0-9./])/,
+    (m) => (DEN.includes(+m[4]) && +m[3] < +m[4] ? +m[2] + +m[3] / +m[4] : null),
+    (m) => m[0].slice(m[1].length).replace("/", KEPT));
+  pass(/(^|[^0-9./])(\d)(\d)\/([2468])(?![0-9./])/,
+    (m) => (DEN.includes(+m[4]) && +m[3] < +m[4] ? +m[2] + +m[3] / +m[4] : null),
+    (m) => m[0].slice(m[1].length).replace("/", KEPT));
+  pass(/(^|[^0-9./])(\d+)\/(\d+)(?![0-9./])/,
+    (m) => (DEN.includes(+m[3]) && +m[2] < +m[3] ? +m[2] / +m[3] : null),
+    (m) => m[0].slice(m[1].length).replace("/", KEPT));
+  return v;
+}
+
 export function matchNorm(p: string | null | undefined): string {
-  return matchWithoutTail(p).toLowerCase()
+  return matchFractions(matchWithoutTail(p)).toLowerCase()
     .replace(/(\d),(\d)/g, "$1.$2")
     .replace(/(\d)\s*(litres|litre|liters|liter|ltrs|ltr|lt|l)\b/g, "$1l")
     .replace(/(\d)\s*(mtrs|mtr|mt)\b/g, "$1m")

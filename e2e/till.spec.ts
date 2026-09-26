@@ -6409,6 +6409,40 @@ test("a second supplier's delivery: the tail it prints is ignored, and a discoun
   expect(PRODUCTS.some((p) => / - \*EMJA$/.test(p.name))).toBe(false);
 });
 
+test("one and a half inches printed two ways is offered as one item", async ({ page }) => {
+  be.sortDeliveries = true;
+  // Turf-Ag's adaptor, in the catalogue as Turf-Ag print it: 11/2".
+  const p5 = PRODUCTS.find((p) => p.id === "p5")!;
+  PRODUCTS.push({ ...p5, id: "new-male", sku: "SKU-000018", barcode: null, photos: [],
+    name: "\"EMJAY\" NYLON 40MM X 11/2\" MALE ADAPTOR (MB275)", stock_qty: 10 });
+  be.suppliers.push({
+    id: "sup1", name: "BlueWave Irrigation", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4999000123", notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "BW0000712669",
+    doc_date: "2026-09-26", note: null, status: "read", created_at: "2026-09-26T10:18:00Z",
+    subtotal: 156.8, tax_total: 23.52, total: 180.32,
+  });
+  // BlueWave print the same size as 1 1/2".
+  be.supplierLines.push({ document_id: "doc1", line_no: 1, supplier_code: "BW-MA4040",
+    description: "*EMJAY NYLON 40MM X 1 1/2\" MALE ADAPTOR (MB275) - *EMJ", qty: 10,
+    unit_price: 22.4, line_total: 156.8 });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("region", { name: "Waiting to be booked in" })
+    .getByText("BlueWave Irrigation · Invoice BW0000712669").click();
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await expect(recv).toContainText("Is it \"EMJAY\" NYLON 40MM X 11/2\" MALE ADAPTOR (MB275)?");
+  await recv.getByRole("button", { name: /^Yes, line 1 is / }).click();
+  await recv.getByRole("button", { name: "Book in 1 line" }).click();
+  await expect(page.getByText(/1 line booked in/)).toBeVisible();
+  expect(PRODUCTS.find((p) => p.id === "new-male")!.stock_qty).toBe(20);
+  expect(PRODUCTS.filter((p) => /MALE ADAPTOR/.test(p.name))).toHaveLength(1);
+});
+
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
   be.sortDeliveries = true;
   be.suppliers.push({
