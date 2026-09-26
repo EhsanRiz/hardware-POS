@@ -3476,9 +3476,11 @@ test("an invitation that fails to send is said so, blamed on the shop's side, an
 
   // They are on the list — the add succeeded — but nothing reached them, and
   // the dialog says which, and why, rather than "sent" for a message that
-  // never went.
-  expect(be.staff.find((s) => s.name === "Thabo")?.status).toBe("invited");
+  // never went. The dialog first: it is what says the request has landed.
+  // Reading the fake's list straight after the click raced the request, and
+  // lost once in a full run (undefined, not "invited").
   await expect(page.getByText("The SMS to +27825550100 could not be sent.")).toBeVisible();
+  expect(be.staff.find((s) => s.name === "Thabo")?.status).toBe("invited");
   await expect(page.getByText(/The SMS service could not be reached\. Nothing has reached Thabo/)).toBeVisible();
   await expect(page.getByText(/An SMS has been sent/)).toHaveCount(0);
   expect(be.smsSent).toEqual([]);
