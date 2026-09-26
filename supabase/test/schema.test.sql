@@ -8261,4 +8261,54 @@ begin
 end $$;
 
 
+-- 0124: an item's history says what each delivery cost, and from whom ---------
+do $$
+declare v_tok text; v_org uuid; v_item uuid; v_a record; v_b record; v_h record;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org, 'HIST-ELB', 'Emjay elbow for history', 'ea', 29, null, 0, true, 'standard')
+  returning id into v_item;
+
+  select * into v_a from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'History Turf', '4990033322', null, null,
+    'invoice', 'HT-1', current_date, 14.70, 2.21, 16.91, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'E40', 'description', 'EMJAY ELBOW',
+      'qty', 1, 'unit_price', 21, 'line_total', 14.70)));
+  perform public.pos_purchasing_receive_document(v_tok, '1234', v_a.document_id,
+    jsonb_build_array(jsonb_build_object('line_no', 1, 'product_id', v_item, 'qty', 1, 'unit_cost', 14.70)));
+  -- A week apart in the shop; a minute is enough here. In one transaction
+  -- both would carry the same now(), and the order between them is nobody's.
+  update public.stock_movements set created_at = created_at - interval '1 minute'
+   where product_id = v_item;
+  select * into v_b from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'History Blue', '4990033311', null, null,
+    'invoice', 'HB-1', current_date, 63, 9.45, 72.45, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'NE40', 'description', 'EMJAY ELBOW',
+      'qty', 4, 'unit_price', 22.5, 'line_total', 63)));
+  perform public.pos_purchasing_receive_document(v_tok, '1234', v_b.document_id,
+    jsonb_build_array(jsonb_build_object('line_no', 1, 'product_id', v_item, 'qty', 4, 'unit_cost', 15.75)));
+
+  select * into v_h from public.pos_admin_stock_history(v_tok, '1234', v_item) limit 1;
+  perform assert(v_h.unit_cost = 15.75 and v_h.supplier_name = 'History Blue' and v_h.note = 'HB-1',
+    'the latest receipt says what it cost and who from: ' || coalesce(v_h.unit_cost::text, 'null')
+      || ' ' || coalesce(v_h.supplier_name, 'null'));
+  select * into v_h from public.pos_admin_stock_history(v_tok, '1234', v_item) offset 1 limit 1;
+  perform assert(v_h.unit_cost = 14.70 and v_h.supplier_name = 'History Turf',
+    'and so does the one before it');
+  perform assert_eq((select price_retail from public.products where id = v_item), 29::numeric,
+    'the selling price is the owner''s: booking in never moved it');
+  perform assert_eq((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_admin_stock_history'), 1,
+    'pos_admin_stock_history has exactly one signature');
+
+  delete from public.stock_movements where product_id = v_item;
+  delete from public.supplier_documents where id in (v_a.document_id, v_b.document_id);
+  delete from public.supplier_product_codes where supplier_id in (v_a.supplier_id, v_b.supplier_id);
+  delete from public.suppliers where id in (v_a.supplier_id, v_b.supplier_id);
+  delete from public.products where id = v_item;
+end $$;
+
+
 select 'all database tests passed' as result;
