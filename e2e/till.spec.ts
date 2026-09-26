@@ -8882,6 +8882,76 @@ test("the till locks itself when nobody has touched it, and the sale survives", 
   await expect(page.getByRole("button", { name: "Stock take" })).toBeVisible();
 });
 
+/*
+ * The PIN from the keyboard. A till with a keyboard should not need the mouse
+ * for six digits — but the laser scanner on the same counter IS a keyboard,
+ * and five wrong PINs in fifteen minutes lock a person out (0033), so a scan
+ * landing on a pad must not count as a try.
+ */
+test("a PIN is typed on the keyboard, and a barcode scanned at the pad is not taken for one", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "This is a till" }).click();
+  await page.locator("input[type=tel]").fill(USERS.manager.phone);
+  await page.locator("input[type=password]").fill(USERS.manager.pin);
+  await page.getByRole("button", { name: /Pair this till/i }).click();
+  await page.getByRole("button", { name: new RegExp(`^${USERS.employee.row.name}\\b`) }).click();
+  await expect(page.getByText("Enter PIN")).toBeVisible();
+
+  // A product's barcode and a shelf label's own code, each a burst and Enter
+  // the way the scanner sends them. Apart, and each checked on its own: typed
+  // back to back, either one's guard hides the other's.
+  for (const code of ["6001234000015", "SKU-000041"]) {
+    await page.keyboard.type(code);
+    await page.keyboard.press("Enter");
+    // Long enough for anything held back to have gone.
+    await page.waitForTimeout(600);
+    expect(be.calls.filter((c) => c === "rpc/pos_login"), code).toEqual([]);
+    expect(be.failedLogins, code).toEqual({});
+    await expect(page.getByText("Enter PIN")).toBeVisible();
+  }
+
+  // A person, at a person's pace: a slip, Backspace, and the rest.
+  const pin = USERS.employee.pin;
+  await page.keyboard.type(pin.slice(0, 3) + "9", { delay: 80 });
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type(pin.slice(3), { delay: 80 });
+  await expect(page.getByRole("button", { name: /Sign out/i }).first()).toBeVisible();
+  expect(be.failedLogins).toEqual({});
+});
+
+test("the locked till and a manager's approval both take a typed PIN", async ({ page }) => {
+  await page.clock.install();
+  await pairAndSignIn(page, USERS.manager.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.clock.fastForward(11 * 60 * 1000);
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+
+  // Scanned at the locked till: no try spent.
+  await page.keyboard.type("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(600);
+  expect(be.failedLogins).toEqual({});
+  await page.keyboard.type(USERS.manager.pin, { delay: 80 });
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  // A discount past the limit asks for a manager's PIN in a popup.
+  await page.getByRole("button", { name: "Sign out" }).first().click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  for (const d of USERS.employee.pin.split("")) {
+    await page.locator(`button:text-is("${d}")`).first().click();
+  }
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  await expect(approval).toBeVisible();
+  await page.keyboard.type(USERS.manager.pin, { delay: 80 });
+  await expect(approval).toHaveCount(0);
+});
+
 test("a locked phone with no line still answers a price", async ({ page }) => {
   await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
   be.offline = true;
