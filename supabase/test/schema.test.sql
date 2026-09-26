@@ -5374,7 +5374,13 @@ declare
 begin
   select token into v_tok from till;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5538,7 +5544,13 @@ begin
   update public.app_users set status = 'active',
          pin_hash = crypt('9595', gen_salt('bf')) where id = v_emp;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
     p_payment_method => 'cash',
@@ -5715,7 +5727,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
     p_payment_method => 'cash',
@@ -5754,7 +5772,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   -- Replayed from the queue, as an offline sale is: it carries its client_ref.
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
@@ -5782,7 +5806,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5878,7 +5908,13 @@ begin
   select token into v_tok from till;
   select manager_id, employee_id into v_mgr, v_emp from fixture;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5935,7 +5971,13 @@ begin
   select token into v_tok from till;
   select manager_id, employee_id into v_mgr, v_emp from fixture;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
