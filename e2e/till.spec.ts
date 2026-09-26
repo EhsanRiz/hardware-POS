@@ -6156,6 +6156,46 @@ test("with sorting on, a phone files and is never offered booking in", async ({ 
   await expect(page.getByRole("dialog", { name: "Receive this delivery" })).toHaveCount(0);
 });
 
+test("the same delivery filed as a note and an invoice is marked, and goes in only once", async ({ page }) => {
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4370229645", notes: null,
+  });
+  // Filed twice before sorting was on, as IE Test Shop's Jasbro 10022994 was.
+  for (const [id, kind, no] of [["doc1", "delivery_note", "10022994"], ["doc2", "invoice", "10022 994"]]) {
+    be.supplierDocs.push({
+      id, supplier_id: "sup1", kind, doc_number: no, doc_date: "2026-09-10",
+      total: 287.5, subtotal: 250, tax_total: 37.5, note: null, status: "read",
+      created_at: "2026-09-10T08:00:00Z",
+    });
+    // At what the item costs, so the remembered code matches it outright.
+    be.supplierLines.push({ document_id: id, line_no: 1, supplier_code: "PL 0065",
+      description: "COMP ELBOW 15MM", qty: 5, unit_price: 50, line_total: 250 });
+  }
+  be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "PL 0065", product_id: "p1" });
+  const before = PRODUCTS.find((p) => p.id === "p1")!.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  const waiting = page.getByRole("region", { name: "Waiting to be booked in" });
+  await expect(waiting).toContainText("Same number as Invoice 10022 994 — the same delivery. Book in only one.");
+
+  // One goes in.
+  await waiting.getByText("Jasbro Plumbing · Delivery note 10022994").click();
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await recv.getByRole("button", { name: "Book in 1 line" }).click();
+  await expect(page.getByText(/1 line booked in/)).toBeVisible();
+  // The other now says it is a repeat, and is refused if tried anyway.
+  await expect(waiting).toContainText("Already booked in as Delivery note 10022994 — the same delivery. Remove this one.");
+  await waiting.getByText("Jasbro Plumbing · Invoice 10022 994").click();
+  await recv.getByRole("button", { name: "Book in 1 line" }).click();
+  await expect(recv.getByRole("alert"))
+    .toContainText(/Delivery note 10022994 was already booked in on .+ — this is the same delivery/);
+  expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(before + 5);
+});
+
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
   be.sortDeliveries = true;
   be.suppliers.push({

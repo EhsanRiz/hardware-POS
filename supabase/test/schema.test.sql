@@ -5374,7 +5374,13 @@ declare
 begin
   select token into v_tok from till;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5538,7 +5544,13 @@ begin
   update public.app_users set status = 'active',
          pin_hash = crypt('9595', gen_salt('bf')) where id = v_emp;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
     p_payment_method => 'cash',
@@ -5715,7 +5727,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
     p_payment_method => 'cash',
@@ -5754,7 +5772,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   -- Replayed from the queue, as an offline sale is: it carries its client_ref.
   v_sale := public.pos_create_sale(p_register_token => v_tok, p_cashier_id => v_emp,
     p_items => jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1)),
@@ -5782,7 +5806,13 @@ begin
   select token into v_tok from till;
   select id into v_emp from public.app_users u where u.phone_e164 = '+27820000089';
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5878,7 +5908,13 @@ begin
   select token into v_tok from till;
   select manager_id, employee_id into v_mgr, v_emp from fixture;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -5935,7 +5971,13 @@ begin
   select token into v_tok from till;
   select manager_id, employee_id into v_mgr, v_emp from fixture;
   select id, price_retail into v_prod, v_price
-    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0 limit 1;
+    from public.products where org_id = (select org_id from fixture) and active and price_retail > 0
+      -- Chosen, not taken off an unordered heap, as the isolation block above
+      -- learnt: these blocks sell it more than once, so untracked or ten on the
+      -- shelf, never a pack item, and by SKU so every machine gets the same row.
+      -- Unordered, CI handed back a Galvanised bucket already sold down to 0.
+      and (stock_qty is null or stock_qty >= 10) and not coalesce(sold_in_packs, false)
+    order by sku limit 1;
   v_items := jsonb_build_array(jsonb_build_object('product_id', v_prod, 'qty', 1));
   v_pay := jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price));
 
@@ -7881,6 +7923,67 @@ begin
 
   update public.organizations set sort_deliveries = false where id = v_org;
   delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+end $$;
+
+
+-- 0120: the same delivery is not booked in twice ------------------------------
+do $$
+declare v_tok text; v_org uuid; v_sup uuid; v_note uuid; v_inv uuid; v_r record;
+        v_msg text; v_cem uuid; v_before numeric;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  select id, stock_qty into v_cem, v_before from public.products where sku = 'CEM-425-50';
+
+  -- Filed before the shop sorted its deliveries: one delivery, filed as a
+  -- delivery note and again as an invoice, as Jasbro 10022994 was.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Twin Supplies', '4990088899', null, null,
+    'delivery_note', '10022994', current_date, 100, 15, 115, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'PL 0065',
+      'description', 'COMP ELBOW 15MM', 'qty', 5, 'unit_price', 20, 'line_total', 100)));
+  v_sup := v_r.supplier_id; v_note := v_r.document_id;
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', v_sup, null, null, null, null,
+    'invoice', '10022 994', current_date, 100, 15, 115, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'PL 0065',
+      'description', 'COMP ELBOW 15MM', 'qty', 5, 'unit_price', 20, 'line_total', 100)));
+  v_inv := v_r.document_id;
+
+  update public.organizations set sort_deliveries = true where id = v_org;
+
+  perform public.pos_purchasing_receive_document(v_tok, '1234', v_note, jsonb_build_array(
+    jsonb_build_object('line_no', 1, 'product_id', v_cem, 'qty', 5, 'unit_cost', 20)));
+  begin
+    v_msg := null;
+    perform public.pos_purchasing_receive_document(v_tok, '1234', v_inv, jsonb_build_array(
+      jsonb_build_object('line_no', 1, 'product_id', v_cem, 'qty', 5, 'unit_cost', 20)));
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Delivery note 10022994 was already booked in on % — this is the same delivery. Booking it in again would count the stock twice.',
+    'the invoice for a delivery already booked in is refused: ' || coalesce(v_msg, 'it was allowed'));
+  perform assert_eq((select stock_qty from public.products where id = v_cem), v_before + 5,
+    'the stock went in once, not twice');
+  perform assert_eq((select status from public.supplier_documents where id = v_inv), 'read',
+    'and the invoice is still waiting, to be removed');
+
+  -- Switch off: today's behaviour, both go in.
+  update public.organizations set sort_deliveries = false where id = v_org;
+  perform public.pos_purchasing_receive_document(v_tok, '1234', v_inv, jsonb_build_array(
+    jsonb_build_object('line_no', 1, 'product_id', v_cem, 'qty', 5, 'unit_cost', 20)));
+  perform assert_eq((select stock_qty from public.products where id = v_cem), v_before + 10,
+    'with the switch off nothing is refused');
+
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_receive_document'), 1,
+    'pos_purchasing_receive_document still has exactly one signature');
+
+  update public.products set stock_qty = v_before where id = v_cem;
+  delete from public.stock_movements where ref_id in (v_note, v_inv);
+  delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.supplier_product_codes where supplier_id = v_sup;
   delete from public.suppliers where id = v_sup;
 end $$;
 
