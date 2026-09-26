@@ -7988,4 +7988,131 @@ begin
 end $$;
 
 
+-- 0121: a duplicate is merged into the item it duplicates, and nothing is lost.
+do $$
+declare v_tok text; v_org uuid; v_emp uuid; v_keep uuid; v_dup uuid; v_sup uuid;
+        v_po uuid; v_res jsonb; v_msg text; v_bag uuid; v_sale public.sales;
+        v_job public.count_jobs; v_c record;
+begin
+  select token into v_tok from till;
+  select org_id, employee_id into v_org, v_emp from fixture;
+
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, active, tax_code, barcode)
+  values (v_org, 'MRG-KEEP', 'Stay Peg 150mm', 'ea', 20, 8, 5, true, 'standard', null)
+  returning id into v_keep;
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, active, tax_code, barcode)
+  values (v_org, 'MRG-DUP', 'STAY PEG 150MM', 'ea', 20, 9, 3, true, 'standard', '6009900022222')
+  returning id into v_dup;
+  insert into public.products (org_id, sku, name, unit_code, price_retail,
+                               cost, stock_qty, active, tax_code)
+  values (v_org, 'MRG-BAG', 'Stay Peg bag', 'bag', 20, 9, 3, true, 'standard')
+  returning id into v_bag;
+
+  -- History on the duplicate: a sale, a supplier's code, and an order that
+  -- has both on it.
+  v_sale := public.pos_create_sale(
+    p_register_token => v_tok, p_cashier_id => v_emp,
+    p_items => jsonb_build_array(jsonb_build_object('product_id', v_dup, 'qty', 1)),
+    p_payment_method => 'cash',
+    p_payments => jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20)));
+  insert into public.suppliers (org_id, name) values (v_org, 'Merge Supplies')
+  returning id into v_sup;
+  insert into public.supplier_product_codes (org_id, supplier_id, supplier_code, product_id)
+  values (v_org, v_sup, 'SP150', v_dup);
+  insert into public.purchase_orders (org_id, doc_number, supplier_id)
+  values (v_org, 'MRG-PO-1', v_sup) returning id into v_po;
+  insert into public.purchase_order_lines (po_id, product_id, name, unit_code, qty, received_qty)
+  values (v_po, v_keep, 'Stay Peg 150mm', 'ea', 10, 2),
+         (v_po, v_dup, 'STAY PEG 150MM', 'ea', 4, 1);
+
+  -- Refusals.
+  begin v_msg := null;
+    perform public.pos_admin_merge_product(v_tok, '1234', v_keep, v_keep);
+  exception when others then v_msg := sqlerrm; end;
+  perform assert(v_msg = 'An item cannot be merged into itself',
+    'an item is not merged into itself: ' || coalesce(v_msg, 'it was allowed'));
+  begin v_msg := null;
+    perform public.pos_admin_merge_product(v_tok, '1234', v_keep, v_bag);
+  exception when others then v_msg := sqlerrm; end;
+  perform assert(v_msg like '% — they cannot be one item',
+    'a different unit is refused: ' || coalesce(v_msg, 'it was allowed'));
+
+  v_res := public.pos_admin_merge_product(v_tok, '1234', v_keep, v_dup);
+
+  perform assert_eq((select stock_qty from public.products where id = v_keep), 7::numeric,
+    'the duplicate''s stock (3, less the 1 sold) is on the kept item');
+  perform assert_eq((select stock_qty from public.products where id = v_dup), 0::numeric,
+    'and gone from the duplicate');
+  perform assert_eq((v_res->>'stock_now')::numeric, 7::numeric, 'the result says the stock now');
+  perform assert_eq((select count(*)::int from public.stock_movements
+                      where product_id = v_keep and note = 'Merged from STAY PEG 150MM'
+                        and qty_delta = 2 and unit_cost = 9), 1,
+    'the kept item''s ledger says where the stock came from, at the duplicate''s cost');
+  perform assert_eq((select count(*)::int from public.stock_movements
+                      where product_id = v_dup and note = 'Merged into Stay Peg 150mm'
+                        and qty_delta = -2), 1,
+    'and the duplicate''s where it went');
+  perform assert_eq((select product_id from public.supplier_product_codes
+                      where supplier_id = v_sup and supplier_code = 'SP150'), v_keep,
+    'the supplier''s code finds the kept item next delivery');
+  perform assert_eq((select product_id from public.sale_items where sale_id = v_sale.id), v_keep,
+    'the sale counts against the kept item');
+  perform assert_eq((select count(*)::int from public.purchase_order_lines where po_id = v_po), 1,
+    'an order has one line for the item, not two');
+  perform assert_eq((select qty from public.purchase_order_lines where po_id = v_po), 14::numeric,
+    'ordered quantities are added');
+  perform assert_eq((select received_qty from public.purchase_order_lines where po_id = v_po), 3::numeric,
+    'and so are received quantities');
+  perform assert_eq((select barcode from public.products where id = v_keep), '6009900022222',
+    'the kept item takes the barcode it did not have');
+  perform assert_eq((select merged_into from public.products where id = v_dup), v_keep,
+    'the duplicate says where it went');
+  perform assert_eq((select active from public.products where id = v_dup), false,
+    'and is off sale');
+  perform assert_eq((select count(*)::int from public.pos_admin_list_products(v_tok, '1234')
+                      where id = v_dup), 0,
+    'the catalogue no longer lists it');
+  perform assert_eq((select count(*)::int from public.pos_admin_list_products(v_tok, '1234')
+                      where id = v_keep), 1,
+    'and still lists the kept item');
+
+  -- Nor is a phone counting for the shop asked about it.
+  v_job := public.pos_count_job_open(v_tok, '7301', 'After a merge');
+  select * into v_c from public.pos_count_join(v_job.join_code, 'Lerato');
+  perform assert_eq((select count(*)::int
+                       from jsonb_array_elements(public.pos_count_state(v_c.token) -> 'products') x
+                      where x ->> 'id' in (v_dup::text, v_keep::text)), 1,
+    'a count lists the kept item and not the one merged into it');
+  perform public.pos_count_job_abandon(v_tok, '7301', v_job.id);
+
+  begin v_msg := null;
+    perform public.pos_admin_merge_product(v_tok, '1234', v_keep, v_dup);
+  exception when others then v_msg := sqlerrm; end;
+  perform assert(v_msg like '% was already merged into another item',
+    'an item is not merged twice: ' || coalesce(v_msg, 'it was allowed'));
+
+  begin v_msg := null;
+    perform public.pos_admin_merge_product(v_tok, '7777', v_keep, v_bag);
+  exception when others then v_msg := sqlerrm; end;
+  perform assert(v_msg is not null, 'merging needs the catalogue permission');
+
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_admin_list_products'), 1,
+    'pos_admin_list_products still has exactly one signature');
+
+  delete from public.purchase_orders where id = v_po;
+  delete from public.supplier_product_codes where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+  delete from public.sale_payments where sale_id = v_sale.id;
+  delete from public.sale_items where sale_id = v_sale.id;
+  delete from public.sales where id = v_sale.id;
+  delete from public.stock_movements where product_id in (v_keep, v_dup, v_bag);
+  update public.products set merged_into = null where id = v_dup;
+  delete from public.products where id in (v_dup, v_keep, v_bag);
+end $$;
+
+
 select 'all database tests passed' as result;

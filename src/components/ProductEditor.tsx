@@ -33,6 +33,8 @@ export default function ProductEditor({
   onClose,
   initial,
   fromCount,
+  others,
+  onMerge,
 }: {
   pin: string;
   product: AdminProduct | null;
@@ -50,6 +52,10 @@ export default function ProductEditor({
    * and the counters' photos go onto the product when it is saved.
    */
   fromCount?: { photos: string[] };
+  /** The rest of the catalogue, to pick a duplicate of this one from. */
+  others?: AdminProduct[];
+  /** Fold that duplicate into this item (0121). Throws the server's refusal. */
+  onMerge?: (duplicateId: string) => Promise<void>;
 }) {
   const [f, setF] = useState<ProductInput>(() => ({
     id: product?.id ?? null,
@@ -801,6 +807,10 @@ export default function ProductEditor({
             </div>
           )}
 
+          {!isNew && onMerge && others && (
+            <MergeDuplicate keep={product!} others={others} onMerge={onMerge} />
+          )}
+
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
@@ -830,6 +840,165 @@ export default function ProductEditor({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Merge a duplicate into this" (0121).
+ *
+ * The same thing ends up in the catalogue twice — a delivery line nobody
+ * recognised, the same item from a second supplier under other words. This is
+ * opened on the item to KEEP; the duplicate is picked, both are shown side by
+ * side, and only then merged, because there is no undo.
+ */
+function MergeDuplicate({
+  keep,
+  others,
+  onMerge,
+}: {
+  keep: AdminProduct;
+  others: AdminProduct[];
+  onMerge: (duplicateId: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [pick, setPick] = useState<AdminProduct | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const words = (s: string) =>
+    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
+  const mine = words(keep.name);
+  const term = q.trim().toLowerCase();
+  const candidates = others
+    .filter((o) => o.id !== keep.id)
+    .map((o) => ({
+      o,
+      shared: [...words(o.name)].filter((w) => mine.has(w)).length,
+    }))
+    .filter(({ o, shared }) =>
+      term
+        ? o.name.toLowerCase().includes(term) ||
+          o.sku.toLowerCase().includes(term) ||
+          (o.barcode ?? "").includes(term)
+        : shared > 0
+    )
+    .sort((a, b) => b.shared - a.shared || a.o.name.localeCompare(b.o.name))
+    .slice(0, 8)
+    .map(({ o }) => o);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-sm underline text-stone-600"
+      >
+        Merge a duplicate into this…
+      </button>
+    );
+  }
+
+  const side = (label: string, p: AdminProduct) => (
+    <div className="flex-1 min-w-0 rounded-xl border border-stone-200 p-2 text-sm">
+      <div className="text-xs text-stone-500">{label}</div>
+      <div className="font-medium break-words">{p.name}</div>
+      <div className="text-xs text-stone-500">
+        {p.sku} · {p.stock_qty == null ? "stock not counted" : `${fmtQty(p.stock_qty)} in stock`}
+        {p.barcode ? ` · ${p.barcode}` : ""}
+      </div>
+    </div>
+  );
+
+  return (
+    <section
+      aria-label="Merge a duplicate into this"
+      className="rounded-xl border border-stone-300 p-3 space-y-2"
+    >
+      <h3 className="text-sm font-semibold">Merge a duplicate into this</h3>
+      {!pick ? (
+        <>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Find the duplicate by name, SKU or barcode"
+            aria-label="Find the duplicate"
+            className={inputCls}
+          />
+          {candidates.length === 0 ? (
+            <p className="text-xs text-stone-500">
+              {term ? "Nothing in the catalogue matches." : "Nothing with a similar name — search for it."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-stone-200 text-sm">
+              {candidates.map((o) => (
+                <li key={o.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPick(o);
+                      setError(null);
+                    }}
+                    aria-label={`Duplicate: ${o.name}`}
+                    className="w-full text-left py-1.5"
+                  >
+                    {o.name}{" "}
+                    <span className="text-xs text-stone-500">
+                      {o.sku}
+                      {o.stock_qty != null ? ` · ${fmtQty(o.stock_qty)} in stock` : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={() => setOpen(false)} className="text-sm underline text-stone-600">
+            Never mind
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="flex gap-2">
+            {side("Keep", keep)}
+            {side("Merge away", pick)}
+          </div>
+          <p className="text-sm text-stone-700" aria-label="What merging does">
+            {pick.name}
+            {pick.stock_qty ? `'s ${fmtQty(pick.stock_qty)} in stock,` : "'s"} supplier
+            codes, sales and orders move to {keep.name}, and {pick.name} is taken
+            off sale. There is no undo.
+          </p>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPick(null)}
+              disabled={busy}
+              className="btn-cancel"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await onMerge(pick.id);
+                } catch (e) {
+                  setError(errorMessage(e, "Could not merge them"));
+                  setBusy(false);
+                }
+              }}
+              className="ml-auto px-4 py-2 rounded-xl bg-colophon text-paper text-sm disabled:opacity-40"
+            >
+              {busy ? "Merging…" : `Merge into ${keep.name}`}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

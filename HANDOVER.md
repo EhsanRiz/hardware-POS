@@ -20,6 +20,10 @@ unfinished, and what I learned the hard way so you do not learn it again.
 - **Per-shop switches** on `organizations`: `sort_deliveries` (0117) sorts a
   scanned delivery's lines and refuses an invoice filed twice. Off by default;
   turned on for one shop at a time with a one-line `update`.
+- **Merged items** (0121): `products.merged_into` marks an item folded into
+  another from the catalogue's "Merge a duplicate into this". It is kept, off
+  sale and out of the catalogue list, so its own stock history still reads;
+  every other table points at the kept item. There is no unmerge.
 - **Hosting**: Cloudflare Worker `hardware-pos` at app.innovaearth.com.
 
 ## How work reaches the shop

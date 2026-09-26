@@ -6196,6 +6196,123 @@ test("the same delivery filed as a note and an invoice is marked, and goes in on
   expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(before + 5);
 });
 
+test("a duplicate is merged into the item it duplicates: stock, codes and sales move, and the catalogue shows one", async ({ page }) => {
+  // The padlock again, booked in from a delivery as a new item, as Turf-Ag's
+  // lines were on IE Test Shop — and a sale already made against it.
+  const p5 = PRODUCTS.find((p) => p.id === "p5")!;
+  PRODUCTS.push({ ...p5, id: "new-dup", sku: "SKU-000901", barcode: null,
+    name: "PADLOCK 50MM BRASS", stock_qty: 4, photos: [] });
+  be.suppliers.push({
+    id: "sup1", name: "Lock Supplies", contact_name: null, phone: null,
+    email: null, address: null, vat_number: null, notes: null,
+  });
+  be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "PL50", product_id: "new-dup" });
+  const before = p5.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Catalogue$/ }).click();
+  const screen = page.locator(".admin-screen");
+  await screen.getByPlaceholder("Search by name, SKU or barcode…").fill("padlock");
+  await expect(screen.getByRole("cell", { name: /Padlock 50mm Brass/i })).toHaveCount(2);
+  await screen.getByRole("cell", { name: "Padlock 50mm Brass", exact: true }).click();
+
+  await page.getByRole("button", { name: "Merge a duplicate into this…" }).click();
+  const merge = page.getByRole("region", { name: "Merge a duplicate into this" });
+  // What cannot honestly be one item is refused, in words, and nothing moves.
+  await merge.getByLabel("Find the duplicate").fill("wood glue");
+  await merge.getByRole("button", { name: "Duplicate: Wood Glue 500ml" }).click();
+  await merge.getByRole("button", { name: "Merge into Padlock 50mm Brass" }).click();
+  await expect(merge).toContainText("Stock is counted for one of these and not the other — they cannot be one item");
+  expect(p5.stock_qty).toBe(before);
+  await merge.getByRole("button", { name: "Back" }).click();
+
+  // With nothing typed, it offers what shares words with the name.
+  await merge.getByLabel("Find the duplicate").fill("");
+  await merge.getByRole("button", { name: "Duplicate: PADLOCK 50MM BRASS" }).click();
+  await expect(merge.getByLabel("What merging does")).toContainText(
+    "PADLOCK 50MM BRASS's 4 in stock, supplier codes, sales and orders move to Padlock 50mm Brass");
+  await merge.getByRole("button", { name: "Merge into Padlock 50mm Brass" }).click();
+
+  await expect(page.getByRole("status", { name: "Merged" })).toHaveText(
+    `PADLOCK 50MM BRASS is now part of Padlock 50mm Brass. 4 moved across — ${before + 4} in stock now. 1 supplier code now finds Padlock 50mm Brass.`);
+  // One padlock in the catalogue, holding both lots of stock.
+  await expect(screen.getByRole("cell", { name: /Padlock 50mm Brass/i })).toHaveCount(1);
+  expect(p5.stock_qty).toBe(before + 4);
+  expect(PRODUCTS.find((p) => p.id === "new-dup")!.stock_qty).toBe(0);
+  // The supplier's code finds the padlock next delivery.
+  expect(be.supplierCodes.find((c) => c.supplier_code === "PL50")!.product_id).toBe("p5");
+  // And the ledger says why the stock moved.
+  expect(be.stockMoves.filter((m) => m.note === "Merged from PADLOCK 50MM BRASS")).toHaveLength(1);
+});
+
+test("the catalogue shows what was just booked in without a reload", async ({ page }) => {
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Turf Supplies", contact_name: null, phone: null,
+    email: null, address: null, vat_number: null, notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "CN68973",
+    doc_date: "2026-09-25", note: null, status: "read",
+    created_at: "2026-09-25T08:00:00Z", subtotal: 14.7, tax_total: 2.2, total: 16.9,
+  });
+  be.supplierLines.push({ document_id: "doc1", line_no: 1, supplier_code: "EM20",
+    description: "EMJAY ELBOW 20MM", qty: 1, unit_price: 14.7, line_total: 14.7 });
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Catalogue$/ }).click();
+  const screen = page.locator(".admin-screen");
+  await expect(screen.getByRole("button", { name: /^Not priced yet/ })).toHaveText(/Not priced yet 0/);
+
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("region", { name: "Waiting to be booked in" })
+    .getByText("Turf Supplies · Invoice CN68973").click();
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+  await recv.getByRole("button", { name: "Book in 1 line" }).click();
+  await expect(page.getByText(/1 line booked in/)).toBeVisible();
+
+  // Back to the catalogue: the new item is there, waiting to be priced.
+  await page.getByRole("button", { name: /^Catalogue$/ }).click();
+  await expect(screen.getByRole("button", { name: /^Not priced yet/ })).toHaveText(/Not priced yet 1/);
+  await screen.getByPlaceholder("Search by name, SKU or barcode…").fill("emjay");
+  await expect(screen.getByRole("cell", { name: /EMJAY ELBOW 20MM/ })).toHaveCount(1);
+});
+
+test("what is booked in on another device leaves the waiting list without a reload", async ({ page }) => {
+  be.sortDeliveries = true;
+  be.suppliers.push({
+    id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
+    email: null, address: null, vat_number: null, notes: null,
+  });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "10022994",
+    doc_date: "2026-09-10", note: null, status: "read",
+    created_at: "2026-09-10T08:00:00Z", subtotal: 250, tax_total: 37.5, total: 287.5,
+  });
+  be.supplierLines.push({ document_id: "doc1", line_no: 1, supplier_code: "PL 0065",
+    description: "COMP ELBOW 15MM", qty: 5, unit_price: 50, line_total: 250 });
+
+  await page.clock.install();
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  const waiting = page.getByRole("region", { name: "Waiting to be booked in" });
+  await expect(waiting).toContainText("Waiting to be booked in (1)");
+
+  // Booked in on the till while this screen sat open.
+  be.supplierDocs.find((d) => d.id === "doc1")!.status = "received";
+  // Coming back to the screen is enough.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(waiting).toHaveCount(0);
+
+  // And a screen nobody touches catches up on its own within half a minute.
+  be.supplierDocs.find((d) => d.id === "doc1")!.status = "read";
+  await page.clock.runFor(31_000);
+  await expect(waiting).toContainText("Waiting to be booked in (1)");
+});
+
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
   be.sortDeliveries = true;
   be.suppliers.push({

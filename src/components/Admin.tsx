@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   adminDeleteProduct,
   adminImportProducts,
   adminListProducts,
   adminListUsers,
+  adminMergeProduct,
   adminSaveProduct,
   fetchAllCategories,
   fetchUnits,
@@ -163,7 +164,11 @@ export default function Admin({
 
   const canSeeCost = can(user, "view_cost_prices");
 
-  const load = useCallback(async () => {
+  // What a merge did, said back once. Not the amber error bar: nothing
+  // went wrong.
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async (quiet = false) => {
     // The catalogue load feeds the Catalogue, Bulk import and Staff screens —
     // none of which a shelf-only user is shown. Asking anyway would put a
     // permission refusal in the error bar of a screen that did nothing wrong.
@@ -171,7 +176,10 @@ export default function Admin({
       setLoading(false);
       return;
     }
-    setLoading(true);
+    // A quiet reload keeps the list on screen while it refreshes: it happens
+    // on its own, and a list that blanks every time the tab is looked at is
+    // worse than one a second out of date.
+    if (!quiet) setLoading(true);
     try {
       const [p, c, u] = await Promise.all([
         adminListProducts(pin),
@@ -192,6 +200,32 @@ export default function Admin({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The catalogue keeps itself current. Items booked in from a delivery (on
+  // the Suppliers tab, or on another device) used to appear only after a
+  // manual reload. Now it reloads when the Catalogue tab is opened and when
+  // the screen comes back into view — never while an item is open, so an
+  // edit in progress is not pulled out from under anybody.
+  const firstTab = useRef(true);
+  useEffect(() => {
+    if (firstTab.current) {
+      firstTab.current = false;
+      return;
+    }
+    if (tab === "catalogue") void load(true);
+  }, [tab, load]);
+  useEffect(() => {
+    if (tab !== "catalogue" || editing) return;
+    const back = () => {
+      if (document.visibilityState === "visible") void load(true);
+    };
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    return () => {
+      document.removeEventListener("visibilitychange", back);
+      window.removeEventListener("focus", back);
+    };
+  }, [tab, editing, load]);
 
   const isLow = (p: AdminProduct) =>
     p.stock_qty != null && p.reorder_level != null && p.stock_qty <= p.reorder_level;
@@ -245,6 +279,29 @@ export default function Admin({
     await adminSaveProduct(pin, input);
     setEditing(null);
     await load();
+  }
+
+  async function merge(keepId: string, duplicateId: string) {
+    const r = await adminMergeProduct(pin, keepId, duplicateId);
+    setEditing(null);
+    await load(true);
+    const parts = [`${r.merged} is now part of ${r.kept}.`];
+    if (r.stock_moved) {
+      parts.push(
+        `${fmtQty(r.stock_moved)} moved across${
+          r.stock_now != null ? ` — ${fmtQty(r.stock_now)} in stock now` : ""
+        }.`
+      );
+    }
+    if (r.supplier_codes) {
+      parts.push(
+        `${r.supplier_codes} supplier code${r.supplier_codes === 1 ? " now finds" : "s now find"} ${r.kept}.`
+      );
+    }
+    if (r.barcode_kept) {
+      parts.push(`Its barcode ${r.barcode_kept} stays with the old item — ${r.kept} has its own.`);
+    }
+    setNotice(parts.join(" "));
   }
 
   async function remove(id: string) {
@@ -397,6 +454,17 @@ export default function Admin({
           className="px-4 py-2 bg-amber-100 text-amber-900 text-sm cursor-pointer"
         >
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          aria-label="Merged"
+          onClick={() => setNotice(null)}
+          className="px-4 py-2 bg-emerald-50 text-emerald-900 text-sm cursor-pointer"
+        >
+          {notice}
         </div>
       )}
 
@@ -646,7 +714,7 @@ export default function Admin({
       )}
 
       {tab === "import" && (
-        <ImportPanel pin={pin} onDone={load} />
+        <ImportPanel pin={pin} onDone={() => void load()} />
       )}
 
       {tab === "shelf" && <Shelf user={user} pin={pin} />}
@@ -698,6 +766,10 @@ export default function Admin({
           onSave={save}
           onDelete={remove}
           onClose={() => setEditing(null)}
+          others={products}
+          onMerge={
+            editing === "new" ? undefined : (dupId) => merge(editing.id, dupId)
+          }
         />
       )}
     </div>
