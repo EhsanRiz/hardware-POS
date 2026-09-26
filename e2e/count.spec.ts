@@ -168,15 +168,23 @@ test("a counter joins with the code, counts what the shop has and what it does n
   const form = page.getByRole("heading", { name: "Add to the catalogue" }).locator("../..");
   await expect(form.getByLabel("Name")).toHaveValue("Tile spacers 3mm");
   await expect(form.getByLabel(/^Barcode/)).toHaveValue("6009114999990");
-  // The stock is the count's to set, not a box to type in.
-  await expect(form.getByLabel("Stock", { exact: true })).toHaveValue("From the count");
+  // The stock is the count's to set, not a box to type in — and what is
+  // counted so far is what goes on the shelf (0126).
+  await expect(form.getByLabel("Stock", { exact: true })).toHaveValue("12");
   await expect(form.getByLabel("Counters' photos").getByRole("img")).toHaveCount(1);
   await form.getByLabel(/^Retail/).fill("24.50");
   await form.getByRole("button", { name: "Save" }).click();
   await expect(spacers).toContainText(/In the catalogue as Tile spacers 3mm · R\s?24\.50 · on sale/);
   // On sale before anybody has said they are done, with the counter's photo.
+  await expect(page.getByText(
+    "Tile spacers 3mm is in the catalogue and on sale with 12 in stock. Anything more counted is added when the count is posted.")).toBeVisible();
   const onSale = PRODUCTS.find((p) => p.name === "Tile spacers 3mm")!;
-  expect(onSale).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, unit_code: "pack" });
+  // With its twelve, not "out of stock" until somebody posts the count.
+  expect(onSale).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, unit_code: "pack", stock_qty: 12 });
+  expect(be.stockMoves.filter((m) => m.product_id === onSale.id)).toEqual([expect.objectContaining(
+    { qty_delta: 12, reason: "stocktake", note: "STK-000001: counted 12 so far" })]);
+  // And it sells: two packs go before the count is posted.
+  onSale.stock_qty = 10;
   expect(onSale.image_url).toBe(job.photos[0].path);
   await expect(spacers.getByRole("list", { name: "Photos of Tile spacers 3mm" })
     .getByRole("img")).toHaveCount(1);
@@ -213,7 +221,8 @@ test("a counter joins with the code, counts what the shop has and what it does n
   // Nobody counted the nails; a blank is not a zero.
   expect(untouched.stock_qty).toBe(untouchedBefore);
   const made = PRODUCTS.find((p) => p.name === "Tile spacers 3mm")!;
-  expect(made).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, stock_qty: 12, unit_code: "pack" });
+  // Twelve counted, two sold: ten — the early twelve not counted twice.
+  expect(made).toMatchObject({ barcode: "6009114999990", price_retail: 24.5, stock_qty: 10, unit_code: "pack" });
   // The counter's photo is the new product's picture.
   expect(made.image_url).toBe(job.photos[0].path);
   const hidden = be.shelfAdded.find((p) => p.name === "Cable ties 200mm")!;
@@ -489,7 +498,8 @@ test("what a counter sends shows on the till by itself, and a counted item can g
   await form.getByLabel("Sold by").selectOption("ea");
   await form.getByRole("button", { name: "Save" }).click();
   await expect(pocket).toContainText(/In the catalogue as Filing Pocket · R\s?200\.00 · on sale/);
-  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")).toMatchObject({ price_retail: 200, stock_qty: 0 });
+  // With the fifty she counted on the shelf (0126), not out of stock.
+  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")).toMatchObject({ price_retail: 200, stock_qty: 50 });
   await expect(page.getByRole("status", { name: "Waiting for" })).toContainText("Mary");
 
   // Her next scan of it counts the product itself, and shows up by itself too.
@@ -500,6 +510,8 @@ test("what a counter sends shows on the till by itself, and a counted item can g
   await phone.getByRole("button", { name: "Save count" }).click();
   const counted = page.getByRole("table", { name: "Counted items" }).locator("tr", { hasText: "Filing Pocket" });
   await expect(counted.locator("td").nth(1)).toHaveText("70 Each", { timeout: 15_000 });
+  // The twenty more wait for posting; the fifty already on are not "since".
+  expect(PRODUCTS.find((p) => p.name === "Filing Pocket")!.stock_qty).toBe(50);
 
   await done(phone);
   await expect(page.getByRole("button", { name: "Post the count" })).toBeEnabled({ timeout: 15_000 });

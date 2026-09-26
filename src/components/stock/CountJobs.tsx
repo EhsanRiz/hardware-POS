@@ -461,7 +461,7 @@ export default function CountJobs({
             unit_code: cataloguing.unit_code,
             category_id: cataloguing.category_id,
           }}
-          fromCount={{ photos: cataloguing.photos }}
+          fromCount={{ photos: cataloguing.photos, counted: cataloguing.counted }}
           onSave={async (f: ProductInput) => {
             const item = cataloguing;
             // Counted in the counter's unit: sold in another, the stock would
@@ -472,11 +472,12 @@ export default function CountJobs({
                 `${item.name} was counted in ${counted.toLowerCase()} — sell it the same way, or ask the counter to recount it`
               );
             }
-            // Tracked from zero; posting sets it to what was counted.
+            // Tracked from zero; linking puts what is counted so far on (0126),
+            // and posting settles the rest.
             const id = await adminSaveProduct(pin, { ...f, id: null, stock_qty: 0 });
             await linkNewItem(pin, item.id, id);
             setCataloguing(null);
-            setBanner(`${f.name} is in the catalogue${f.active ? " and on sale" : ""}. Its stock arrives when the count is posted.`);
+            setBanner(`${f.name} is in the catalogue${f.active ? " and on sale" : ""} with ${fmtQty(item.counted)} in stock. Anything more counted is added when the count is posted.`);
             await load();
           }}
           onDelete={async () => {}}

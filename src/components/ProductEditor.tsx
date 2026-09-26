@@ -51,7 +51,7 @@ export default function ProductEditor({
    * count's to set when it is posted, so there is no opening stock to type,
    * and the counters' photos go onto the product when it is saved.
    */
-  fromCount?: { photos: string[] };
+  fromCount?: { photos: string[]; counted?: number };
   /** The rest of the catalogue, to pick a duplicate of this one from. */
   others?: AdminProduct[];
   /** Fold that duplicate into this item (0121). Throws the server's refusal. */
@@ -537,8 +537,11 @@ export default function ProductEditor({
             </Field>
 
             {fromCount && isNew ? (
-              <Field label="Stock" hint="Comes from the count when it is posted — with anything sold meanwhile taken off.">
-                <input value="From the count" disabled aria-label="Stock" className={inputCls + " bg-stone-100"} />
+              // 0126: what is counted so far goes on the shelf on Save. More
+              // found before the count is posted arrives then, less any sold.
+              <Field label="Stock" hint="Counted so far — on the shelf when you save. More counted before the count is posted is added then, less anything sold.">
+                <input value={fromCount.counted != null ? String(fromCount.counted) : "From the count"}
+                  disabled aria-label="Stock" className={inputCls + " bg-stone-100"} />
               </Field>
             ) : (
             <Field
