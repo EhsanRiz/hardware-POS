@@ -2369,6 +2369,15 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             return fail(`${n.name} was counted in ${n.unit_code}, and the product is sold in ${prod.unit_code} — make them the same`);
           }
           Object.assign(n, { decision: "merge", merge_product: prod.id, merge_into: null, product_id: prod.id });
+          // 0126: what is counted of it so far goes on the shelf now, when the
+          // product has never had stock. Posting's "since" starts from here.
+          const early = counted(j).get(prod.id)?.qty ?? 0;
+          if (early !== 0 && !prod.stock_qty && !be.stockMoves.some((m) => m.product_id === prod.id)) {
+            prod.stock_qty = early;
+            j.snap[prod.id] = early;
+            be.stockMoves.push({ product_id: prod.id, qty_delta: early, reason: "stocktake",
+              note: `${j.doc_number}: counted ${early} so far`, unit_cost: prod.cost ?? null });
+          }
           if (!prod.image_url && !(prod.photos ?? []).length) {
             const mine = j.photos.filter((ph) => live(j).some((c) =>
               c.client_ref === ph.capture_ref && c.counter_id === ph.counter_id

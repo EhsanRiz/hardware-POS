@@ -8334,4 +8334,91 @@ begin
 end $$;
 
 
+-- 0126: a counted item comes into the catalogue with what was counted -------
+do $$
+declare
+  v_tok text; v_job public.count_jobs; v_mary record; v_tom record; v_r jsonb;
+  v_item uuid; v_other uuid; v_prod public.products; v_had public.products;
+  v_gone public.products;
+  v_row record; v_m public.stock_movements;
+begin
+  select token into v_tok from till;
+  v_job := public.pos_count_job_open(v_tok, '7301', 'Early figure');
+  select * into v_mary from public.pos_count_join(v_job.join_code, 'Mary');
+  select * into v_tom from public.pos_count_join(v_job.join_code, 'Tom');
+
+  -- IE's Celebrex: twenty on the shelf, not in the catalogue.
+  v_r := public.pos_count_capture(v_mary.token, 'e-1', null, null, '6009700001261',
+    'Celebrex 200', 'ea', 20, 'Shelf 1', now() - interval '5 minutes');
+  v_item := (v_r->>'new_item_id')::uuid;
+  -- Counted a while ago: one transaction has one now(), and "since" is after it.
+  update public.count_captures set captured_at = now() - interval '10 minutes'
+   where job_id = v_job.id;
+
+  -- The owner adds it from the review list: the form's product, stock 0.
+  v_prod := public.pos_admin_save_product(v_tok, '1234', null, null, '6009700001261',
+    'Celebrex 200mg', null, null, 'ea', 100, null, 55, 'standard', 0, null, true);
+  perform public.pos_count_new_item_link(v_tok, '1234', v_item, v_prod.id);
+
+  select * into v_prod from public.products where id = v_prod.id;
+  perform assert_eq(v_prod.stock_qty, 20::numeric,
+    'the twenty counted go on as stock when it is added, not at posting');
+  select * into v_m from public.stock_movements where product_id = v_prod.id;
+  perform assert_eq(v_m.reason::text, 'stocktake', 'as a stocktake');
+  perform assert_eq(v_m.ref_id, v_job.id, 'against the count');
+  perform assert_eq(v_m.note, v_job.doc_number || ': counted 20 so far', 'saying so');
+
+  select * into v_row from public.pos_count_job_counted(v_tok, '7301', v_job.id) c
+   where c.product_id = v_prod.id;
+  perform assert_eq(v_row.since, 0::numeric, 'the early figure is not "moved since"');
+  perform assert_eq(v_row.becomes, 20::numeric, 'so the review does not count it twice');
+
+  -- Three sold, and Tom finds five more in the storeroom.
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_prod.id, 17, 'three sold');
+  perform public.pos_count_capture(v_tom.token, 't-1', v_prod.id, null, null,
+    null, null, 5, 'Storeroom', now());
+  select * into v_row from public.pos_count_job_counted(v_tok, '7301', v_job.id) c
+   where c.product_id = v_prod.id;
+  perform assert_eq(v_row.becomes, 22::numeric, 'the review: 25 counted, 3 sold');
+  select stock_qty into v_prod.stock_qty from public.products where id = v_prod.id;
+  perform assert_eq(v_prod.stock_qty, 17::numeric, 'Tom''s five wait for posting');
+
+  -- An item that already had stock keeps it until posting: half a count is
+  -- not a better figure than a real one.
+  v_r := public.pos_count_capture(v_mary.token, 'e-2', null, null, '6009700001262',
+    'Voltaren gel', 'ea', 4, 'Shelf 2', now());
+  v_other := (v_r->>'new_item_id')::uuid;
+  v_had := public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'Voltaren Emulgel 50g', null, null, 'ea', 90, null, 60, 'standard', 7, null, true);
+  perform public.pos_count_new_item_link(v_tok, '1234', v_other, v_had.id);
+  perform assert_eq((select stock_qty from public.products where id = v_had.id), 7::numeric,
+    'an item that already had stock is not given the early figure');
+
+  -- Nor one that has sold out: its 0 is a figure with a history, not a blank.
+  v_r := public.pos_count_capture(v_mary.token, 'e-3', null, null, '6009700001263',
+    'Panado', 'ea', 6, 'Shelf 3', now());
+  v_other := (v_r->>'new_item_id')::uuid;
+  v_gone := public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'Panado 24s', null, null, 'ea', 30, null, 18, 'standard', 0, null, true);
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_gone.id, 2, 'delivered');
+  perform public.pos_admin_adjust_stock(v_tok, '1234', v_gone.id, 0, 'sold out');
+  perform public.pos_count_new_item_link(v_tok, '1234', v_other, v_gone.id);
+  perform assert_eq((select stock_qty from public.products where id = v_gone.id), 0::numeric,
+    'an item that sold out to nothing is not given the early figure either');
+
+  perform public.pos_count_finish(v_mary.token);
+  perform public.pos_count_finish(v_tom.token);
+  perform public.pos_count_job_post(v_tok, '1234', v_job.id);
+  perform assert_eq((select stock_qty from public.products where id = v_prod.id), 22::numeric,
+    'posted: 25 counted, less the 3 sold — the early 20 not counted twice');
+  perform assert_eq((select stock_qty from public.products where id = v_had.id), 4::numeric,
+    'and the other takes its count at posting, as before');
+
+  perform assert_eq((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in
+      ('pos_count_new_item_link', 'pos_count_job_post', 'pos_count_job_counted')), 3,
+    'each of the three has exactly one signature');
+end $$;
+
+
 select 'all database tests passed' as result;
