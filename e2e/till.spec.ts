@@ -5973,9 +5973,12 @@ test("a delivery is booked in from its own invoice, and the pairing is remembere
 
   await expect(page.getByText(/2 lines booked in, 1 new item created and waiting to be priced/)).toBeVisible();
   expect(PRODUCTS.find((p) => p.id === "p1")!.stock_qty).toBe(cementBefore + 19);
+  // Each receipt also says what one cost and who it came from (0124).
   expect(be.stockMoves).toEqual([
-    { product_id: "p1", qty_delta: 19, reason: "receipt", note: "INV-8812" },
-    { product_id: expect.stringContaining("new"), qty_delta: 5, reason: "receipt", note: "INV-8812" },
+    { product_id: "p1", qty_delta: 19, reason: "receipt", note: "INV-8812",
+      unit_cost: 16.85, supplier_name: "Jasbro Plumbing", at: expect.any(String) },
+    { product_id: expect.stringContaining("new"), qty_delta: 5, reason: "receipt", note: "INV-8812",
+      unit_cost: 17.5, supplier_name: "Jasbro Plumbing", at: expect.any(String) },
   ]);
   // Born inactive and unpriced: the till must not offer something nobody priced.
   const made = PRODUCTS.find((p) => p.name === "WAX PAN SEAL RING BROWN")!;
