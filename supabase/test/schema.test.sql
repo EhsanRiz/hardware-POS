@@ -7629,7 +7629,9 @@ begin
     'HIGH GLOSS PWD BROWN 5LT', null, null, 'ea', 320, null, null, 'standard', 3, null, true);
 
   -- SWITCH OFF: today's screen, exactly. Nothing sorted, and the same number
-  -- files twice, because nothing has been switched on to stop it.
+  -- files twice, because nothing has been switched on to stop it. Off by
+  -- hand: since 0125 every shop starts with it on.
+  update public.organizations set sort_deliveries = false where id = v_org;
   select * into v_r from public.pos_purchasing_file_document(
     v_tok, '1234', null, 'Sorting Supplies', '4990011122', null, null,
     'invoice', 'SS-1', current_date, null, null, 100, null,
@@ -7837,7 +7839,9 @@ begin
   select token into v_tok from till;
   select org_id into v_org from fixture;
 
-  -- Switch off: nothing worked out, the screen is what it was.
+  -- Switch off: nothing worked out, the screen is what it was. (Off by hand:
+  -- 0125 starts every shop with it on.)
+  update public.organizations set sort_deliveries = false where id = v_org;
   select * into v_r from public.pos_purchasing_file_document(
     v_tok, '1234', null, 'Cost Supplies', '4990077766', null, null,
     'invoice', 'CS-0', current_date, 14.70, 2.21, 16.91, null,
@@ -7938,6 +7942,7 @@ begin
 
   -- Filed before the shop sorted its deliveries: one delivery, filed as a
   -- delivery note and again as an invoice, as Jasbro 10022994 was.
+  update public.organizations set sort_deliveries = false where id = v_org;
   select * into v_r from public.pos_purchasing_file_document(
     v_tok, '1234', null, 'Twin Supplies', '4990088899', null, null,
     'delivery_note', '10022994', current_date, 100, 15, 115, null,
@@ -8308,6 +8313,24 @@ begin
   delete from public.supplier_product_codes where supplier_id in (v_a.supplier_id, v_b.supplier_id);
   delete from public.suppliers where id in (v_a.supplier_id, v_b.supplier_id);
   delete from public.products where id = v_item;
+end $$;
+
+
+-- 0125: every shop sorts its deliveries, and every new shop starts that way ----
+do $$
+declare v_new uuid;
+begin
+  -- A shop registered the way every shop is (pos-request prints this call).
+  v_new := public.innova_create_org('Brand New Hardware', 'New Owner', '+27820000071');
+  perform assert((select sort_deliveries from public.organizations where id = v_new),
+    'a newly registered shop sorts its deliveries from the start');
+  perform assert_eq((select column_default from information_schema.columns
+                       where table_schema = 'public' and table_name = 'organizations'
+                         and column_name = 'sort_deliveries'), 'true',
+    'because that is the default, not a step someone has to remember');
+  delete from public.app_users where org_id = v_new;
+  delete from public.categories where org_id = v_new;
+  delete from public.organizations where id = v_new;
 end $$;
 
 

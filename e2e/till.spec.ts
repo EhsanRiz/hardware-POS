@@ -5911,6 +5911,9 @@ test("a scan fills what the shop was missing, and never overwrites what it knew"
  * 0058: the delivery note becomes stock on the shelf.
  */
 test("a delivery is booked in from its own invoice, and the pairing is remembered", async ({ page }) => {
+  // The screen with sorting switched off: every shop has it on since 0125,
+  // but the column is still there to switch one back, and this is that.
+  be.sortDeliveries = false;
   be.suppliers.push({
     id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
     email: null, address: null, vat_number: "4370229645", notes: null,
@@ -5932,8 +5935,8 @@ test("a delivery is booked in from its own invoice, and the pairing is remembere
   await pairAndSignIn(page, USERS.manager.pin);
   await openManage(page);
   await page.getByRole("button", { name: /^Suppliers$/ }).click();
-  // Sorting is off, as in every shop until it is switched on (0117): no
-  // waiting list, and — below — every line for a person to match.
+  // Sorting is off (set above): no waiting list, and — below — every line
+  // for a person to match.
   await expect(page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Waiting to be booked in" })).toHaveCount(0);
   await page.locator("tr.acc-row", { hasText: "Jasbro Plumbing" }).click();
@@ -5991,6 +5994,8 @@ test("a delivery is booked in from its own invoice, and the pairing is remembere
 });
 
 test("the second delivery from a supplier matches itself, and cannot be booked in twice", async ({ page }) => {
+  // With sorting off, as above (0125 switched every shop on).
+  be.sortDeliveries = false;
   be.suppliers.push({
     id: "sup1", name: "Jasbro Plumbing", contact_name: null, phone: null,
     email: null, address: null, vat_number: "4370229645", notes: null,

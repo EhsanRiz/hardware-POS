@@ -535,8 +535,8 @@ export class Backend {
   supplierCodes: { supplier_id: string; supplier_code: string; product_id: string }[] = [];
   /** 0121: what each merged-away item was merged into. */
   mergedInto = new Map<string, string>();
-  /** 0117: organizations.sort_deliveries — off, as every shop starts. */
-  sortDeliveries = false;
+  /** organizations.sort_deliveries — on, as every shop starts since 0125. */
+  sortDeliveries = true;
   /**
    * 0056: what the reader says the pages contain. A browser test cannot run a
    * vision model, and should not: what it must pin is what the till DOES with
