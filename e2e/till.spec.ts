@@ -6436,6 +6436,16 @@ test("one and a half inches printed two ways is offered as one item", async ({ p
     .getByText("BlueWave Irrigation · Invoice BW0000712669").click();
   const recv = page.getByRole("dialog", { name: "Receive this delivery" });
   await expect(recv).toContainText("Is it \"EMJAY\" NYLON 40MM X 11/2\" MALE ADAPTOR (MB275)?");
+  // Change pressed by mistake, as on IE Test Shop's BlueWave delivery: the
+  // other choices open, but the question stays, and pressing Change again
+  // goes back to it. It used to be thrown away, and the line booked in as
+  // nothing.
+  await recv.getByRole("button", { name: "Change line 1" }).click();
+  await expect(recv.getByRole("button", { name: "Not on our list — create it" })).toBeVisible();
+  await expect(recv).toContainText("Is it \"EMJAY\" NYLON 40MM X 11/2\" MALE ADAPTOR (MB275)?");
+  await recv.getByRole("button", { name: "Change line 1" }).click();
+  await expect(recv.getByRole("button", { name: "Not on our list — create it" })).toHaveCount(0);
+  await expect(recv).toContainText("Is it \"EMJAY\" NYLON 40MM X 11/2\" MALE ADAPTOR (MB275)?");
   await recv.getByRole("button", { name: /^Yes, line 1 is / }).click();
   await recv.getByRole("button", { name: "Book in 1 line" }).click();
   await expect(page.getByText(/1 line booked in/)).toBeVisible();
