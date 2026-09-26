@@ -68,6 +68,10 @@ export default function Suppliers({
   // filed on a phone, finished on the till (0117). Null while the shop has
   // not switched sorting on, and then this screen is what it always was.
   const [waiting, setWaiting] = useState<SupplierDocument[] | null>(null);
+  // Another document from the same supplier with the same number: the same
+  // delivery filed twice, as Jasbro 10022994 was (0120). Said on the list, so
+  // nobody books in both.
+  const [twins, setTwins] = useState<Map<string, SupplierDocument>>(new Map());
   // A phone files; the till books in. With sorting on, a phone is not offered
   // booking in at all: it is the till's screen, and on a phone it was the part
   // staff struggled with.
@@ -84,7 +88,21 @@ export default function Suppliers({
       setSorts(on);
       if (!on) return setWaiting(null);
       const all = await purchasingDocuments(pin, null);
-      setWaiting(all.filter((d) => d.lines > 0 && d.status !== "received" && d.kind !== "quote"));
+      const open = all.filter((d) => d.lines > 0 && d.status !== "received" && d.kind !== "quote");
+      const squash = (v: string | null) => (v ?? "").replace(/\s/g, "").toUpperCase();
+      const paper = (d: SupplierDocument) => d.kind === "invoice" || d.kind === "delivery_note";
+      const found = new Map<string, SupplierDocument>();
+      for (const d of open) {
+        if (!paper(d) || !d.doc_number) continue;
+        // A booked-in twin first: that is the one that makes this a repeat.
+        const twin = all
+          .filter((x) => x.id !== d.id && x.supplier_id === d.supplier_id && paper(x)
+            && squash(x.doc_number) === squash(d.doc_number))
+          .sort((a, b) => (a.status === "received" ? 0 : 1) - (b.status === "received" ? 0 : 1))[0];
+        if (twin) found.set(d.id, twin);
+      }
+      setTwins(found);
+      setWaiting(open);
     } catch {
       // A list that helps; never a reason the suppliers cannot open.
       setSorts(false);
@@ -379,6 +397,13 @@ export default function Suppliers({
                       {d.lines} {d.lines === 1 ? "line" : "lines"} · filed {fmtDate(d.created_at)}
                       {d.created_by_name ? ` by ${d.created_by_name}` : ""}
                     </span>
+                    {twins.get(d.id) && (
+                      <span className="acc-sub is-warning">
+                        {twins.get(d.id)!.status === "received"
+                          ? `Already booked in as ${DOCUMENT_KIND_LABEL[twins.get(d.id)!.kind]} ${twins.get(d.id)!.doc_number} — the same delivery. Remove this one.`
+                          : `Same number as ${DOCUMENT_KIND_LABEL[twins.get(d.id)!.kind]} ${twins.get(d.id)!.doc_number} — the same delivery. Book in only one.`}
+                      </span>
+                    )}
                   </td>
                   <td className="num">{d.total != null ? money(d.total) : "—"}</td>
                 </tr>

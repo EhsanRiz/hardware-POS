@@ -511,6 +511,7 @@ export class Backend {
     doc_date: string | null; total: number | null; note: string | null; status: string;
     /** 0119 reads the lines' VAT basis off these; the fake kept only the total. */
     subtotal?: number | null; tax_total?: number | null;
+    received_at?: string | null;
     created_at: string;
     // 0066: what is owed on it and when. Filing a bill and paying it are two
     // different days, and the fake modelled only the first one.
@@ -3858,6 +3859,20 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         const d = be.supplierDocs.find((x) => x.id === body.p_document_id);
         if (!d) return fail("Document not found");
         if (d.status === "received") return fail("This document has already been booked in");
+        // 0120: the same delivery, filed as a note and as an invoice, goes in once.
+        if (be.sortDeliveries && ["invoice", "delivery_note"].includes(d.kind) && d.doc_number) {
+          const squash = (v: string | null) => (v ?? "").replace(/\s/g, "").toUpperCase();
+          const twin = be.supplierDocs.find((x) => x.id !== d.id && x.supplier_id === d.supplier_id
+            && x.status === "received" && ["invoice", "delivery_note"].includes(x.kind)
+            && squash(x.doc_number) === squash(d.doc_number));
+          if (twin) {
+            const when = new Date(twin.received_at ?? Date.now()).toLocaleDateString("en-GB",
+              { day: "2-digit", month: "short", year: "numeric" });
+            return fail(`${twin.kind === "invoice" ? "Invoice" : "Delivery note"} ${twin.doc_number} ` +
+              `was already booked in on ${when} — this is the same delivery. ` +
+              "Booking it in again would count the stock twice.");
+          }
+        }
         const wanted = (body.p_lines as Record<string, unknown>[]) ?? [];
         const out: Record<string, unknown>[] = [];
         // 0117: what each line and each code went to in THIS booking.
@@ -3914,6 +3929,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }
         if (out.length === 0) return fail("Nothing to receive");
         d.status = "received";
+        d.received_at = new Date().toISOString();
         return json(out);
       }
       case "rpc/pos_purchasing_document_lines": {
