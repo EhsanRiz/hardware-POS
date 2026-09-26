@@ -395,6 +395,7 @@ export default function ReceiveDocument({
                             set(i, {
                               productId: r.offer!.id, productName: r.offer!.name, create: false,
                               costNow: products.find((p) => p.id === r.offer!.id)?.cost ?? null,
+                              picking: false,
                             })
                           }
                           disabled={busy}
@@ -406,7 +407,12 @@ export default function ReceiveDocument({
                       <button
                         type="button"
                         className="btn-line"
-                        onClick={() => { set(i, { picking: !r.picking, offer: null }); setTerm(""); }}
+                        // Opens the other choices and nothing else. It used to
+                        // throw the offer away too, so a Change pressed by
+                        // mistake could not be undone: pressing it again closed
+                        // the list on a line that no longer asked anything.
+                        // The offer now stays until something else is chosen.
+                        onClick={() => { set(i, { picking: !r.picking }); setTerm(""); }}
                         disabled={busy}
                         aria-label={`Change line ${r.line.line_no}`}
                       >
