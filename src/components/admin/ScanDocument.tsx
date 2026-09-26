@@ -422,43 +422,34 @@ export default function ScanDocument({
                   Check the pages before filing.
                 </p>
               )}
+              {/* One line to a row, the name in full and the sums under it.
+                  This was a five-column table, and on a phone the columns
+                  took the width and pushed the names off the side, so what
+                  was being checked could not be read. */}
               {lines.length > 0 && (
-                <div className="acc-scroll" style={{ maxHeight: 260 }}>
-                  <table className="acc-table">
-                    <thead>
-                      <tr>
-                        <th>Item</th>
-                        <th className="num">Qty</th>
-                        <th className="num">Unit</th>
-                        <th className="num">Line</th>
-                        <th className="num" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((l, i) => (
-                        <tr key={i}>
-                          <td>
-                            <span className="acc-name">{l.description}</span>
-                            {l.supplier_code && <span className="acc-sub">{l.supplier_code}</span>}
-                          </td>
-                          <td className="num">{l.qty ?? "—"}</td>
-                          <td className="num">{l.unit_price != null ? money(l.unit_price) : "—"}</td>
-                          <td className="num">{l.line_total != null ? money(l.line_total) : "—"}</td>
-                          <td className="num">
-                            <button
-                              type="button" className="btn-line quiet"
-                              aria-label={`Drop ${l.description}`}
-                              onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
-                              disabled={busy}
-                            >
-                              Drop
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ul className="acc-scroll" style={{ maxHeight: 260 }} aria-label="Lines read">
+                  {lines.map((l, i) => (
+                    <li key={i} className="flex items-start gap-2 py-2 border-b border-stone-200">
+                      <div className="min-w-0 flex-1">
+                        <span className="acc-name block break-words">{l.description}</span>
+                        {l.supplier_code && <span className="acc-sub">{l.supplier_code}</span>}
+                        <span className="block text-sm text-stone-600 tabular-nums" aria-label={`Line ${i + 1} sums`}>
+                          {l.qty ?? "—"} × {l.unit_price != null ? money(l.unit_price) : "—"}
+                          {" = "}
+                          {l.line_total != null ? money(l.line_total) : "—"}
+                        </span>
+                      </div>
+                      <button
+                        type="button" className="btn-line quiet shrink-0"
+                        aria-label={`Drop ${l.description}`}
+                        onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
+                        disabled={busy}
+                      >
+                        Drop
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
 

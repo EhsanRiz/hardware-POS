@@ -6313,6 +6313,102 @@ test("what is booked in on another device leaves the waiting list without a relo
   await expect(waiting).toContainText("Waiting to be booked in (1)");
 });
 
+test("on a phone, what was read off an invoice can be read in full before it is filed", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  be.documentReading = {
+    ...be.documentReading,
+    lines: [
+      { supplier_code: "BW-NE4020", description: "*EMJAY NYLON 40MM ELBOW (MB245) - *EMJAY NYLON 40MM",
+        qty: 4, unit_price: 22.5, line_total: 63.0 },
+      { supplier_code: "BW-NC4011", description: "*EMJAY NYLON 40MM END CAP (MB261) - *EMJAY NYLON 40MI",
+        qty: 6, unit_price: 11.8, line_total: 49.56 },
+    ],
+    subtotal: 112.56,
+  };
+  await enrolPhoneAndSignIn(page, be, USERS.manager.pin);
+  await openManageOnPhone(page, "Suppliers");
+  await page.getByRole("button", { name: "Scan a document" }).click();
+  const scan = page.getByRole("dialog", { name: "Scan a document" });
+  await scan.getByLabel("Add PDF or photos").setInputFiles([
+    { name: "p1.png", mimeType: "image/png", buffer: PNG_1x1 },
+  ]);
+  await scan.getByRole("button", { name: "Read 1 page" }).click();
+
+  // Each line's name is on the screen, whole, not pushed off its side by
+  // columns of figures — which is what BW0000712669 looked like.
+  const lines = scan.getByRole("list", { name: "Lines read" });
+  const name = lines.getByText("*EMJAY NYLON 40MM END CAP (MB261) - *EMJAY NYLON 40MI");
+  await expect(name).toBeVisible();
+  const box = (await name.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await expect(lines.getByLabel("Line 2 sums")).toHaveText("6 × R 11.80 = R 49.56");
+  // Nothing on the dialog runs off the side of the phone.
+  expect(await scan.evaluate((el) => {
+    const all = [el, ...Array.from(el.querySelectorAll("*"))];
+    return all.every((n) => n.scrollWidth <= n.clientWidth + 1 || getComputedStyle(n).overflowX === "visible");
+  })).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  // Drop takes a misread line out of what is filed; nothing else.
+  await lines.getByRole("button", { name: "Drop *EMJAY NYLON 40MM ELBOW (MB245) - *EMJAY NYLON 40MM" }).click();
+  await expect(lines.getByRole("listitem")).toHaveCount(1);
+});
+
+test("a second supplier's delivery: the tail it prints is ignored, and a discounted price rise is the same item", async ({ page }) => {
+  be.sortDeliveries = true;
+  // Turf-Ag's drip roll, in the catalogue under the tail Turf-Ag printed.
+  const p5 = PRODUCTS.find((p) => p.id === "p5")!;
+  PRODUCTS.push({ ...p5, id: "new-drip", sku: "SKU-000024", barcode: null, photos: [],
+    name: "NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRIP, 16M", stock_qty: 10 });
+  be.suppliers.push({
+    id: "sup1", name: "BlueWave Irrigation", contact_name: null, phone: null,
+    email: null, address: null, vat_number: "4999000123", notes: null,
+  });
+  // The padlock, remembered under BlueWave's code, bought at R50.
+  be.supplierCodes.push({ supplier_id: "sup1", supplier_code: "BW-PDL", product_id: "p5" });
+  be.supplierDocs.push({
+    id: "doc1", supplier_id: "sup1", kind: "invoice", doc_number: "BW0000712669",
+    doc_date: "2026-09-26", note: null, status: "read", created_at: "2026-09-26T10:18:00Z",
+    subtotal: 10415.28, tax_total: 1562.29, total: 11977.57,
+  });
+  const line = (line_no: number, supplier_code: string, description: string,
+    qty: number, unit_price: number, line_total: number) => ({
+    document_id: "doc1", line_no, supplier_code, description, qty, unit_price, line_total,
+  });
+  be.supplierLines.push(
+    line(1, "BW-DL", "NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRII", 6, 1695, 10170),
+    // Listed at R80 — 1.6 times the R50 it cost — but R56 after 30% off.
+    line(2, "BW-PDL", "PADLOCK 50MM BRASS", 2, 80, 112),
+    line(3, "BW-FA", "*EMJAY NYLON 40MM X 1 1/2\" FEM ADAPTOR (MB767) - *EMJA", 4, 47.6, 133.28),
+  );
+  const before = p5.stock_qty!;
+
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Suppliers$/ }).click();
+  await page.getByRole("region", { name: "Waiting to be booked in" })
+    .getByText("BlueWave Irrigation · Invoice BW0000712669").click();
+  const recv = page.getByRole("dialog", { name: "Receive this delivery" });
+
+  // The same roll is offered, though each supplier cut its name differently.
+  await expect(recv).toContainText("Is it NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRIP, 16M?");
+  // The padlock is still the padlock: what it cost moved 12%, not 60%.
+  await expect(recv).toContainText("→ Padlock 50mm Brass · remembered");
+  // A new item is offered without the tail, and can still be changed.
+  await expect(recv.getByLabel("Name for the new item on line 3"))
+    .toHaveValue("*EMJAY NYLON 40MM X 1 1/2\" FEM ADAPTOR (MB767)");
+
+  await recv.getByRole("button", { name: /^Yes, line 1 is / }).click();
+  await recv.getByRole("button", { name: "Book in 3 lines" }).click();
+  await expect(page.getByText(/3 lines booked in/)).toBeVisible();
+
+  expect(PRODUCTS.find((p) => p.id === "new-drip")!.stock_qty).toBe(16);
+  expect(p5.stock_qty).toBe(before + 2);
+  expect(PRODUCTS.some((p) => p.name === "*EMJAY NYLON 40MM X 1 1/2\" FEM ADAPTOR (MB767)")).toBe(true);
+  expect(PRODUCTS.some((p) => / - \*EMJA$/.test(p.name))).toBe(false);
+});
+
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
   be.sortDeliveries = true;
   be.suppliers.push({
