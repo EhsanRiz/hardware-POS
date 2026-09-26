@@ -8211,4 +8211,54 @@ begin
 end $$;
 
 
+-- 0123: an inch and a half, however it is printed ------------------------------
+do $$
+declare v_tok text; v_org uuid; v_r record; v_row record; v_male uuid;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  perform assert_eq(public.match_fractions('40MM X 11/2" MALE ADAPTOR'), '40MM X 1.5" MALE ADAPTOR',
+    'Turf-Ag''s 11/2 is one and a half');
+  perform assert_eq(public.match_fractions('40MM X 1 1/2" MALE ADAPTOR'), '40MM X 1.5" MALE ADAPTOR',
+    'BlueWave''s 1 1/2 is the same');
+  perform assert_eq(public.match_fractions('ZINC POP UP BATH WASTE 1-1/2"'), 'ZINC POP UP BATH WASTE 1.5"',
+    'so is 1-1/2');
+  perform assert_eq(public.match_fractions('BALL VALVE 1½"'), 'BALL VALVE 1.5"', 'and 1½');
+  perform assert_eq(public.match_fractions('RL PLASTIC TAP 3/4" RED/WHITE'), 'RL PLASTIC TAP 0.75" RED/WHITE',
+    'a fraction on its own is read too');
+  perform assert_eq(public.match_fractions('PACK 12/24 AND 3/4'), 'PACK 12/24 AND 0.75',
+    'a slash that is not a fraction is kept, and does not hide one after it');
+  perform assert_eq(public.match_fractions('SABS 657/1 TUBE'), 'SABS 657/1 TUBE', 'nor is 657/1');
+  perform assert_eq(public.match_fractions('REX RING SHANK NAILS 32/40MM'), 'REX RING SHANK NAILS 32/40MM',
+    'nor 32/40');
+  perform assert_eq(public.match_fractions('ITEM 11/3'), 'ITEM 11/3', 'nor eleven thirds');
+  perform assert_eq(public.match_fractions('GEAR RATIO 3/2'), 'GEAR RATIO 3/2',
+    'nor a fraction bigger than one');
+  perform assert(public.match_same_variant('*EMJAY NYLON 40MM X 1 1/2" MALE ADAPTOR (MB275)',
+                                           '"EMJAY" NYLON 40MM X 11/2" MALE ADAPTOR (MB275)'),
+    'the two adaptors are the same size');
+  perform assert(not public.match_same_variant('BALL VALVE 1 1/2"', 'BALL VALVE 1 1/4"'),
+    'one and a half is still not one and a quarter');
+
+  update public.organizations set sort_deliveries = true where id = v_org;
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org, 'FRAC-MALE', '"EMJAY" NYLON 40MM X 11/2" MALE ADAPTOR (MB275)', 'ea', 0, 14.70, 10, false, 'standard')
+  returning id into v_male;
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Fraction Supplies', '4990055544', null, null,
+    'invoice', 'FS-1', current_date, 156.80, 23.52, 180.32, null,
+    jsonb_build_array(jsonb_build_object('supplier_code', 'BW-MA4040', 'qty', 10, 'unit_price', 22.40,
+      'line_total', 156.80, 'description', '*EMJAY NYLON 40MM X 1 1/2" MALE ADAPTOR (MB275) - *EMJ')));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+  perform assert(v_row.sorted = 'likely' and v_row.suggestion_id = v_male,
+    'BlueWave''s adaptor is offered against Turf-Ag''s: ' || coalesce(v_row.sorted, 'null'));
+
+  update public.organizations set sort_deliveries = false where id = v_org;
+  delete from public.supplier_documents where supplier_id = v_r.supplier_id;
+  delete from public.suppliers where id = v_r.supplier_id;
+  delete from public.products where id = v_male;
+end $$;
+
+
 select 'all database tests passed' as result;
