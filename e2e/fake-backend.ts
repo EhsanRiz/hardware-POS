@@ -364,7 +364,9 @@ export class Backend {
   /** Phones that asked to be told with the app shut (0101). */
   pushSubs: { endpoint: string; p256dh: string; auth: string; user: string }[] = [];
   stockMoves: { product_id: string; qty_delta: number; reason: string;
-    note: string | null; unit_cost?: number | null }[] = [];
+    note: string | null; unit_cost?: number | null;
+    /** 0124: who a delivery came from, and when it moved. */
+    supplier_name?: string | null; at?: string }[] = [];
   /** The staff roster the back office edits, seeded from the two sign-in users. */
   staff: {
     id: string; name: string; phone: string; role: string;
@@ -4000,7 +4002,9 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
           const cost = w.unit_cost == null ? null : Number(w.unit_cost);
           prod.stock_qty = Math.round(((prod.stock_qty ?? 0) + qty) * 1000) / 1000;
           be.stockMoves.push({ product_id: pid, qty_delta: qty, reason: "receipt",
-            note: d.doc_number ?? "Goods received" });
+            note: d.doc_number ?? "Goods received", unit_cost: cost,
+            supplier_name: be.suppliers.find((x) => x.id === d.supplier_id)?.name ?? null,
+            at: new Date().toISOString() });
           src.product_id = pid;
           got.set(Number(w.line_no), pid);
           const keepFirst = be.sortDeliveries && src.supplier_code != null
@@ -5047,6 +5051,22 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         return json(PRODUCTS);
       case "units_of_measure":
         return json(UNITS);
+      // 0124: an item's history, newest first, with what each delivery cost
+      // and who it came from. There was no handler at all: every item's
+      // history came back empty, so nothing that reads it could be tested.
+      case "rpc/pos_admin_stock_history": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(be.stockMoves
+          .map((m, i) => ({ m, i }))
+          .filter(({ m }) => m.product_id === body.p_product_id)
+          .sort((x, y) => y.i - x.i)
+          .map(({ m }) => ({
+            at: m.at ?? new Date().toISOString(), qty_delta: m.qty_delta, qty_after: null,
+            reason: m.reason, by_name: null, note: m.note,
+            unit_cost: m.unit_cost ?? null, supplier_name: m.supplier_name ?? null,
+          })));
+      }
       default:
         return json([]);
     }

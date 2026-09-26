@@ -450,6 +450,10 @@ export interface StockMovement {
   reason: "sale" | "void" | "receipt" | "adjustment" | "stocktake" | "opening";
   by_name: string | null;
   note: string | null;
+  /** What one cost on this movement, when it was a delivery (0124). */
+  unit_cost?: number | null;
+  /** Who the delivery came from (0124). */
+  supplier_name?: string | null;
 }
 
 /**

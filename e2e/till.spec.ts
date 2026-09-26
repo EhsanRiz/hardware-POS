@@ -6455,6 +6455,31 @@ test("one and a half inches printed two ways is offered as one item", async ({ p
   expect(PRODUCTS.filter((p) => /MALE ADAPTOR/.test(p.name))).toHaveLength(1);
 });
 
+test("an item whose last delivery cost more says so when it is opened, and its price is left alone", async ({ page }) => {
+  // The padlock sells at R89. Turf-Ag charged R50 for it, BlueWave later R56.
+  be.stockMoves.push(
+    { product_id: "p5", qty_delta: 1, reason: "receipt", note: "CN000068973", unit_cost: 50,
+      supplier_name: "Turf-Ag Products", at: "2026-09-21T09:00:00Z" },
+    { product_id: "p5", qty_delta: 4, reason: "receipt", note: "BW0000712669", unit_cost: 56,
+      supplier_name: "BlueWave Irrigation", at: "2026-09-26T10:00:00Z" },
+  );
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: /^Catalogue$/ }).click();
+  const screen = page.locator(".admin-screen");
+  await screen.getByRole("cell", { name: "Padlock 50mm Brass", exact: true }).click();
+  await expect(page.getByRole("status", { name: "Cost changed" })).toHaveText(
+    "Cost went up: R 50.00 (Turf-Ag Products, CN000068973) → R 56.00 (BlueWave Irrigation, BW0000712669)."
+    + " At R 89.00 the margin is now 28% (was 35%). The price has not been changed.");
+  expect(PRODUCTS.find((p) => p.id === "p5")!.price_retail).toBe(89);
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // One delivery, or none, is nothing to compare: no warning.
+  await screen.getByRole("cell", { name: "Cement 42.5N 50kg", exact: true }).click();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Cement 42.5N 50kg");
+  await expect(page.getByRole("status", { name: "Cost changed" })).toHaveCount(0);
+});
+
 test("with sorting on, the same invoice is not filed twice, and a new one waits for the till", async ({ page }) => {
   be.sortDeliveries = true;
   be.suppliers.push({

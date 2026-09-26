@@ -110,6 +110,16 @@ export default function ProductEditor({
   const unit = units.find((u) => u.code === f.unit_code);
   const isNew = !product;
 
+  // The last two deliveries, when they cost different amounts (0124). The
+  // selling price is the owner's to change, never the till's, so this only
+  // says so — here, where the price is set, and not just once on the receive
+  // screen while a delivery is being checked.
+  const receipts = (history ?? []).filter((m) => m.reason === "receipt" && m.unit_cost != null);
+  const costMoved =
+    receipts.length >= 2 && Number(receipts[0].unit_cost) !== Number(receipts[1].unit_cost)
+      ? { now: receipts[0], was: receipts[1] }
+      : null;
+
   useEffect(() => {
     if (!product) return;
     adminStockHistory(pin, product.id).then(setHistory).catch(() => setHistory([]));
@@ -257,6 +267,7 @@ export default function ProductEditor({
         </div>
 
         <div className="p-4 space-y-4">
+          {costMoved && <CostMoved {...costMoved} retail={product?.price_retail ?? 0} vatRate={f.tax_code === "standard" ? 0.15 : 0} />}
           <div className="grid grid-cols-2 gap-3">
             <Field
               label="SKU"
@@ -999,6 +1010,47 @@ function MergeDuplicate({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * "Cost went up: R14.70 (Turf-Ag) → R15.75 (BlueWave)", and what the price
+ * that is on the item now leaves. Nothing here changes the price.
+ */
+function CostMoved({
+  now,
+  was,
+  retail,
+  vatRate,
+}: {
+  now: StockMovement;
+  was: StockMovement;
+  retail: number;
+  vatRate: number;
+}) {
+  const a = Number(was.unit_cost);
+  const b = Number(now.unit_cost);
+  const from = (m: StockMovement) =>
+    [m.supplier_name, m.note].filter(Boolean).join(", ");
+  const margin = (cost: number) => {
+    const ex = retail / (1 + vatRate);
+    return Math.round(((ex - cost) / ex) * 100);
+  };
+  return (
+    <p
+      role="status"
+      aria-label="Cost changed"
+      className={`rounded-xl px-3 py-2 text-sm ${
+        b > a ? "bg-amber-50 text-amber-900" : "bg-emerald-50 text-emerald-900"
+      }`}
+    >
+      <b>Cost went {b > a ? "up" : "down"}:</b> {money(a)}
+      {from(was) ? ` (${from(was)})` : ""} → {money(b)}
+      {from(now) ? ` (${from(now)})` : ""}.
+      {retail > 0
+        ? ` At ${money(retail)} the margin is now ${margin(b)}% (was ${margin(a)}%). The price has not been changed.`
+        : " Not priced yet."}
+    </p>
   );
 }
 
