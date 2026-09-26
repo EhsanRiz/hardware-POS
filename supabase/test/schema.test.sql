@@ -8115,4 +8115,100 @@ begin
 end $$;
 
 
+-- 0122: a name printed twice is one name; a discount is not a new item ------
+do $$
+declare v_tok text; v_org uuid; v_r record; v_sup uuid; v_row record;
+        v_drip uuid; v_elbow uuid; v_made uuid;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  -- The tail these suppliers print is cut, however the page cut it off...
+  perform assert_eq(public.match_without_tail('NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRIP, 16M'),
+    'NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M', 'a tail cut mid-word is cut');
+  perform assert_eq(public.match_without_tail('HYDROLINK NYLON 40MM ELBOW (HL245) - HYDROLINK NYLC'),
+    'HYDROLINK NYLON 40MM ELBOW (HL245)', 'a tail whose last letter was misread is cut');
+  perform assert_eq(public.match_without_tail('DRIP BARBED OFFTAKE WITH RUBBER 12X16MM (NO.667) - DI'),
+    'DRIP BARBED OFFTAKE WITH RUBBER 12X16MM (NO.667)', 'a tail of two letters is cut');
+  perform assert_eq(public.match_without_tail('"EMJAY" NYLON 40MM ELBOW (MB245) - *EMJAY® NYLON 40MM ELB'),
+    '"EMJAY" NYLON 40MM ELBOW (MB245)', 'a star, quotes or a ® do not hide a repeat');
+  -- ...and a name that merely has a dash in it is left alone.
+  perform assert_eq(public.match_without_tail('Blue Chip - Cream 20L'), 'Blue Chip - Cream 20L',
+    'a dash before a colour is not a tail');
+  perform assert_eq(public.match_without_tail('MORTICE LOCKSET SABS 2L - MATT BLACK'),
+    'MORTICE LOCKSET SABS 2L - MATT BLACK', 'nor one that shares only a first letter');
+  perform assert_eq(public.match_without_tail('BFN PLAS GEM - BFN PLASTER GEM'),
+    'BFN PLAS GEM - BFN PLASTER GEM', 'nor one that says the name differently');
+  perform assert_eq(public.match_without_tail('PAINT ROLLER 225MM - PLUSH'),
+    'PAINT ROLLER 225MM - PLUSH', 'nor a single word that only starts with the same letter');
+
+  update public.organizations set sort_deliveries = true where id = v_org;
+
+  -- Turf-Ag's drip roll, already in the catalogue under its own tail, and
+  -- an elbow bought at 30% off.
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org, 'TAIL-DRIP', 'NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRIP, 16M',
+          'ea', 0, 1750, 10, false, 'standard') returning id into v_drip;
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active, tax_code)
+  values (v_org, 'TAIL-ELB', 'EMJAY NYLON 40MM ELBOW', 'ea', 0, 14.70, 1, false, 'standard')
+  returning id into v_elbow;
+
+  -- BlueWave BW0000712669: the same roll, the elbow up 5% before the 30%.
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Tail Supplies', '4990066655', null, null,
+    'invoice', 'TS-1', current_date, 10366.28, 1554.94, 11921.22, null,
+    jsonb_build_array(
+      jsonb_build_object('supplier_code', 'BW-DL', 'qty', 6, 'unit_price', 1695, 'line_total', 10170,
+        'description', 'NON-PC DRIP, 16MM, 1.0MM, 2LPH, 30CM, 400M - NON-PC DRII'),
+      jsonb_build_object('supplier_code', 'BW-NE', 'qty', 4, 'unit_price', 22.50, 'line_total', 63.00,
+        'description', 'EMJAY NYLON 40MM ELBOW (MB245) - *EMJAY NYLON 40MM'),
+      jsonb_build_object('supplier_code', 'BW-FA', 'qty', 4, 'unit_price', 47.60, 'line_total', 133.28,
+        'description', '*EMJAY NYLON 40MM X 1 1/2" FEM ADAPTOR (MB767) - *EMJA')));
+  v_sup := v_r.supplier_id;
+  insert into public.supplier_product_codes (org_id, supplier_id, supplier_code, product_id)
+  values (v_org, v_sup, 'BW-NE', v_elbow);
+
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 1;
+  perform assert(v_row.sorted = 'likely' and v_row.suggestion_id = v_drip,
+    'the same drip roll from a second supplier is offered, tails and all: '
+      || coalesce(v_row.sorted, 'null') || ' ' || coalesce(v_row.sort_note, ''));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 2;
+  perform assert(v_row.sorted = 'sure' and v_row.product_id = v_elbow and v_row.sort_note is null,
+    'a 5% rise on a discounted price is still the same elbow: '
+      || coalesce(v_row.sorted, 'null') || ' ' || coalesce(v_row.sort_note, ''));
+  select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id)
+   where line_no = 3;
+  perform assert_eq(v_row.clean_name, '*EMJAY NYLON 40MM X 1 1/2" FEM ADAPTOR (MB767)',
+    'the screen is told the name without the tail');
+
+  select r.product_id into v_made from public.pos_purchasing_receive_document(v_tok, '1234', v_r.document_id,
+    jsonb_build_array(
+      jsonb_build_object('line_no', 1, 'product_id', v_drip, 'qty', 6, 'unit_cost', 1695),
+      jsonb_build_object('line_no', 2, 'product_id', v_elbow, 'qty', 4, 'unit_cost', 15.75),
+      jsonb_build_object('line_no', 3, 'create', true, 'qty', 4, 'unit_cost', 33.32))) r
+   where r.created;
+  perform assert_eq((select name from public.products where id = v_made),
+    '*EMJAY NYLON 40MM X 1 1/2" FEM ADAPTOR (MB767)', 'a new item is named without the tail');
+  perform assert_eq((select stock_qty from public.products where id = v_drip), 16::numeric,
+    'the roll went onto the roll already on the shelf');
+  perform assert_eq((select description from public.supplier_document_lines
+                      where document_id = v_r.document_id and line_no = 3),
+    '*EMJAY NYLON 40MM X 1 1/2" FEM ADAPTOR (MB767) - *EMJA', 'the paper keeps what it said');
+
+  perform assert_eq((select count(*)::int from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_purchasing_receive_lines'), 1,
+    'pos_purchasing_receive_lines still has exactly one signature');
+
+  update public.organizations set sort_deliveries = false where id = v_org;
+  delete from public.stock_movements where ref_id = v_r.document_id;
+  delete from public.supplier_documents where supplier_id = v_sup;
+  delete from public.supplier_product_codes where supplier_id = v_sup;
+  delete from public.suppliers where id = v_sup;
+  delete from public.products where id in (v_drip, v_elbow, v_made);
+end $$;
+
+
 select 'all database tests passed' as result;

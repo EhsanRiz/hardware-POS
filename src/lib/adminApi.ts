@@ -1271,6 +1271,11 @@ export interface ReceiveLine {
   net_cost?: number | null;
   /** ex_vat | incl_vat | unclear — how this invoice prints its lines. */
   price_basis?: "ex_vat" | "incl_vat" | "unclear" | null;
+  /**
+   * The name a new item would get: the description without the repeat some
+   * suppliers print after it, cut off at the column's edge (0122).
+   */
+  clean_name?: string | null;
 }
 
 export type ReceiveSort = "sure" | "likely" | "same_as_line" | "new" | "not_stock";

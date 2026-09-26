@@ -1610,7 +1610,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
     } catch { /* falls through to the checks below */ }
     const respond = (status: number, data: unknown) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
-    if (b.register_token !== REGISTER_TOKEN) {
+    // Any device the shop enrolled, as the real function checks it (through
+    // the RPC it calls): this compared against the till's own token, so a
+    // phone, where documents are scanned, could never have one read here.
+    if (!be.registers.some((r) => r.token === b.register_token)) {
       return respond(403, { ok: false, message: "Register not paired or revoked" });
     }
     const u = Object.values(USERS).find((x) => x.pin === b.pin);
@@ -3871,6 +3874,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
               ? PRODUCTS.find((p) => p.sku.toLowerCase() === l.supplier_code!.toLowerCase())
               : undefined;
             let pid: string | null = l.product_id ?? code?.product_id ?? bySku?.id ?? null;
+            const net = factor != null && l.line_total != null && (l.qty ?? 0) > 0
+              ? Math.round((l.line_total * factor / l.qty!) * 100) / 100 : null;
             // 0117: sorted, as pos_purchasing_receive_lines sorts it.
             let sorted: string | null = null;
             let suggestion_id: string | null = null;
@@ -3879,9 +3884,10 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             if (sorting) {
               const paired = code ? PRODUCTS.find((p) => p.id === code.product_id) : undefined;
               // The fake's cost is its flat 50, as current_cost reports it.
+              // What one actually cost, not its list price (0122).
               const pairConf = code
                 ? matchConflict(l.description, paired?.name ?? "") ??
-                  (matchPriceDiffers(l.unit_price, paired ? 50 : null) ? "price" : null)
+                  (matchPriceDiffers(net ?? l.unit_price, paired ? 50 : null) ? "price" : null)
                 : null;
               if (l.product_id) sorted = "sure";
               else if (matchNotStock(l.supplier_code, l.description, l.unit_price)) {
@@ -3928,8 +3934,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
               suggestion_name: suggestion_id ? PRODUCTS.find((p) => p.id === suggestion_id)?.name ?? null : null,
               same_as_line, sort_note,
               price_basis: basis,
-              net_cost: factor != null && l.line_total != null && (l.qty ?? 0) > 0
-                ? Math.round((l.line_total * factor / l.qty!) * 100) / 100 : null,
+              net_cost: net,
+              clean_name: sorting ? matchWithoutTail(l.description) : null,
             };
           }));
       }
@@ -3977,7 +3983,8 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             if (!w.create) return fail(`Line ${w.line_no} has nothing to receive it against`);
             // Born inactive and unpriced, as the shelf's captures are — under
             // the name a person gave it, if they gave one (0117).
-            const named = String(w.name ?? "").trim() || src.description;
+            const named = String(w.name ?? "").trim()
+              || (be.sortDeliveries ? matchWithoutTail(src.description) : src.description);
             const made: FakeProduct & { active?: boolean } = {
               ...mk("new" + PRODUCTS.length, "SKU-" + String(++be.skuSeq).padStart(6, "0"),
                 null, named, "ea", "Each", false, 0, null, 0, null),
@@ -5136,8 +5143,29 @@ function matchSupplier(be: Backend, vat: unknown, name: unknown) {
 
 // ---- 0117: how a delivery line is compared, as the migration's match_* ----
 
+/**
+ * 0122: a description without the repeat some suppliers print after it,
+ * cut off where the column ends ("… ELBOW (HL245) - HYDROLINK NYLC").
+ */
+export function matchWithoutTail(p: string | null | undefined): string {
+  if (p == null) return "";
+  const m = /^(.*\S)\s+-\s+(\S.*)$/s.exec(p);
+  if (!m) return p.trim();
+  const clean = (x: string) => x.replace(/[^\p{L}\p{N}\s.,/()&+:=-]/gu, "").toUpperCase().trim().split(/\s+/);
+  const head = clean(m[1]);
+  const tail = clean(m[2]);
+  const n = tail.length;
+  if (n === 0 || tail[0] === "" || n > head.length) return p.trim();
+  for (let i = 0; i < n - 1; i++) if (tail[i] !== head[i]) return p.trim();
+  const last = tail[n - 1], want = head[n - 1];
+  if (last[0] !== want[0] || want.slice(0, last.length - 1) !== last.slice(0, last.length - 1)) {
+    return p.trim();
+  }
+  return m[1].trim();
+}
+
 export function matchNorm(p: string | null | undefined): string {
-  return (p ?? "").toLowerCase()
+  return matchWithoutTail(p).toLowerCase()
     .replace(/(\d),(\d)/g, "$1.$2")
     .replace(/(\d)\s*(litres|litre|liters|liter|ltrs|ltr|lt|l)\b/g, "$1l")
     .replace(/(\d)\s*(mtrs|mtr|mt)\b/g, "$1m")

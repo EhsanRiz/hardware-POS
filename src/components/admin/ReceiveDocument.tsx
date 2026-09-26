@@ -136,7 +136,8 @@ export default function ReceiveDocument({
           ...(line.sorted === "not_stock" ? { qty: "0" } : {}),
           create: line.sorted === "new",
           sameAs: line.sorted === "same_as_line" ? line.same_as_line ?? null : null,
-          newName: line.description,
+          // Without the supplier's repeated tail (0122); still editable.
+          newName: line.clean_name ?? line.description,
           offer:
             line.sorted === "likely" && line.suggestion_id
               ? { id: line.suggestion_id, name: line.suggestion_name ?? "" }
