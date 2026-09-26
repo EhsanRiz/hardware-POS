@@ -17,9 +17,11 @@ unfinished, and what I learned the hard way so you do not learn it again.
   "duplicate" suppliers turned out to be one in each shop):
   - **IE Test Shop** `fc022aa6-13de-4797-817b-ce994b2292f0` — the trial org.
   - **5 Star Hardware** `a9ffe512-7fa8-4a42-8b2c-d01439468878` — the live shop.
-- **Per-shop switches** on `organizations`: `sort_deliveries` (0117) sorts a
-  scanned delivery's lines and refuses an invoice filed twice. Off by default;
-  turned on for one shop at a time with a one-line `update`.
+- **Delivery sorting** (`organizations.sort_deliveries`, 0117): a scanned
+  delivery's lines are matched, costed and named for the till, and the same
+  delivery is not filed or booked in twice. **On for every shop, and the
+  default for every new one** (0125). The column stays as the one place a shop
+  could be switched back with a one-line `update`.
 - **Merged items** (0121): `products.merged_into` marks an item folded into
   another from the catalogue's "Merge a duplicate into this". It is kept, off
   sale and out of the catalogue list, so its own stock history still reads;
