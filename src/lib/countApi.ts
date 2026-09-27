@@ -123,6 +123,15 @@ export async function finishCount(token: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * "I'm leaving" (0127): off the count for good, with what was sent kept. The
+ * count stops waiting for this phone, and the phone can join another.
+ */
+export async function leaveCount(token: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_count_leave", { p_token: token });
+  if (error) throw error;
+}
+
 /** "Not done after all" — until the count is posted. */
 export async function resumeCount(token: string): Promise<void> {
   const { error } = await supabase.rpc("pos_count_resume", { p_token: token });
@@ -225,6 +234,8 @@ export interface CountCounter {
   captures: number;
   /** When they said "I'm done" — null while still counting (0115). */
   finished_at: string | null;
+  /** When they left it themselves, from the phone (0127). */
+  left_at?: string | null;
 }
 
 export async function countJobCounters(pin: string, jobId: string): Promise<CountCounter[]> {

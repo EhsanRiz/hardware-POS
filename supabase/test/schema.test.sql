@@ -8421,4 +8421,50 @@ begin
 end $$;
 
 
+-- 0127: a counter can leave a count -------------------------------------------
+do $$
+declare
+  v_tok text; v_job public.count_jobs; v_a record; v_b record; v_row record; v_msg text;
+begin
+  select token into v_tok from till;
+  v_job := public.pos_count_job_open(v_tok, '7301', 'Tablets lent');
+  select * into v_a from public.pos_count_join(v_job.join_code, 'Tablet 1');
+  select * into v_b from public.pos_count_join(v_job.join_code, 'Mary');
+  perform public.pos_count_capture(v_a.token, 'l-1', null, null, '6009700001271',
+    'Lent item', 'ea', 3, 'Shelf 1', now());
+
+  perform public.pos_count_leave(v_a.token);
+
+  select * into v_row from public.pos_count_job_counters(v_tok, '7301', v_job.id) k
+   where k.name = 'Tablet 1';
+  perform assert_eq(v_row.active, false, 'a counter who leaves is off the count');
+  perform assert(v_row.left_at is not null, 'and the till can tell they left, not were taken off');
+  perform assert_eq(v_row.captures, 1, 'what they sent stays');
+  select * into v_row from public.pos_count_job_counters(v_tok, '7301', v_job.id) k
+   where k.name = 'Mary';
+  perform assert(v_row.left_at is null, 'nobody else is marked');
+
+  -- The tablet's token no longer counts here.
+  begin
+    perform public.pos_count_capture(v_a.token, 'l-2', null, null, '6009700001271',
+      null, null, 1, 'Shelf 1', now());
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert_eq(v_msg, 'You have been taken off this count', 'a left phone sends nothing more');
+
+  -- And the count does not wait for it: only Mary holds it up.
+  begin
+    v_msg := null;
+    perform public.pos_count_job_post(v_tok, '1234', v_job.id);
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform assert(v_msg like 'Still counting: Mary.%', 'posting waits for Mary alone: ' || coalesce(v_msg, ''));
+
+  perform assert_eq((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in ('pos_count_leave', 'pos_count_job_counters')), 2,
+    'each has exactly one signature');
+  perform public.pos_count_job_abandon(v_tok, '1234', v_job.id);
+end $$;
+
+
 select 'all database tests passed' as result;

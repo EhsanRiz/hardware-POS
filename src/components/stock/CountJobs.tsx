@@ -248,7 +248,7 @@ export default function CountJobs({
                       <span className="acc-sub">
                         joined {fmtDayMonthTime(k.joined_at)}
                         {k.last_seen_at ? ` · last sent ${fmtDayMonthTime(k.last_seen_at)}` : ""}
-                        {k.active ? "" : " · taken off"}
+                        {k.active ? "" : k.left_at ? " · left" : " · taken off"}
                       </span>
                     </td>
                     <td>

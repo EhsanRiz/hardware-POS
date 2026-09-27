@@ -15,6 +15,7 @@ import {
   countState,
   finishCount,
   resumeCount,
+  leaveCount,
   sendCapture,
   uploadCountPhoto,
   voidCapture,
@@ -172,6 +173,31 @@ export async function finish(): Promise<void> {
   }
   await finishCount(s.token);
   patchSession({ finished: true });
+}
+
+/**
+ * Leave the count, so this phone can join another. Refused while anything is
+ * still on the phone, as "I'm done" is: leaving would strand it. A count that
+ * has already ended, or a phone already taken off, has nothing to tell.
+ */
+export async function leave(): Promise<void> {
+  const s = getSession();
+  if (!s) return;
+  if (!s.ended) {
+    await syncCaptures();
+    const left = unsentCount();
+    if (left > 0) {
+      throw new Error(
+        `${left} still to send from this phone. Find signal, let them go, then leave.`
+      );
+    }
+    try {
+      await leaveCount(s.token);
+    } catch (e) {
+      if (!isEnded(rawErrorMessage(e, ""))) throw e;
+    }
+  }
+  leaveSession();
 }
 
 /** "Not done after all." */
