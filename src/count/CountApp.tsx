@@ -9,6 +9,7 @@ import {
   getCaptures,
   getSession,
   getState,
+  leave,
   leaveSession,
   onCountChange,
   refreshState,
@@ -224,6 +225,7 @@ function Finished({ shop, doc, counted }: { shop: string; doc: string; counted: 
       >
         Carry on counting
       </button>
+      <LeaveButton />
     </main>
   );
 }
@@ -586,6 +588,7 @@ function Counting({
       </section>
 
       <DoneButton />
+      <LeaveButton />
       <InstallButton className="count-install" />
     </main>
   );
@@ -633,6 +636,56 @@ function DoneButton() {
       ) : (
         <button type="button" className="btn-line count-add" onClick={() => setAsking(true)}>
           I'm done counting
+        </button>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Off this count for good, so the phone can join another (0127) — a shop's
+ * tablet lent to one count and wanted for the next. What was sent stays with
+ * the shop, and the count stops waiting for this phone. Refused while anything
+ * is still on the phone, like "I'm done", and asked twice.
+ */
+function LeaveButton() {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const doc = getSession()?.doc_number ?? "this count";
+  return (
+    <section className="count-done" aria-label="Leave">
+      {error && <p className="acc-note is-bad" role="alert">{error}</p>}
+      {asking ? (
+        <>
+          <p className="acc-note">
+            Leave {doc}? Everything you sent stays with the shop, and the count
+            stops waiting for you. This phone can then join another count.
+          </p>
+          <button
+            type="button"
+            className="btn-line count-go"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              leave()
+                .catch((e) => {
+                  setError(errorMessage(e, "Could not tell the shop you are leaving"));
+                  setAsking(false);
+                })
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "Leaving…" : "Yes, leave"}
+          </button>
+          <button type="button" className="btn-cancel" onClick={() => setAsking(false)}>
+            Stay
+          </button>
+        </>
+      ) : (
+        <button type="button" className="btn-cancel" onClick={() => setAsking(true)}>
+          Leave this count
         </button>
       )}
     </section>

@@ -521,3 +521,66 @@ test("what a counter sends shows on the till by itself, and a counted item can g
   expect(PRODUCTS.find((p) => p.name === "Filing Pocket")!.stock_qty).toBe(70);
   await phone.context().close();
 });
+
+/*
+ * 0127: the shop's tablets were lent to one count and wanted for the next,
+ * with no way off the first but somebody at the till.
+ */
+test("a counter leaves the count from the phone, keeping what they sent, and can join another", async ({ page, browser }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  const code = await startCount(page);
+  const phone = await openPhone(browser);
+  await join(phone, code, "Tablet 1");
+  await count(phone, "6001234000015", "30");
+  await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent");
+  // The probe below sees a count held on the tablet — so its empty list later means something.
+  expect(await phone.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("count.")
+    && localStorage.getItem(k) !== "null" && localStorage.getItem(k) !== "[]")))
+    .toEqual(expect.arrayContaining(["count.session", "count.captures"]));
+
+  // No signal, and one count still on the tablet: leaving would strand it.
+  be.offline = true;
+  await phone.context().setOffline(true);
+  await count(phone, "6001234000060", "4");
+  await phone.getByRole("button", { name: "Leave this count" }).click();
+  await phone.getByRole("button", { name: "Yes, leave" }).click();
+  await expect(phone.getByRole("region", { name: "Leave" }).getByRole("alert"))
+    .toContainText("1 still to send from this phone");
+  await expect(phone.getByLabel("Find an item")).toBeVisible();
+  expect(be.countJobs[0].counters[0].active).toBe(true);
+
+  // Signal back: it goes, and then the tablet can leave — from "You're done"
+  // as well as from the counting screen.
+  be.offline = false;
+  await phone.context().setOffline(false);
+  await expect(phone.getByRole("status", { name: "Sending" })).toHaveText("All sent", { timeout: 15_000 });
+  await done(phone);
+  await expect(phone.getByRole("heading", { name: "You're done" })).toBeVisible();
+  // Both ways on from "You're done": back to counting, or off the count.
+  await expect(phone.getByRole("button", { name: "Carry on counting" })).toBeVisible();
+  await phone.getByRole("button", { name: "Leave this count" }).click();
+  await expect(phone.getByText("Leave STK-000001? Everything you sent stays with the shop")).toBeVisible();
+  await phone.getByRole("button", { name: "Yes, leave" }).click();
+
+  // Free for the next count, with nothing of this one left on it.
+  await expect(phone.getByLabel("Count code")).toBeVisible();
+  const held = () => phone.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("count.")
+    && localStorage.getItem(k) !== "null" && localStorage.getItem(k) !== "[]"));
+  expect(await held()).toEqual([]);
+  const me = be.countJobs[0].counters[0];
+  expect(me).toMatchObject({ active: false, left_at: expect.any(String) });
+  // What it sent stays with the shop.
+  expect(be.countJobs[0].captures.map((c) => c.qty)).toEqual([30, 4]);
+
+  // The till says it left, not that it was taken off, and does not wait for it.
+  await page.getByRole("button", { name: "Refresh" }).click();
+  const row = page.getByRole("table", { name: "Counters" }).locator("tr", { hasText: "Tablet 1" });
+  await expect(row).toContainText("· left");
+  await expect(row).not.toContainText("taken off");
+  await expect(page.getByRole("button", { name: "Post the count" })).toBeEnabled();
+
+  // The same tablet joins again with the code, as a new counter.
+  await join(phone, code, "Tablet 1");
+  expect(be.countJobs[0].counters).toHaveLength(2);
+  await phone.context().close();
+});

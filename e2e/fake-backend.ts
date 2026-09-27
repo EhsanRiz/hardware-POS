@@ -329,7 +329,9 @@ export interface FakeCountJob {
   counters: { id: string; name: string; token: string; active: boolean;
               joined_at: string; last_seen_at: string | null;
               /** 0115: said "I'm done" on their own phone. */
-              finished_at: string | null }[];
+              finished_at: string | null;
+              /** 0127: left the count themselves, from the phone. */
+              left_at?: string | null }[];
   newItems: { id: string; match_key: string; barcode: string | null; name: string;
               unit_code: string; decision: "pending" | "add" | "skip" | "merge";
               merge_into: string | null; merge_product: string | null;
@@ -2117,6 +2119,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
       case "rpc/pos_count_capture":
       case "rpc/pos_count_void":
       case "rpc/pos_count_finish":
+      case "rpc/pos_count_leave":
       case "rpc/pos_count_resume": {
         const job = be.countJobs.find((j) => j.counters.some((c) => c.token === body.p_token));
         const me = job?.counters.find((c) => c.token === body.p_token);
@@ -2148,6 +2151,12 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }
         if (path === "rpc/pos_count_resume") {
           me.finished_at = null;
+          return json(null);
+        }
+        // 0127: off for good, with what was sent kept.
+        if (path === "rpc/pos_count_leave") {
+          me.active = false;
+          me.left_at = "2026-01-01T10:30:00Z";
           return json(null);
         }
 
@@ -2308,7 +2317,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
             id: k.id, name: k.name, active: k.active, joined_at: k.joined_at,
             last_seen_at: k.last_seen_at,
             captures: live(j).filter((c) => c.counter_id === k.id).length,
-            finished_at: k.finished_at,
+            finished_at: k.finished_at, left_at: k.left_at ?? null,
           })));
         }
         if (path === "rpc/pos_count_job_counted") {
