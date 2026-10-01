@@ -83,7 +83,7 @@ export async function login(userId: string, pin: string): Promise<User | null> {
 }
 
 /**
- * Sign in by staff badge (0128). The same row pos_login gives, or null for a
+ * Sign in by staff badge (0129). The same row pos_login gives, or null for a
  * badge the server does not know — never issued, reprinted since, cancelled,
  * or its holder no longer on the staff.
  */
@@ -408,7 +408,7 @@ export async function checkApprovalCode(code: string): Promise<ApprovalCodeCheck
 }
 
 /**
- * The six digits at the discount prompt, read by the server (0128): a
+ * The six digits at the discount prompt, read by the server (0129): a
  * manager's PIN, a manager's code, or neither (null). One call, so a wrong
  * entry counts once against the till's limit.
  */
@@ -422,7 +422,7 @@ export async function checkDiscountApprover(entered: string): Promise<ApproverCh
     p_entered: entered,
   });
   if (error && isMissingRpcError(error)) {
-    // A server without 0128: ask about a code alone, as the till did before.
+    // A server without 0129: ask about a code alone, as the till did before.
     // Then the deploy order does not matter, and nothing that worked stops
     // working; only a PIN this till has never cached waits for the migration.
     const check = await checkApprovalCode(entered);

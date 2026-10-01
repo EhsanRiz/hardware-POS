@@ -79,7 +79,7 @@ export default function StaffAdmin({
   // somebody who cannot sign in ANYWHERE yet; this one is about giving
   // somebody who already signs in at the counter their own device as well.
   const [enrolling, setEnrolling] = useState<StaffUser | null>(null);
-  // Whose staff badge is being printed or cancelled (0128), and who holds one.
+  // Whose staff badge is being printed or cancelled (0129), and who holds one.
   const [badging, setBadging] = useState<StaffUser | null>(null);
   const [badges, setBadges] = useState<Record<string, string>>({});
 
@@ -655,7 +655,7 @@ function EnrolPhone({
 }
 
 /**
- * A staff badge (0128): print one, reprint one, or cancel one.
+ * A staff badge (0129): print one, reprint one, or cancel one.
  *
  * Printed on the shop's slip printer, which already draws Code 128. The code
  * exists only on that paper — the server keeps its hash — so a lost card is a

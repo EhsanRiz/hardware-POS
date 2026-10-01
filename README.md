@@ -160,7 +160,7 @@ hashes and totals never travel over the public anon key.
   never stores a PIN it could replay one with.
 - A **PIN** authenticates a person, and is required for approving a discount,
   voiding a sale, and pairing or revoking a till.
-- A **staff badge** (0128) can stand in for the PIN at sign-in and at the
+- A **staff badge** (0129) can stand in for the PIN at sign-in and at the
   locked till, and nowhere else. It is a Code 128 barcode printed on the slip
   printer from Manage → Staff, holding a random code the server keeps only the
   SHA-256 of. Reprinting cancels the old card. Because a card can be lent or

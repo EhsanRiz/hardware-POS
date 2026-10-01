@@ -12600,7 +12600,7 @@ test("no line is not a fault, and stays quiet", async ({ page }) => {
 });
 
 
-// --- 0128: staff badges -------------------------------------------------------
+// --- 0129: staff badges -------------------------------------------------------
 //
 // A badge stands in for typing a PIN at sign-in and at the locked till, and
 // nowhere else. 5 Star asked for it, and its line goes down for hours, so
@@ -12865,7 +12865,7 @@ test("somebody taken off the staff loses their offline PIN when the till next he
   await expect.poll(creds).not.toContain(USERS.employee.row.id);
 });
 
-test("a till deployed ahead of migration 0128 still takes a manager's code", async ({ page }) => {
+test("a till deployed ahead of migration 0129 still takes a manager's code", async ({ page }) => {
   // The discount prompt asks pos_discount_approver now. A server that does
   // not have it yet must not take approval codes away from the counter: the
   // till falls back to asking about the code alone, as it did before.

@@ -37,7 +37,7 @@ import type { LoginCandidate } from "../lib/types";
  * It is also the handover: a manager finishes, taps Sign out, and the next
  * operator picks their own name rather than inheriting the screen.
  *
- * Or scan a staff badge (0128), from either step: the badge says who, so the
+ * Or scan a staff badge (0129), from either step: the badge says who, so the
  * name is not needed, and nothing is typed. A badge signs in only — the back
  * office and a manager's approval still take the PIN — so a badge sign-in
  * leaves no session PIN behind for those doors to reuse.

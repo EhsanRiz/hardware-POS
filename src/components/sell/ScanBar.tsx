@@ -106,7 +106,7 @@ export default function ScanBar({
     e.preventDefault();
     const q = term.trim();
     if (!q) return;
-    // A staff badge (0128) is nobody's product, and must never reach the
+    // A staff badge (0129) is nobody's product, and must never reach the
     // catalogue search — where a near match could even add a line.
     if (looksLikeBadge(q)) {
       onBadge();

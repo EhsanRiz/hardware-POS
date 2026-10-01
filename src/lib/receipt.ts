@@ -982,7 +982,7 @@ export function buildCreditNoteText(cn: {
 }
 
 /**
- * A staff badge (0128), on the shop's own slip printer.
+ * A staff badge (0129), on the shop's own slip printer.
  *
  * The printer already draws Code 128 for document numbers, so a badge needs
  * no card printer: print it, cut it out, laminate it or stick it to a card.

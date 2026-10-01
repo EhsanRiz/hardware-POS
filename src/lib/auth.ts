@@ -11,7 +11,7 @@
 // can't read PINs at a glance, but this is a shop tablet trade-off, not a
 // high-security vault.
 //
-// Two limits on the offline path, both added with staff badges (0128) because
+// Two limits on the offline path, both added with staff badges (0129) because
 // 5 Star and the shops like it spend whole days with the line down:
 //
 //   * SEVEN DAYS. A till that has not reached the server for a week stops
@@ -139,7 +139,7 @@ async function derive(pin: string, saltHex: string, iter: number): Promise<strin
 
 /**
  * Keep a PIN the server has just vouched for, as a sign-in would. Used by the
- * discount prompt (0128), where a manager's PIN can be proved online on a
+ * discount prompt (0129), where a manager's PIN can be proved online on a
  * till they have never signed in on with it — by badge, say.
  */
 export async function rememberPin(pin: string, user: User): Promise<void> {
@@ -278,7 +278,7 @@ export async function signIn(userId: string, pin: string): Promise<User | null> 
   return verifyPinOffline(userId, pin);
 }
 
-// --- Staff badges (0128) -----------------------------------------------------
+// --- Staff badges (0129) -----------------------------------------------------
 
 const BADGES_KEY = "auth.badges";
 

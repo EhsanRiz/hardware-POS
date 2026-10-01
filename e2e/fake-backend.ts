@@ -452,7 +452,7 @@ export class Backend {
   closedSessions: Record<string, unknown>[] = [];
   /** Wrong PINs per person, so the lockout can be asserted on. */
   failedLogins: Record<string, number> = {};
-  /** Every badge the till asked the server about (0128), as sent. */
+  /** Every badge the till asked the server about (0129), as sent. */
   badgeLogins: string[] = [];
   /**
    * RPCs this server does not have yet — a till deployed ahead of its
@@ -492,7 +492,7 @@ export class Backend {
     { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null, active: true },
   ];
   /**
-   * 0128: staff badges. The code is kept here, which the server never does,
+   * 0129: staff badges. The code is kept here, which the server never does,
    * so a test can scan what the shop printed without reading it off paper;
    * what reaches the till is only ever the hash, as on the server.
    */
@@ -4736,7 +4736,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         ]);
       }
 
-      // 0128: the discount prompt's six digits, read both ways by the server.
+      // 0129: the discount prompt's six digits, read both ways by the server.
       // A manager's PIN first — whoever holds approve_discount, as
       // user_with_perm decides it — then a live code. Neither: no row.
       case "rpc/pos_discount_approver": {
@@ -4986,7 +4986,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         }]);
       }
 
-      // --- 0128: staff badges ------------------------------------------
+      // --- 0129: staff badges ------------------------------------------
       case "rpc/pos_staff_badge_issue": {
         if (!tokenOk) return fail("Register not paired or revoked");
         // manage_staff, which only the manager holds in this fixture.

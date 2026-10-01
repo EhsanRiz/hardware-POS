@@ -1712,7 +1712,7 @@ export async function staffEnrolmentCode(
   return rows[0];
 }
 
-// --- Staff badges (0128) -----------------------------------------------------
+// --- Staff badges (0129) -----------------------------------------------------
 
 /** Print somebody a badge. Cancels the one they held; the code is shown once. */
 export async function issueStaffBadge(

@@ -1492,7 +1492,7 @@ export default function POS() {
         onUnlock={(pin) => {
           // A PIN was proved a moment ago, by the same call the sign-in makes
           // — so the doors it stands for open again with it. A badge opens
-          // none of them (0128): it is something you hold, and the back
+          // none of them (0129): it is something you hold, and the back
           // office asks for something you know.
           setSessionPin(pin);
           if (pin) pinProved(user, pin, "till");
@@ -2374,7 +2374,7 @@ export default function POS() {
             }
 
             if (online) {
-              // The server reads it both ways (0128). A manager's PIN this
+              // The server reads it both ways (0129). A manager's PIN this
               // till has never cached — they signed in by badge, or never
               // here at all — is proved there and kept, so the sale that
               // follows finds its approver on the device as it always has.

@@ -8467,7 +8467,7 @@ begin
 end $$;
 
 
--- 0128: a badge instead of a PIN, at the till --------------------------------
+-- 0129: a badge instead of a PIN, at the till --------------------------------
 do $$
 declare
   v_tok text; v_mgr uuid; v_emp uuid; v_code text; v_old text; v_name text;
@@ -8585,7 +8585,7 @@ begin
     'each has exactly one signature');
 end $$;
 
--- 0128: a manager's PIN at the discount prompt, on a till that never saw it --
+-- 0129: a manager's PIN at the discount prompt, on a till that never saw it --
 do $$
 declare v_tok text; v_mgr uuid; v_row record; v_code text; v_reg uuid; v_before int;
 begin

@@ -1,4 +1,4 @@
--- 0128 — a badge instead of a PIN, at the till.
+-- 0129 — a badge instead of a PIN, at the till.
 --
 -- 5 Star asked for it: staff scan a card to sign in and to come back to a
 -- locked till, instead of typing six digits each time.

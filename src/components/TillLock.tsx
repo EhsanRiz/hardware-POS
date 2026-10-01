@@ -31,7 +31,7 @@ import type { User } from "../lib/types";
  * outage could not get back to their own sale, though signing in from scratch
  * would have worked. The same week-long limit and wrong-PIN wait apply.
  *
- * Or the same person's staff badge (0128). A badge opens this lock and sign-in,
+ * Or the same person's staff badge (0129). A badge opens this lock and sign-in,
  * nothing else, so unlocking with one leaves no PIN behind for the back office
  * to reuse. Somebody else's badge does not hand the till over: that is what
  * the button below is for, and it parks the sale first.
