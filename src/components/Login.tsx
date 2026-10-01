@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { canSignInOffline, loginRoster, signIn } from "../lib/auth";
+import {
+  canSignInOffline, knowsBadges, loginRoster, refreshBadges, signIn, signInWithBadge,
+} from "../lib/auth";
+import { useBadgeScan } from "../lib/badgeScan";
 import { ENROL_URL } from "../lib/config";
 import { useAuth } from "../context/AuthContext";
 import { useShopSettings } from "../lib/settings";
@@ -34,6 +37,11 @@ import type { LoginCandidate } from "../lib/types";
  * It is also the handover: a manager finishes, taps Sign out, and the next
  * operator picks their own name rather than inheriting the screen.
  *
+ * Or scan a staff badge (0129), from either step: the badge says who, so the
+ * name is not needed, and nothing is typed. A badge signs in only — the back
+ * office and a manager's approval still take the PIN — so a badge sign-in
+ * leaves no session PIN behind for those doors to reuse.
+ *
  * Two ways out, because a screen that can only be satisfied by remembering
  * something is a trap: a forgotten PIN goes to the enrolment page and is reset
  * by SMS, and a tablet pointed at the wrong shop can be unpaired from here.
@@ -61,9 +69,33 @@ export default function Login() {
   const [who, setWho] = useState<LoginCandidate | null>(null);
   const shop = useShopSettings();
 
+  // Whether to say "or scan your badge". Held as state, because the badges
+  // arrive on their own and the roster may have drawn the screen already.
+  const [hasBadges, setHasBadges] = useState(knowsBadges);
+
   useEffect(() => {
     void loginRoster().then(setRoster, () => setRoster([]));
+    void refreshBadges().then(() => setHasBadges(knowsBadges()));
   }, []);
+
+  useBadgeScan((code) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    signInWithBadge(code)
+      .then((user) => {
+        if (!user) {
+          setError(
+            "That badge was not recognised. It may have been cancelled or replaced — a manager can print a new one."
+          );
+          return;
+        }
+        setUser(user);
+        setSessionPin(null);
+      })
+      .catch((e) => setError(errorMessage(e, "Sign-in failed")))
+      .finally(() => setBusy(false));
+  });
 
   // Somebody who has never signed in on this till has no cached credential, so
   // offline there is nothing to check their PIN against. Saying so beats a
@@ -154,7 +186,10 @@ export default function Login() {
         </header>
         {!who ? (
           <>
-            <p className="login-prompt">Who is on the till?</p>
+            <p className="login-prompt">
+              Who is on the till?
+              {hasBadges && " Tap your name, or scan your badge."}
+            </p>
             {roster === null ? (
               <p className="login-prompt">Loading…</p>
             ) : roster.length === 0 ? (

@@ -160,6 +160,11 @@ hashes and totals never travel over the public anon key.
   never stores a PIN it could replay one with.
 - A **PIN** authenticates a person, and is required for approving a discount,
   voiding a sale, and pairing or revoking a till.
+- A **staff badge** (0129) can stand in for the PIN at sign-in and at the
+  locked till, and nowhere else. It is a Code 128 barcode printed on the slip
+  printer from Manage → Staff, holding a random code the server keeps only the
+  SHA-256 of. Reprinting cancels the old card. Because a card can be lent or
+  photographed, approvals, voids and Manage still ask for the PIN.
 
 The cafe build had no equivalent: it accepted a client-supplied `cashier_id`
 with no credential, so the anon key alone was enough to post a sale as anyone.
@@ -316,7 +321,13 @@ probe stalled while the sale beside it went through.
 
 What still works with no line, from what the device kept:
 
-- **Signing in**, against the PIN hashes cached at the last online sign-in.
+- **Signing in and unlocking the idle-locked till**, against the PIN hashes
+  cached at the last online sign-in, or by staff badge against the shop's badge
+  hashes the till fetches whenever it can (`src/lib/auth.ts`). Two limits: a
+  till that has not reached the server for **seven days** signs nobody in
+  offline, because its copy cannot hear that somebody left or lost a card; and
+  from the fifth wrong PIN in a row the next try waits 30 seconds, doubling to
+  15 minutes.
 - **Selling**: the catalogue and the customer list are cached; a sale is
   queued (`src/lib/queue.ts`) and replayed exactly once by `src/lib/sync.ts`
   under its `client_ref`, with the time it was taken; the slip prints, **with

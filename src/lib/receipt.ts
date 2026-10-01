@@ -980,3 +980,33 @@ export function buildCreditNoteText(cn: {
   out.push("");
   return out.join("\n");
 }
+
+/**
+ * A staff badge (0129), on the shop's own slip printer.
+ *
+ * The printer already draws Code 128 for document numbers, so a badge needs
+ * no card printer: print it, cut it out, laminate it or stick it to a card.
+ * The code under the bars is deliberately NOT printed as text — a number read
+ * off a card and typed in is how a badge gets copied without the card.
+ */
+export function staffBadgeSlip(shopName: string, staffName: string, code: string): string {
+  const out: string[] = [];
+  out.push(bold(center(plain(shopName).toUpperCase())));
+  out.push(center("Staff badge"));
+  out.push(divider());
+  out.push(bold(center(plain(staffName))));
+  out.push("");
+  out.push(barcode(code));
+  out.push("");
+  for (const l of wrapTerms(
+    "Scan to sign in at the till, or to unlock it. A manager's approval and Manage still need your PIN.",
+    slipWidth() - 4
+  )) out.push(center(l));
+  out.push("");
+  for (const l of wrapTerms(
+    "Lost it? Tell a manager. Printing a new one stops this one working.",
+    slipWidth() - 4
+  )) out.push(center(l));
+  out.push(center(`Printed ${fmtDate(new Date().toISOString())}`));
+  return out.join("\n");
+}

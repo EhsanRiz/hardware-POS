@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { searchProducts } from "../../lib/api";
+import { looksLikeBadge } from "../../lib/auth";
 import { money, quantity } from "../../lib/money";
 import { isNetworkError, useOnline } from "../../lib/offline";
 import { imageSrc } from "../../lib/images";
@@ -35,6 +36,7 @@ export default function ScanBar({
   onInspect,
   onPickCustomer,
   onDocument,
+  onBadge,
   inputRef,
 }: {
   term: string;
@@ -49,6 +51,8 @@ export default function ScanBar({
   onPickCustomer: () => void;
   /** A slip's own barcode — INV-, QUO- or CRN- and a number — opens the document. */
   onDocument: (docNumber: string) => void;
+  /** A staff badge scanned at the counter, where it means nothing. */
+  onBadge: () => void;
   inputRef: React.RefObject<HTMLInputElement>;
 }) {
   const [remote, setRemote] = useState<Product[] | null>(null);
@@ -67,7 +71,8 @@ export default function ScanBar({
   // must never overwrite a newer one.
   useEffect(() => {
     const q = term.trim();
-    if (!online || q.length < 2) {
+    // A badge's code is a credential; it is not sent off as a search term.
+    if (!online || q.length < 2 || looksLikeBadge(q)) {
       setRemote(null);
       return;
     }
@@ -101,6 +106,14 @@ export default function ScanBar({
     e.preventDefault();
     const q = term.trim();
     if (!q) return;
+    // A staff badge (0129) is nobody's product, and must never reach the
+    // catalogue search — where a near match could even add a line.
+    if (looksLikeBadge(q)) {
+      onBadge();
+      onTermChange("");
+      inputRef.current?.focus();
+      return;
+    }
     // A slip brought back to the counter: its barcode is its number, and
     // scanning it opens the document rather than searching the shelf for it.
     const doc = q.match(/^(INV|QUO|CRN)-?(\d{1,9})$/i);

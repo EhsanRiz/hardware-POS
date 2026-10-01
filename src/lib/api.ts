@@ -11,7 +11,7 @@
 //     voiding a sale, pairing a till.
 import { registerToken } from "./device";
 import { cacheGet, cacheSet } from "./localCache";
-import { isNetworkError } from "./offline";
+import { isMissingRpcError, isNetworkError } from "./offline";
 import { API_BASE, ownOrigin, supabase } from "./supabase";
 import type { SaleRow } from "./sales";
 import type {
@@ -80,6 +80,35 @@ export async function login(userId: string, pin: string): Promise<User | null> {
   if (error) throw error;
   const rows = data as User[];
   return rows?.[0] ?? null;
+}
+
+/**
+ * Sign in by staff badge (0129). The same row pos_login gives, or null for a
+ * badge the server does not know — never issued, reprinted since, cancelled,
+ * or its holder no longer on the staff.
+ */
+export async function badgeLogin(code: string): Promise<User | null> {
+  const { data, error } = await supabase.rpc("pos_badge_login", {
+    p_register_token: requireToken(),
+    p_code: code,
+  });
+  if (error) throw error;
+  const rows = data as User[];
+  return rows?.[0] ?? null;
+}
+
+/** One live badge, as a till keeps it to check a scan with the line down. */
+export interface TillBadge extends User {
+  code_hash: string;
+}
+
+/** Every live badge in this shop (on a phone, its owner's alone). */
+export async function staffBadgesForTill(): Promise<TillBadge[]> {
+  const { data, error } = await supabase.rpc("pos_staff_badges_for_till", {
+    p_register_token: requireToken(),
+  });
+  if (error) throw error;
+  return (data as TillBadge[]) ?? [];
 }
 
 // --- Pairing ----------------------------------------------------------------
@@ -376,6 +405,39 @@ export async function checkApprovalCode(code: string): Promise<ApprovalCodeCheck
   });
   if (error) throw error;
   return (data as ApprovalCodeCheck[])?.[0] ?? { ok: false, issued_by_name: null, max_amount: null, expires_at: null };
+}
+
+/**
+ * The six digits at the discount prompt, read by the server (0129): a
+ * manager's PIN, a manager's code, or neither (null). One call, so a wrong
+ * entry counts once against the till's limit.
+ */
+export type ApproverCheck =
+  | { kind: "pin"; user: User }
+  | { kind: "code"; issued_by_name: string; max_amount: number | null };
+
+export async function checkDiscountApprover(entered: string): Promise<ApproverCheck | null> {
+  const { data, error } = await supabase.rpc("pos_discount_approver", {
+    p_register_token: requireToken(),
+    p_entered: entered,
+  });
+  if (error && isMissingRpcError(error)) {
+    // A server without 0129: ask about a code alone, as the till did before.
+    // Then the deploy order does not matter, and nothing that worked stops
+    // working; only a PIN this till has never cached waits for the migration.
+    const check = await checkApprovalCode(entered);
+    return check.ok
+      ? { kind: "code", issued_by_name: check.issued_by_name ?? "", max_amount: check.max_amount }
+      : null;
+  }
+  if (error) throw error;
+  const row = (data as (User & { kind: string; max_amount: number | null })[])?.[0];
+  if (!row) return null;
+  if (row.kind === "pin") {
+    const { kind: _k, max_amount: _m, ...user } = row;
+    return { kind: "pin", user };
+  }
+  return { kind: "code", issued_by_name: row.name, max_amount: row.max_amount };
 }
 
 export interface ApprovalCodeRow {
