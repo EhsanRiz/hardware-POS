@@ -1712,6 +1712,40 @@ export async function staffEnrolmentCode(
   return rows[0];
 }
 
+// --- Staff badges (0128) -----------------------------------------------------
+
+/** Print somebody a badge. Cancels the one they held; the code is shown once. */
+export async function issueStaffBadge(
+  pin: string, appUserId: string
+): Promise<{ code: string; staff_name: string }> {
+  const { data, error } = await supabase.rpc("pos_staff_badge_issue", {
+    p_register_token: requireToken(), p_pin: pin, p_app_user_id: appUserId,
+  });
+  if (error) throw error;
+  const rows = data as { code: string; staff_name: string }[];
+  if (!rows?.[0]) throw new Error("That badge could not be made");
+  return rows[0];
+}
+
+/** Cancel somebody's badge without printing another. */
+export async function revokeStaffBadge(pin: string, appUserId: string): Promise<void> {
+  const { error } = await supabase.rpc("pos_staff_badge_revoke", {
+    p_register_token: requireToken(), p_pin: pin, p_app_user_id: appUserId,
+  });
+  if (error) throw error;
+}
+
+/** Who holds a live badge, and since when. */
+export async function staffBadges(
+  pin: string
+): Promise<{ app_user_id: string; issued_at: string }[]> {
+  const { data, error } = await supabase.rpc("pos_staff_badges", {
+    p_register_token: requireToken(), p_pin: pin,
+  });
+  if (error) throw error;
+  return (data as { app_user_id: string; issued_at: string }[]) ?? [];
+}
+
 // --- TillAI's log ------------------------------------------------------------
 
 export interface TillAIQuestion {

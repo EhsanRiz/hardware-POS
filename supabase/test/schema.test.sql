@@ -8467,4 +8467,164 @@ begin
 end $$;
 
 
+-- 0128: a badge instead of a PIN, at the till --------------------------------
+do $$
+declare
+  v_tok text; v_mgr uuid; v_emp uuid; v_code text; v_old text; v_name text;
+  v_row record; v_n int; v_ecode text; v_phone text; v_pin_hash text;
+begin
+  select token into v_tok from till;
+  select manager_id, employee_id into v_mgr, v_emp from fixture;
+
+  select code, staff_name into v_code, v_name
+    from public.pos_staff_badge_issue(v_tok, '1234', v_emp);
+  perform assert(v_code ~ '^STAFF-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{14}$',
+    'a badge is STAFF- and fourteen unambiguous characters: ' || v_code);
+  perform assert_eq(v_name, (select name from public.app_users where id = v_emp),
+    'issued to the person asked for');
+
+  -- Only the hash is kept. The code is shown once, when it is printed.
+  perform assert_eq((select count(*)::int from public.staff_badges
+     where app_user_id = v_emp and code_hash = encode(digest(v_code, 'sha256'), 'hex')
+       and revoked_at is null), 1, 'the server holds the badge''s SHA-256');
+  perform assert_eq((select count(*)::int from public.staff_badges
+     where code_hash like '%' || substr(v_code, 7) || '%'), 0,
+    'and never the code itself');
+
+  -- The scan signs that person in, with the same row a PIN sign-in returns.
+  select * into v_row from public.pos_badge_login(v_tok, v_code);
+  perform assert_eq(v_row.id, v_emp, 'the badge signs its holder in');
+  perform assert('take_payments' = any(v_row.permissions),
+    'with their permissions, as pos_login gives them');
+  select * into v_row from public.pos_badge_login(v_tok, '  ' || lower(v_code) || ' ');
+  perform assert_eq(v_row.id, v_emp,
+    'a scanner with caps lock on, or a stray space, still reads the same badge');
+  perform assert_eq((select count(*)::int from public.pos_badge_login(v_tok, 'STAFF-AAAAAAAAAAAAAA')), 0,
+    'a code nobody issued signs nobody in');
+
+  -- A badge is not a PIN. Whatever takes a PIN still refuses it.
+  perform assert_eq((select count(*)::int from public.pos_login(v_tok, v_emp, v_code)), 0,
+    'a badge typed where a PIN is wanted is a wrong PIN');
+  delete from public.login_attempts where user_id = v_emp;
+
+  -- The till's offline copy: the hash and who it signs in, nothing more.
+  select * into v_row from public.pos_staff_badges_for_till(v_tok) b where b.id = v_emp;
+  perform assert_eq(v_row.code_hash, encode(digest(v_code, 'sha256'), 'hex'),
+    'the till is given the badge''s hash, to check a scan with the line down');
+  perform assert('take_payments' = any(v_row.permissions), 'and what its holder may do');
+  perform assert_eq((select count(*)::int from information_schema.routines r
+     join information_schema.parameters p on p.specific_name = r.specific_name
+    where r.routine_name = 'pos_staff_badges_for_till' and p.parameter_mode = 'OUT'
+      and p.parameter_name in ('phone', 'email', 'pin_hash')), 0,
+    'and no phone, email or PIN hash — this list is handed over before anyone signs in');
+  perform assert_eq((select count(*)::int from public.pos_staff_badges(v_tok, '1234')
+     where app_user_id = v_emp), 1, 'the staff list sees that they hold one');
+
+  -- A reprint cancels the old card.
+  v_old := v_code;
+  select code into v_code from public.pos_staff_badge_issue(v_tok, '1234', v_emp);
+  perform assert_eq((select count(*)::int from public.pos_badge_login(v_tok, v_old)), 0,
+    'the old card stops working the moment a new one is printed');
+  perform assert_eq((select id from public.pos_badge_login(v_tok, v_code)), v_emp,
+    'and the new one works');
+  perform assert_eq((select count(*)::int from public.pos_staff_badges_for_till(v_tok) b
+     where b.id = v_emp), 1, 'the till is told about one card per person');
+
+  -- Only somebody who manages staff prints or cancels one.
+  perform assert_refuses(
+    format('select * from public.pos_staff_badge_issue(%L, %L, %L)', v_tok, '0000', v_mgr),
+    'a wrong PIN prints no badge');
+  perform assert_refuses(
+    format('select public.pos_staff_badge_revoke(%L, %L, %L)', v_tok, '0000', v_emp),
+    'and cancels none');
+
+  -- Somebody with no PIN yet has not finished joining.
+  select pin_hash into v_pin_hash from public.app_users where id = v_emp;
+  update public.app_users set pin_hash = null where id = v_emp;
+  perform assert_refuses(
+    format('select * from public.pos_staff_badge_issue(%L, %L, %L)', v_tok, '1234', v_emp),
+    'nobody without a PIN gets a badge');
+  update public.app_users set pin_hash = v_pin_hash where id = v_emp;
+
+  -- Made inactive: the card is dead, on the server and in what tills are sent.
+  update public.app_users set active = false where id = v_emp;
+  perform assert_eq((select count(*)::int from public.pos_badge_login(v_tok, v_code)), 0,
+    'an inactive person''s badge signs nobody in');
+  perform assert_eq((select count(*)::int from public.pos_staff_badges_for_till(v_tok) b
+     where b.id = v_emp), 0, 'and tills stop being sent it');
+  update public.app_users set active = true where id = v_emp;
+
+  -- Cancelled without a reprint.
+  perform public.pos_staff_badge_revoke(v_tok, '1234', v_emp);
+  perform assert_eq((select count(*)::int from public.pos_badge_login(v_tok, v_code)), 0,
+    'a cancelled badge signs nobody in');
+  perform assert_eq((select count(*)::int from public.pos_staff_badges_for_till(v_tok) b
+     where b.id = v_emp), 0, 'and tills stop being sent it');
+  perform assert_eq((select count(*)::int from public.pos_staff_badges(v_tok, '1234')
+     where app_user_id = v_emp), 0, 'and the staff list says they hold none');
+
+  -- A phone belongs to one person: somebody else's badge does not open it.
+  select code into v_ecode from public.pos_staff_badge_issue(v_tok, '1234', v_emp);
+  select code into v_code from public.pos_staff_badge_issue(v_tok, '1234', v_mgr);
+  select token into v_phone from public.pos_enrol_device(
+    (select code from public.pos_staff_enrolment_code(v_tok, '1234', v_emp)), 'Badge phone');
+  perform assert_refuses(
+    format('select * from public.pos_badge_login(%L, %L)', v_phone, v_code),
+    'the manager''s badge does not open somebody else''s phone');
+  perform assert_eq((select id from public.pos_badge_login(v_phone, v_ecode)), v_emp,
+    'while its owner''s does');
+  select count(*)::int into v_n from public.pos_staff_badges_for_till(v_phone);
+  perform assert_eq(v_n, 1, 'and the phone is sent its owner''s card alone');
+  perform public.pos_staff_badge_revoke(v_tok, '1234', v_emp);
+  perform public.pos_staff_badge_revoke(v_tok, '1234', v_mgr);
+
+  perform assert_eq((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in
+      ('pos_staff_badge_issue', 'pos_staff_badge_revoke', 'pos_staff_badges',
+       'pos_badge_login', 'pos_staff_badges_for_till')), 5,
+    'each has exactly one signature');
+end $$;
+
+-- 0128: a manager's PIN at the discount prompt, on a till that never saw it --
+do $$
+declare v_tok text; v_mgr uuid; v_row record; v_code text; v_reg uuid; v_before int;
+begin
+  select token into v_tok from till;
+  select manager_id into v_mgr from fixture;
+  select r.id into v_reg from public.registers r
+   where r.token_hash = encode(digest(v_tok, 'sha256'), 'hex');
+  delete from public.approval_attempts a where a.register_id = v_reg;
+
+  select * into v_row from public.pos_discount_approver(v_tok, '1234');
+  perform assert_eq(v_row.kind, 'pin', 'a manager''s PIN reads as a PIN');
+  perform assert_eq(v_row.id, v_mgr, 'and names that manager');
+  perform assert('approve_discount' = any(v_row.permissions), 'with their permissions');
+
+  perform assert_eq((select count(*)::int from public.pos_discount_approver(v_tok, '2222')), 0,
+    'a cashier''s own PIN approves nothing');
+  perform assert_eq((select count(*)::int from public.approval_attempts a where a.register_id = v_reg), 1,
+    'and counts once against the till, as a wrong code always did');
+
+  select code into v_code from public.pos_issue_approval_code(v_tok, '1234', 10, 50);
+  select * into v_row from public.pos_discount_approver(v_tok, v_code);
+  perform assert_eq(v_row.kind, 'code', 'a manager''s code reads as a code');
+  perform assert_eq(v_row.max_amount, 50::numeric, 'with what it releases');
+  perform assert(v_row.id is null, 'and names nobody — it is not somebody''s PIN');
+  perform assert_eq((select used_at from public.approval_codes c
+     where c.code_hash = crypt(v_code, c.code_hash)), null::timestamptz,
+    'checking a code does not spend it; the sale does');
+
+  for i in 1..10 loop
+    perform * from public.pos_discount_approver(v_tok, '000000');
+  end loop;
+  perform assert_refuses(
+    format('select * from public.pos_discount_approver(%L, %L)', v_tok, '1234'),
+    'ten wrong entries shut the prompt for a while, PINs and codes alike');
+  delete from public.approval_attempts a where a.register_id = v_reg;
+
+  perform assert_eq((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'pos_discount_approver'), 1,
+    'one signature');
+end $$;
+
 select 'all database tests passed' as result;

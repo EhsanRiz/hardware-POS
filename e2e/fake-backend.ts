@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Page, Route } from "@playwright/test";
 
 /**
@@ -451,6 +452,8 @@ export class Backend {
   closedSessions: Record<string, unknown>[] = [];
   /** Wrong PINs per person, so the lockout can be asserted on. */
   failedLogins: Record<string, number> = {};
+  /** Every badge the till asked the server about (0128), as sent. */
+  badgeLogins: string[] = [];
   /**
    * 0074: the devices on this shop. The paired till is here from the start; a
    * phone joins it when somebody redeems an enrolment code.
@@ -476,6 +479,22 @@ export class Backend {
     // A second till in the same shop, for what is shared between tills.
     { id: "reg2", token: SECOND_TILL_TOKEN, name: "Yard till", kind: "till", assigned_to: null, active: true },
   ];
+  /**
+   * 0128: staff badges. The code is kept here, which the server never does,
+   * so a test can scan what the shop printed without reading it off paper;
+   * what reaches the till is only ever the hash, as on the server.
+   */
+  badges: { code: string; app_user_id: string; issued_at: string; revoked: boolean }[] = [];
+
+  /** Seed a badge without going through Manage -> Staff. Cancels the old one. */
+  issueBadge(appUserId: string, code: string): string {
+    for (const b of this.badges) if (b.app_user_id === appUserId) b.revoked = true;
+    this.badges.push({
+      code, app_user_id: appUserId, issued_at: new Date().toISOString(), revoked: false,
+    });
+    return code;
+  }
+
   /** Live enrolment codes, as device_enrolments holds them minus the hashing. */
   enrolments: {
     code: string; app_user_id: string; expires_at: number; used_at: string | null;
@@ -4699,6 +4718,32 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         ]);
       }
 
+      // 0128: the discount prompt's six digits, read both ways by the server.
+      // A manager's PIN first — whoever holds approve_discount, as
+      // user_with_perm decides it — then a live code. Neither: no row.
+      case "rpc/pos_discount_approver": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        const holder = pinHolder(body.p_entered);
+        if (holder && holder.row.permissions.includes("approve_discount")) {
+          const staffRow = be.staff.find((x) => x.id === holder.row.id);
+          return json([{
+            kind: "pin", ...holder.row,
+            discount_limit_percent: staffRow?.discount_limit_percent ?? null,
+            discount_limit_amount: staffRow?.discount_limit_amount ?? null,
+            max_amount: null,
+          }]);
+        }
+        const hit = be.approvalCodes.find(
+          (c) => c.code === body.p_entered && !c.used_at && Date.parse(c.expires_at) > Date.now()
+        );
+        if (!hit) return json([]);
+        return json([{
+          kind: "code", id: null, name: hit.issued_by_name, role: null, phone: null,
+          email: null, permissions: null, discount_limit_percent: null,
+          discount_limit_amount: null, max_amount: hit.max_amount,
+        }]);
+      }
+
       case "rpc/pos_approval_codes": {
         if (!tokenOk) return fail("Register not paired or revoked");
         if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
@@ -4921,6 +4966,81 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         return json([{
           register_id: id, token, user_id: owner.id, user_name: owner.name,
         }]);
+      }
+
+      // --- 0128: staff badges ------------------------------------------
+      case "rpc/pos_staff_badge_issue": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // manage_staff, which only the manager holds in this fixture.
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        const target = be.staff.find((u) => u.id === body.p_app_user_id);
+        if (!target || !target.active || target.status !== "active") {
+          return fail("Unknown or inactive staff member");
+        }
+        const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        let code = "STAFF-";
+        for (let i = 0; i < 14; i++) {
+          code += alphabet[Math.floor(Math.random() * alphabet.length)];
+        }
+        be.issueBadge(target.id, code);
+        return json([{ code, staff_name: target.name }]);
+      }
+
+      case "rpc/pos_staff_badge_revoke": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // manage_staff, which only the manager holds in this fixture.
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        for (const b of be.badges) {
+          if (b.app_user_id === body.p_app_user_id) b.revoked = true;
+        }
+        return json(null);
+      }
+
+      case "rpc/pos_staff_badges": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // manage_staff, which only the manager holds in this fixture.
+        if (body.p_pin !== USERS.manager.pin) return fail("Invalid PIN");
+        return json(be.badges.filter((b) => !b.revoked)
+          .map((b) => ({ app_user_id: b.app_user_id, issued_at: b.issued_at })));
+      }
+
+      case "rpc/pos_badge_login":
+      case "rpc/pos_staff_badges_for_till": {
+        if (!tokenOk) return fail("Register not paired or revoked");
+        // Who a live badge signs in: the same refusals as the server — an
+        // inactive person, somebody not yet set up — and the same row
+        // pos_login returns, limits included.
+        const holderOf = (b: { app_user_id: string }) => {
+          const staffRow = be.staff.find((x) => x.id === b.app_user_id);
+          const person = Object.values(USERS).find((u) => u.row.id === b.app_user_id);
+          if (!staffRow || !person || !staffRow.active || staffRow.status !== "active") return null;
+          return {
+            ...person.row,
+            discount_limit_percent: staffRow.discount_limit_percent ?? null,
+            discount_limit_amount: staffRow.discount_limit_amount ?? null,
+          };
+        };
+        const live = be.badges.filter((b) => !b.revoked && holderOf(b));
+        if (path === "rpc/pos_staff_badges_for_till") {
+          return json(live
+            .filter((b) => reg!.kind !== "personal" || b.app_user_id === reg!.assigned_to)
+            .map((b) => {
+              // No phone or email: this list goes out before anyone signs in.
+              const { phone: _p, email: _e, ...who } = holderOf(b)!;
+              return {
+                code_hash: createHash("sha256").update(b.code).digest("hex"),
+                ...who,
+              };
+            }));
+        }
+        be.badgeLogins.push(String(body.p_code ?? ""));
+        const typed = String(body.p_code ?? "").trim().toUpperCase();
+        const found = live.find((b) => b.code === typed);
+        if (!found) return json([]);
+        if (reg!.kind === "personal" && found.app_user_id !== reg!.assigned_to) {
+          return fail("This phone is not yours to sign in on");
+        }
+        return json([holderOf(found)]);
       }
 
       case "rpc/pos_device_info": {

@@ -12596,3 +12596,261 @@ test("no line is not a fault, and stays quiet", async ({ page }) => {
 
   await expect(page.getByText(/price list could not be refreshed/i)).toHaveCount(0);
 });
+
+
+// --- 0128: staff badges -------------------------------------------------------
+//
+// A badge stands in for typing a PIN at sign-in and at the locked till, and
+// nowhere else. 5 Star asked for it, and its line goes down for hours, so
+// everything here is also proved with the line down.
+
+/** A badge as the counter's scanner sends it: a fast burst, then Enter. */
+async function scanBadge(page: Page, code: string) {
+  await page.keyboard.type(code);
+  await page.keyboard.press("Enter");
+}
+
+const SAM_BADGE = "STAFF-SAMBADGE234567";
+const MANAGER_BADGE = "STAFF-MGRBADGE234567";
+
+async function signOut(page: Page) {
+  await page.getByRole("button", { name: /Sign out/i }).first().click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+}
+
+async function goOffline(page: Page) {
+  be.offline = true;
+  await page.context().setOffline(true);
+}
+
+async function goOnline(page: Page) {
+  be.offline = false;
+  await page.context().setOffline(false);
+}
+
+test("a manager prints a staff badge, and scanning it signs that person in", async ({ page }) => {
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Staff" }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.getByRole("button", { name: "Staff badge" }).click();
+  const dialog = page.getByRole("dialog", { name: "Staff badge" });
+  await expect(dialog).toContainText("No badge yet.");
+  await dialog.getByRole("button", { name: "Print a badge" }).click();
+  await expect(dialog.getByRole("status")).toContainText("Sam's badge has gone to the printer");
+
+  // Printed on the slip printer, as bars only: the code must not be on the
+  // paper as text, where it could be read off and typed in without the card.
+  const printed = page.locator("#print-area [data-barcode]");
+  await expect(printed).toHaveCount(1);
+  const first = (await printed.getAttribute("data-barcode"))!;
+  expect(first).toMatch(/^STAFF-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{14}$/);
+  const slipText = (await page.locator("#print-area").textContent()) ?? "";
+  expect(slipText).toContain("Sam");
+  expect(slipText).toContain("Staff badge");
+  expect(slipText).not.toContain(first);
+  // Narrow enough for the counter's 80mm printer at two dots a module: 576
+  // dots is 288 modules, and the drawing includes its quiet zones.
+  const modules = Number(await printed.locator("svg").getAttribute("width")) / 2;
+  expect(modules).toBeLessThanOrEqual(288);
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+
+  // A lost card is a reprint, and the reprint is what kills the old one.
+  await dialog.getByRole("button", { name: "Print a new badge" }).click();
+  await expect(dialog.getByRole("status")).toContainText("The old one no longer works");
+  const second = (await printed.getAttribute("data-barcode"))!;
+  expect(second).not.toBe(first);
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("button", { name: /^Sam\b/ })).toContainText("has a badge");
+
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await signOut(page);
+  await expect(page.getByText("Tap your name, or scan your badge.")).toBeVisible();
+
+  await scanBadge(page, first);
+  await expect(page.locator(".login-error")).toContainText("That badge was not recognised");
+  await expect(page.locator(".sell-cashier-name")).toHaveCount(0);
+
+  await scanBadge(page, second);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Sam");
+  // Signed in by the badge alone: no PIN went anywhere, none was wrong.
+  expect(be.badgeLogins).toEqual([first, second]);
+  expect(be.failedLogins).toEqual({});
+
+  // Cancelled: the card stops at once.
+  await signOut(page);
+  await page.getByRole("button", { name: /^Manager\b/ }).click();
+  await page.keyboard.type(USERS.manager.pin, { delay: 80 });
+  await openManage(page);
+  await page.getByRole("button", { name: "Staff" }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.getByRole("button", { name: "Staff badge" }).click();
+  await dialog.getByRole("button", { name: "Cancel their badge" }).click();
+  await expect(dialog.getByRole("status")).toContainText("Sam's badge no longer works");
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("button", { name: /^Sam\b/ })).not.toContainText("has a badge");
+  await page.getByRole("button", { name: /Back to till/i }).click();
+  await signOut(page);
+  await scanBadge(page, second);
+  await expect(page.locator(".login-error")).toContainText("That badge was not recognised");
+});
+
+test("a badge opens the till, and not the back office, an approval or the scan box", async ({ page }) => {
+  be.issueBadge(USERS.manager.row.id, MANAGER_BADGE);
+  await pairAndSignIn(page, USERS.employee.pin);
+  await signOut(page);
+  await scanBadge(page, MANAGER_BADGE);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Manager");
+
+  // The back office still asks for the PIN: a badge is something you hold,
+  // and a photo of it scans as well as the card.
+  await page.getByRole("button", { name: /^Manage$/ }).click();
+  await expect(page.getByRole("dialog", { name: "Manage" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Manage" }).getByRole("button", { name: "Cancel" }).click();
+
+  // Scanned at the counter, it is nobody's product: not searched, not sold.
+  await page.getByPlaceholder(/Scan barcode/i).fill(MANAGER_BADGE);
+  await page.keyboard.press("Enter");
+  await expect(banner(page)).toContainText("That is a staff badge");
+  await expect(page.locator(".line-desc")).toHaveCount(0);
+  await expect(page.getByPlaceholder(/Scan barcode/i)).toHaveValue("");
+
+  // A manager's approval takes the manager's PIN; their badge does nothing.
+  // The manager has only ever badged in on this till, so the till holds no
+  // copy of their PIN: the server proves it, and the till keeps it.
+  await signOut(page);
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.keyboard.type(USERS.employee.pin, { delay: 80 });
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /Discount Cement/i }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  await expect(approval).toBeVisible();
+  const asked = be.badgeLogins.length;
+  await scanBadge(page, MANAGER_BADGE);
+  await page.waitForTimeout(600);
+  await expect(approval).toBeVisible();
+  expect(be.badgeLogins.length).toBe(asked);
+  await page.keyboard.type(USERS.manager.pin, { delay: 80 });
+  await expect(approval).toHaveCount(0);
+  expect(be.calls).toContain("rpc/pos_discount_approver");
+
+  // And the sale goes through with that manager as its approver.
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-/);
+  expect(be.sales.at(-1)?.approved_by).toBe(USERS.manager.row.id);
+});
+
+test("with the line down, the locked till opens to its own PIN and badge, and hands over by badge", async ({ page }) => {
+  await page.clock.install();
+  be.issueBadge(USERS.employee.row.id, SAM_BADGE);
+  be.issueBadge(USERS.manager.row.id, MANAGER_BADGE);
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+  await goOffline(page);
+
+  // The PIN, with no line: this screen used to refuse outright, though
+  // signing in from scratch would have worked.
+  await page.clock.fastForward(11 * 60 * 1000);
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+  await page.keyboard.type(USERS.employee.pin, { delay: 80 });
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  // The badge, with no line.
+  await page.clock.fastForward(11 * 60 * 1000);
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+  await scanBadge(page, SAM_BADGE);
+  await expect(page.locator(".line-desc")).toHaveText("Cement 42.5N 50kg");
+
+  // Somebody else's badge does not take over somebody's sale.
+  await page.clock.fastForward(11 * 60 * 1000);
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+  await scanBadge(page, MANAGER_BADGE);
+  await expect(page.locator(".login-error")).toContainText("That is Manager's badge");
+  await expect(page.getByText(/locked itself/i)).toBeVisible();
+
+  // Handing over is the button, and then the manager's badge signs them in.
+  await page.getByRole("button", { name: "Someone else is taking over" }).click();
+  await expect(page.getByText("Who is on the till?")).toBeVisible();
+  await scanBadge(page, MANAGER_BADGE);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Manager");
+  // All of it on the till's own copy: the server was never asked.
+  expect(be.badgeLogins).toEqual([]);
+  expect(be.failedLogins).toEqual({});
+});
+
+test("a till that has not heard from the server for a week signs nobody in offline", async ({ page }) => {
+  await page.clock.install();
+  be.issueBadge(USERS.employee.row.id, SAM_BADGE);
+  await pairAndSignIn(page, USERS.employee.pin);
+  await signOut(page);
+  await goOffline(page);
+
+  // Six days: a bad week on the line, and the till still works.
+  await page.clock.fastForward(6 * 24 * 60 * 60 * 1000);
+  await scanBadge(page, SAM_BADGE);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Sam");
+  await signOut(page);
+
+  // Eight: what it holds may be out of date — somebody may have left, or lost
+  // their card — so neither the badge nor the PIN signs anybody in.
+  await page.clock.fastForward(2 * 24 * 60 * 60 * 1000);
+  await scanBadge(page, SAM_BADGE);
+  await expect(page.locator(".login-error")).toContainText("has not reached the server for over 7 days");
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.keyboard.type(USERS.employee.pin, { delay: 80 });
+  await expect(page.locator(".login-error")).toContainText("has not reached the server for over 7 days");
+  await expect(page.locator(".sell-cashier-name")).toHaveCount(0);
+
+  // The line back, and the server answers for itself.
+  await goOnline(page);
+  await expect.poll(async () => {
+    await scanBadge(page, SAM_BADGE);
+    return page.locator(".sell-cashier-name").count();
+  }, { timeout: 30_000 }).toBe(1);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Sam");
+  expect(be.badgeLogins).toContain(SAM_BADGE);
+});
+
+test("wrong PINs at a till with no line make the next try wait", async ({ page }) => {
+  await page.clock.install();
+  await pairAndSignIn(page, USERS.employee.pin);
+  await signOut(page);
+  await goOffline(page);
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.type("000000", { delay: 80 });
+    await expect(page.locator(".login-error")).toContainText("That PIN was not recognised");
+    await expect(page.getByText("Enter PIN")).toBeVisible();
+  }
+  // Even the right PIN waits now — the wait is what makes guessing slow.
+  await page.keyboard.type(USERS.employee.pin, { delay: 80 });
+  await expect(page.locator(".login-error")).toContainText(/Too many wrong PINs for Sam\. Try again in \d+ seconds/);
+  await expect(page.locator(".sell-cashier-name")).toHaveCount(0);
+
+  await page.clock.fastForward(31_000);
+  await page.keyboard.type(USERS.employee.pin, { delay: 80 });
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Sam");
+  // None of it reached the server, so none of it counts against Sam there.
+  expect(be.failedLogins).toEqual({});
+});
+
+test("somebody taken off the staff loses their offline PIN when the till next hears", async ({ page }) => {
+  await pairAndSignIn(page, USERS.employee.pin);
+  const creds = () => page.evaluate(() =>
+    (JSON.parse(localStorage.getItem("pos.auth.creds") ?? "[]") as { user: { id: string } }[])
+      .map((c) => c.user.id));
+  expect(await creds()).toContain(USERS.employee.row.id);
+
+  be.staff.find((s) => s.id === USERS.employee.row.id)!.active = false;
+  await signOut(page);
+  await expect(page.getByRole("button", { name: /^Sam\b/ })).toHaveCount(0);
+  await expect.poll(creds).not.toContain(USERS.employee.row.id);
+});

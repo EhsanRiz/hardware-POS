@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   approveSale,
   approvalCodes,
-  checkApprovalCode,
+  checkDiscountApprover,
   closeQuote,
   createDelivery,
   deleteParkedSale,
@@ -34,7 +34,7 @@ import {
   shelfLookup,
   stockMovements,
 } from "../lib/adminApi";
-import { findByPinOffline, signIn } from "../lib/auth";
+import { findByPinOffline, refreshBadges, rememberPin, signIn } from "../lib/auth";
 import { errorMessage } from "../lib/errors";
 import { enqueueAction, listQueue } from "../lib/queue";
 import { commitDocNumber, peekDocNumber, topUpAllDocNumbers, topUpDocNumbers } from "../lib/docNumbers";
@@ -537,6 +537,25 @@ export default function POS() {
       }
     });
   }, [kind]);
+  /**
+   * Who may sign in here with the line down: the shop's staff badges, and the
+   * stamp that says this device has heard from the server lately (lib/auth).
+   * Refreshed on arrival, when the line comes back, and every half hour — a
+   * till left signed in all week must not run out its seven days while it is
+   * online the whole time.
+   */
+  useEffect(() => {
+    void refreshBadges();
+    const timer = setInterval(() => void refreshBadges(), 30 * 60_000);
+    const off = onNetworkChange((on) => {
+      if (on) void refreshBadges();
+    });
+    return () => {
+      clearInterval(timer);
+      off();
+    };
+  }, []);
+
   // The one screen a locked phone will still show, and only when the PIN
   // cannot be proved for want of a line.
   const [lockedPeek, setLockedPeek] = useState(false);
@@ -1471,10 +1490,12 @@ export default function POS() {
         user={user}
         online={online}
         onUnlock={(pin) => {
-          // Proved against the server a moment ago, by the same call the
-          // sign-in makes — so the doors it stands for open again with it.
+          // A PIN was proved a moment ago, by the same call the sign-in makes
+          // — so the doors it stands for open again with it. A badge opens
+          // none of them (0128): it is something you hold, and the back
+          // office asks for something you know.
           setSessionPin(pin);
-          pinProved(user, pin, "till");
+          if (pin) pinProved(user, pin, "till");
           unlockTill();
         }}
         onHandOver={() => {
@@ -1935,6 +1956,11 @@ export default function POS() {
             onInspect={(p) => setInspecting({ product: p, mode: "add" })}
             onPickCustomer={() => setShowCustomers(true)}
             onDocument={(d) => void openDocument(d)}
+            onBadge={() =>
+              setBanner(
+                "That is a staff badge. It signs in at the sign-in screen, or when the till is locked — not here."
+              )
+            }
             inputRef={scanRef}
           />
 
@@ -2348,8 +2374,20 @@ export default function POS() {
             }
 
             if (online) {
-              const check = await checkApprovalCode(entered);
-              if (!check.ok) {
+              // The server reads it both ways (0128). A manager's PIN this
+              // till has never cached — they signed in by badge, or never
+              // here at all — is proved there and kept, so the sale that
+              // follows finds its approver on the device as it always has.
+              const check = await checkDiscountApprover(entered);
+              if (check?.kind === "pin" && can(check.user, "approve_discount")) {
+                await rememberPin(entered, check.user);
+                setApproverPin(entered);
+                setApprovalCode(null);
+                undoDiscount.current = null;
+                setNeedsApproval(false);
+                return;
+              }
+              if (check?.kind !== "code") {
                 throw new Error(
                   "Not a PIN that can approve, and not a code we recognise. " +
                     "A code may have expired or already been used."

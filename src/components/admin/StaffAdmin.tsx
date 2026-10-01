@@ -4,10 +4,17 @@ import {
   adminInviteUser,
   adminListUsers,
   adminUpdateUser,
+  issueStaffBadge,
+  revokeStaffBadge,
   sendInviteSms,
+  staffBadges,
   staffEnrolmentCode,
   type StaffUser,
 } from "../../lib/adminApi";
+import { printReceipt } from "../../lib/print";
+import { staffBadgeSlip } from "../../lib/receipt";
+import { shopSettings } from "../../lib/settings";
+import { fmtDate } from "../../lib/dates";
 import { CURRENCY, ENROL_URL } from "../../lib/config";
 import { inviteMessage } from "../../../supabase/functions/auth/invite-message.ts";
 import { errorMessage } from "../../lib/errors";
@@ -72,6 +79,9 @@ export default function StaffAdmin({
   // somebody who cannot sign in ANYWHERE yet; this one is about giving
   // somebody who already signs in at the counter their own device as well.
   const [enrolling, setEnrolling] = useState<StaffUser | null>(null);
+  // Whose staff badge is being printed or cancelled (0128), and who holds one.
+  const [badging, setBadging] = useState<StaffUser | null>(null);
+  const [badges, setBadges] = useState<Record<string, string>>({});
 
   const isAdmin = user?.role === "admin";
 
@@ -80,6 +90,11 @@ export default function StaffAdmin({
     try {
       setStaff(await adminListUsers(pin));
       setError(null);
+      // Its own call, and allowed to fail on its own: a server from before
+      // badges still has a staff list worth showing.
+      staffBadges(pin)
+        .then((rows) => setBadges(Object.fromEntries(rows.map((r) => [r.app_user_id, r.issued_at]))))
+        .catch(() => setBadges({}));
     } catch (e) {
       setError(errorMessage(e, "Could not load the staff list"));
     } finally {
@@ -183,6 +198,7 @@ export default function StaffAdmin({
                       {discountAllowance(s) && (
                         <span className="text-stone-400"> · {discountAllowance(s)}</span>
                       )}
+                      {badges[s.id] && <span className="text-stone-400"> · has a badge</span>}
                     </span>
                   </span>
                   <span className="text-sm text-stone-600">
@@ -276,6 +292,10 @@ export default function StaffAdmin({
             setEditing(null);
             setEnrolling(u);
           }}
+          onBadge={(u) => {
+            setEditing(null);
+            setBadging(u);
+          }}
         />
       )}
 
@@ -290,6 +310,15 @@ export default function StaffAdmin({
       )}
       {enrolling && (
         <EnrolPhone pin={pin} staff={enrolling} onClose={() => setEnrolling(null)} />
+      )}
+      {badging && (
+        <StaffBadge
+          pin={pin}
+          staff={badging}
+          issuedAt={badges[badging.id] ?? null}
+          onChanged={load}
+          onClose={() => setBadging(null)}
+        />
       )}
     </div>
   );
@@ -626,6 +655,117 @@ function EnrolPhone({
 }
 
 /**
+ * A staff badge (0128): print one, reprint one, or cancel one.
+ *
+ * Printed on the shop's slip printer, which already draws Code 128. The code
+ * exists only on that paper — the server keeps its hash — so a lost card is a
+ * reprint, never a lookup, and a reprint is what stops the lost one working.
+ * Tills that are offline hear about it the next time they reach the server.
+ */
+function StaffBadge({
+  pin, staff, issuedAt, onChanged, onClose,
+}: {
+  pin: string;
+  staff: StaffUser;
+  issuedAt: string | null;
+  onChanged: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [held, setHeld] = useState(issuedAt);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function print() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { code, staff_name } = await issueStaffBadge(pin, staff.id);
+      printReceipt(staffBadgeSlip(shopSettings().shop_name, staff_name, code), "Staff badge");
+      setDone(
+        held
+          ? `A new badge for ${staff.name} has gone to the printer. The old one no longer works.`
+          : `${staff.name}'s badge has gone to the printer.`
+      );
+      setHeld(new Date().toISOString());
+      await onChanged();
+    } catch (e) {
+      setError(errorMessage(e, "That badge could not be made."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel() {
+    setBusy(true);
+    setError(null);
+    try {
+      await revokeStaffBadge(pin, staff.id);
+      setDone(`${staff.name}'s badge no longer works. They sign in with their PIN.`);
+      setHeld(null);
+      await onChanged();
+    } catch (e) {
+      setError(errorMessage(e, "That badge could not be cancelled."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="vv-fixed bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Staff badge"
+    >
+      <div className="bg-white w-full sm:max-w-md sm:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="p-5 space-y-3 overflow-auto">
+          <h3 className="font-semibold">{staff.name}’s badge</h3>
+          <p className="text-sm text-stone-700">
+            {held
+              ? `Holds a badge printed ${fmtDate(held)}.`
+              : "No badge yet."}
+          </p>
+          <p className="text-sm text-stone-600">
+            A badge is scanned to sign in at the till and to unlock it, instead
+            of typing a PIN. It works with the line down too. It does not approve
+            discounts or open Manage — those still take the PIN.
+          </p>
+          <p className="text-xs text-stone-500">
+            Anyone holding the card, or a photo of it, can sign in as{" "}
+            {staff.name}. If it is lost, print a new one: that stops the old one
+            at once, and on a till without the line as soon as it reconnects.
+          </p>
+          {done && <p className="text-sm text-stone-800" role="status">{done}</p>}
+          {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
+        </div>
+        <div className="px-5 py-4 border-t border-stone-200 flex gap-2 justify-end flex-wrap">
+          {held && (
+            <button
+              className="px-3 py-2 text-sm text-red-700"
+              disabled={busy}
+              onClick={() => void cancel()}
+            >
+              Cancel their badge
+            </button>
+          )}
+          <button
+            className="px-4 py-2 text-stone-700"
+            disabled={busy}
+            onClick={() => void print()}
+          >
+            {held ? "Print a new badge" : "Print a badge"}
+          </button>
+          <button className="px-4 py-2 rounded-lg bg-colophon text-paper" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * How much this person may take off before a manager is needed, in a phrase.
  *
  * Empty for anybody a limit does not apply to — somebody who can approve
@@ -727,6 +867,7 @@ function StaffEditor({
   onSaved,
   onRemove,
   onEnrol,
+  onBadge,
 }: {
   pin: string;
   staff: StaffUser | null;
@@ -738,6 +879,8 @@ function StaffEditor({
   onRemove: (u: StaffUser) => Promise<void>;
   /** Hand this person a one-time code for their own phone. */
   onEnrol: (u: StaffUser) => void;
+  /** Print, reprint or cancel this person's staff badge. */
+  onBadge: (u: StaffUser) => void;
 }) {
   const [name, setName] = useState(staff?.name ?? "");
   const [phone, setPhone] = useState(staff?.phone ?? "");
@@ -1064,6 +1207,17 @@ function StaffEditor({
               onClick={() => onEnrol(staff)}
             >
               Set up their phone
+            </button>
+          )}
+          {/* Same rule as the phone: a badge stands in for typing a PIN, so
+              only somebody who has one can be given one. */}
+          {staff && staff.active && staff.status === "active" && (
+            <button
+              className="px-3 py-2 text-sm"
+              style={{ color: "var(--color-accent-700)" }}
+              onClick={() => onBadge(staff)}
+            >
+              Staff badge
             </button>
           )}
           <button className="btn-cancel ml-auto" onClick={onClose}>

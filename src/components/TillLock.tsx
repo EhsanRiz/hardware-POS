@@ -1,8 +1,9 @@
 import { useState } from "react";
 import InnovaMark from "./InnovaMark";
 import PinPad from "./PinPad";
-import { login } from "../lib/api";
-import { isNetworkError } from "../lib/offline";
+import { canSignInOffline, signInWithBadge, signIn } from "../lib/auth";
+import { useBadgeScan } from "../lib/badgeScan";
+import { errorMessage } from "../lib/errors";
 import type { User } from "../lib/types";
 
 /**
@@ -23,12 +24,17 @@ import type { User } from "../lib/types";
  * than letting somebody work under a name that is not theirs — the whole point
  * of a per-person PIN is that the slip says who sold it.
  *
- * The PIN is proved against the SERVER, exactly as the sign-in did. Nothing on
- * this device is checked against, because nothing is stored: a six-digit PIN in
- * local storage, however hashed, is a credential sitting on a counter machine,
- * and this shop's rule from the beginning is that no device holds one. Which
- * means a till with no line cannot be unlocked — stated plainly on the screen
- * rather than discovered, and the reason the window is ten minutes and not one.
+ * The PIN is proved exactly as sign-in proves it (lib/auth): against the server
+ * when there is a line, and against this till's cached copy when there is not.
+ * This screen used to insist on the server, which left a shop with a bad line
+ * worse off than at sign-in: the cashier who stepped away for ten minutes in an
+ * outage could not get back to their own sale, though signing in from scratch
+ * would have worked. The same week-long limit and wrong-PIN wait apply.
+ *
+ * Or the same person's staff badge (0128). A badge opens this lock and sign-in,
+ * nothing else, so unlocking with one leaves no PIN behind for the back office
+ * to reuse. Somebody else's badge does not hand the till over: that is what
+ * the button below is for, and it parks the sale first.
  */
 export default function TillLock({
   user,
@@ -38,8 +44,11 @@ export default function TillLock({
 }: {
   user: User;
   online: boolean;
-  /** The PIN, proved. The caller re-opens the doors it stands for. */
-  onUnlock: (pin: string) => void;
+  /**
+   * Proved. With the PIN when one was typed, so the caller re-opens the doors
+   * it stands for; null for a badge, which opens none of them.
+   */
+  onUnlock: (pin: string | null) => void;
   /** Park anything open and sign out, so the next person is themselves. */
   onHandOver: () => void;
 }) {
@@ -50,22 +59,42 @@ export default function TillLock({
     setBusy(true);
     setError(null);
     try {
-      const who = await login(user.id, pin);
+      const who = await signIn(user.id, pin);
       if (!who) {
-        setError("That PIN does not match this till's user.");
+        setError(
+          !online && !canSignInOffline(user.id)
+            ? `${user.name}'s PIN has not been checked on this till before, so it cannot be checked with the line down. Scan your badge, or wait for the line.`
+            : "That PIN does not match this till's user."
+        );
         return;
       }
       onUnlock(pin);
     } catch (e) {
-      setError(
-        isNetworkError(e)
-          ? "No line to the server, so the PIN cannot be checked. Try again when it is back."
-          : "Could not check that PIN. Try again."
-      );
+      setError(errorMessage(e, "Could not check that PIN. Try again."));
     } finally {
       setBusy(false);
     }
   }
+
+  useBadgeScan((code) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    signInWithBadge(code)
+      .then((who) => {
+        if (!who) {
+          setError("That badge was not recognised. It may have been cancelled or replaced.");
+        } else if (who.id !== user.id) {
+          setError(
+            `That is ${who.name}'s badge. The till is locked for ${user.name} — tap "Someone else is taking over" to hand it over.`
+          );
+        } else {
+          onUnlock(null);
+        }
+      })
+      .catch((e) => setError(errorMessage(e, "Could not check that badge. Try again.")))
+      .finally(() => setBusy(false));
+  });
 
   // The phone lock's shell, because this is the same screen for a different
   // device and inventing a second set of styles for it would only let the two
@@ -76,18 +105,11 @@ export default function TillLock({
         <InnovaMark size={40} />
         <h1>{user.name}</h1>
         <p className="phone-lock-why">
-          The till locked itself after ten minutes. Enter your PIN to carry on
-          — the sale on screen is still here.
+          The till locked itself after ten minutes. Enter your PIN or scan
+          your badge to carry on — the sale on screen is still here.
         </p>
 
-        {!online && (
-          <p className="login-error" role="alert">
-            No line to the server. A PIN is checked against the shop, never
-            against this machine, so unlocking has to wait for the line.
-          </p>
-        )}
-
-        <PinPad onSubmit={(pin) => void submit(pin)} busy={busy || !online} />
+        <PinPad onSubmit={(pin) => void submit(pin)} busy={busy} />
         {error && <p className="login-error" role="alert">{error}</p>}
 
         {/* Somebody else taking the counter. Deliberately not a second PIN
