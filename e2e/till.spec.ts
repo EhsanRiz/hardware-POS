@@ -7713,6 +7713,8 @@ test("a statement opens on what was owed before it, and adds up to what is owed 
   // year; the fixed date is.
   const NOW = new Date("2026-09-13T10:00:00Z");
   await page.clock.setFixedTime(NOW);
+  // And the fake server's, which ages the debts.
+  be.now = () => NOW.getTime();
   const daysAgo = (n: number) => new Date(NOW.getTime() - n * 864e5).toISOString();
   be.customers.push({
     id: "k9", code: "TRD-009", name: "Molefe Builders",
@@ -12861,4 +12863,34 @@ test("somebody taken off the staff loses their offline PIN when the till next he
   await signOut(page);
   await expect(page.getByRole("button", { name: /^Sam\b/ })).toHaveCount(0);
   await expect.poll(creds).not.toContain(USERS.employee.row.id);
+});
+
+test("a till deployed ahead of migration 0128 still takes a manager's code", async ({ page }) => {
+  // The discount prompt asks pos_discount_approver now. A server that does
+  // not have it yet must not take approval codes away from the counter: the
+  // till falls back to asking about the code alone, as it did before.
+  be.missingRpcs.add("pos_discount_approver");
+  be.approvalCodes.push({
+    id: "ac-old", code: "616161", issued_by: USERS.manager.row.id,
+    issued_by_name: "Manager", max_amount: null, reason: null,
+    expires_at: new Date(Date.now() + 600_000).toISOString(),
+    used_at: null, used_by_name: null, doc_number: null,
+  });
+  await pairAndSignIn(page, USERS.employee.pin);
+  await page.getByPlaceholder(/Scan barcode/i).fill("6001234000015");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: /^Discount$/ }).click();
+  await page.getByLabel("Discount amount").fill("20");
+  await page.getByRole("button", { name: /^Apply$/ }).click();
+
+  const approval = page.getByRole("dialog", { name: "Manager approval" });
+  await page.keyboard.type("616161", { delay: 80 });
+  await expect(approval).toHaveCount(0);
+  expect(be.calls).toContain("rpc/pos_discount_approver");
+  expect(be.calls).toContain("rpc/pos_check_approval_code");
+
+  await page.getByRole("button", { name: /^Cash$/ }).click();
+  await page.getByRole("button", { name: /Tender & print/i }).click();
+  await expect(banner(page)).toContainText(/INV-/);
+  expect(be.approvalCodes.find((c) => c.code === "616161")?.used_at).not.toBeNull();
 });

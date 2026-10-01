@@ -11,7 +11,7 @@
 //     voiding a sale, pairing a till.
 import { registerToken } from "./device";
 import { cacheGet, cacheSet } from "./localCache";
-import { isNetworkError } from "./offline";
+import { isMissingRpcError, isNetworkError } from "./offline";
 import { API_BASE, ownOrigin, supabase } from "./supabase";
 import type { SaleRow } from "./sales";
 import type {
@@ -421,6 +421,15 @@ export async function checkDiscountApprover(entered: string): Promise<ApproverCh
     p_register_token: requireToken(),
     p_entered: entered,
   });
+  if (error && isMissingRpcError(error)) {
+    // A server without 0128: ask about a code alone, as the till did before.
+    // Then the deploy order does not matter, and nothing that worked stops
+    // working; only a PIN this till has never cached waits for the migration.
+    const check = await checkApprovalCode(entered);
+    return check.ok
+      ? { kind: "code", issued_by_name: check.issued_by_name ?? "", max_amount: check.max_amount }
+      : null;
+  }
   if (error) throw error;
   const row = (data as (User & { kind: string; max_amount: number | null })[])?.[0];
   if (!row) return null;

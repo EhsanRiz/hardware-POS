@@ -455,6 +455,18 @@ export class Backend {
   /** Every badge the till asked the server about (0128), as sent. */
   badgeLogins: string[] = [];
   /**
+   * RPCs this server does not have yet — a till deployed ahead of its
+   * migration. Answered as PostgREST answers a function it cannot find.
+   */
+  missingRpcs = new Set<string>();
+  /**
+   * What the fake takes for "now". A test that pins the browser's clock pins
+   * this too: ageing is counted on the server, and the fake's server read
+   * Node's real clock while the page read the pinned one, so the statement
+   * test passed or failed by the date it was run on.
+   */
+  now: () => number = () => Date.now();
+  /**
    * 0074: the devices on this shop. The paired till is here from the start; a
    * phone joins it when somebody redeems an enrolment code.
    *
@@ -1668,6 +1680,12 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
 
     const json = (data: unknown, status = 200) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+    if (be.missingRpcs.has(path.replace(/^rpc\//, ""))) {
+      return json({
+        code: "PGRST202", details: null, hint: null,
+        message: `Could not find the function public.${path.replace(/^rpc\//, "")} in the schema cache`,
+      }, 404);
+    }
     const fail = (message: string) =>
       route.fulfill({
         status: 400, contentType: "application/json",
@@ -2821,7 +2839,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // Subtracting timestamps and rounding made a bill fifteen days late
         // report as sixteen, depending on the hour the test ran.
         const dayOf = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86400000);
-        const today = Math.floor(Date.now() / 86400000);
+        const today = Math.floor(be.now() / 86400000);
         const rows = be.supplierDocs
           .filter((d) => d.kind === "invoice" && d.paid_at == null)
           .map((d) => {
@@ -3231,7 +3249,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // consumed against charges oldest first and what is left is bucketed
         // by the age of the charge it belongs to.
         const paid = all.reduce((t, e) => t + e.payment, 0);
-        const today = Math.floor(Date.now() / 86400000);
+        const today = Math.floor(be.now() / 86400000);
         let cum = 0;
         const bucket = { current: 0, days30: 0, days60: 0, days90: 0 };
         for (const e of all) {
