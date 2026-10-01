@@ -7713,6 +7713,8 @@ test("a statement opens on what was owed before it, and adds up to what is owed 
   // year; the fixed date is.
   const NOW = new Date("2026-09-13T10:00:00Z");
   await page.clock.setFixedTime(NOW);
+  // And the fake server's, which ages the debts.
+  be.now = () => NOW.getTime();
   const daysAgo = (n: number) => new Date(NOW.getTime() - n * 864e5).toISOString();
   be.customers.push({
     id: "k9", code: "TRD-009", name: "Molefe Builders",
