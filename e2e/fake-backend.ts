@@ -452,6 +452,13 @@ export class Backend {
   /** Wrong PINs per person, so the lockout can be asserted on. */
   failedLogins: Record<string, number> = {};
   /**
+   * What the fake takes for "now". A test that pins the browser's clock pins
+   * this too: ageing is counted on the server, and the fake's server read
+   * Node's real clock while the page read the pinned one, so the statement
+   * test passed or failed by the date it was run on.
+   */
+  now: () => number = () => Date.now();
+  /**
    * 0074: the devices on this shop. The paired till is here from the start; a
    * phone joins it when somebody redeems an enrolment code.
    *
@@ -2802,7 +2809,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // Subtracting timestamps and rounding made a bill fifteen days late
         // report as sixteen, depending on the hour the test ran.
         const dayOf = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / 86400000);
-        const today = Math.floor(Date.now() / 86400000);
+        const today = Math.floor(be.now() / 86400000);
         const rows = be.supplierDocs
           .filter((d) => d.kind === "invoice" && d.paid_at == null)
           .map((d) => {
@@ -3212,7 +3219,7 @@ export async function installBackend(page: Page, shared?: Backend): Promise<Back
         // consumed against charges oldest first and what is left is bucketed
         // by the age of the charge it belongs to.
         const paid = all.reduce((t, e) => t + e.payment, 0);
-        const today = Math.floor(Date.now() / 86400000);
+        const today = Math.floor(be.now() / 86400000);
         let cum = 0;
         const bucket = { current: 0, days30: 0, days60: 0, days90: 0 };
         for (const e of all) {
