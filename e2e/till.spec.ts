@@ -12894,3 +12894,29 @@ test("a till deployed ahead of migration 0129 still takes a manager's code", asy
   await expect(banner(page)).toContainText(/INV-/);
   expect(be.approvalCodes.find((c) => c.code === "616161")?.used_at).not.toBeNull();
 });
+
+test("a badge printed on this till works here at once, with the line gone straight after", async ({ page }) => {
+  // Printed, and the line drops before anybody signs out: the till must not
+  // wait for its half-hourly refresh to know the card it has just printed.
+  await pairAndSignIn(page, USERS.manager.pin);
+  await openManage(page);
+  await page.getByRole("button", { name: "Staff" }).click();
+  await page.getByRole("button", { name: /^Sam\b/ }).click();
+  await page.getByRole("button", { name: "Staff badge" }).click();
+  const dialog = page.getByRole("dialog", { name: "Staff badge" });
+  await dialog.getByRole("button", { name: "Print a badge" }).click();
+  await expect(dialog.getByRole("status")).toContainText("gone to the printer");
+  const code = (await page.locator("#print-area [data-barcode]").getAttribute("data-barcode"))!;
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  // The refresh is asked for as the badge is printed; wait for it to land.
+  await expect.poll(() => be.calls.filter((c) => c === "rpc/pos_staff_badges_for_till").length)
+    .toBeGreaterThanOrEqual(2);
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: /Back to till/i }).click();
+
+  await goOffline(page);
+  await signOut(page);
+  await scanBadge(page, code);
+  await expect(page.locator(".sell-cashier-name")).toHaveText("Sam");
+  expect(be.badgeLogins).toEqual([]);
+});

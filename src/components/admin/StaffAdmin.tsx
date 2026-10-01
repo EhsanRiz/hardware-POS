@@ -14,6 +14,7 @@ import {
 import { printReceipt } from "../../lib/print";
 import { staffBadgeSlip } from "../../lib/receipt";
 import { shopSettings } from "../../lib/settings";
+import { refreshBadges } from "../../lib/auth";
 import { fmtDate } from "../../lib/dates";
 import { CURRENCY, ENROL_URL } from "../../lib/config";
 import { inviteMessage } from "../../../supabase/functions/auth/invite-message.ts";
@@ -688,6 +689,9 @@ function StaffBadge({
           : `${staff.name}'s badge has gone to the printer.`
       );
       setHeld(new Date().toISOString());
+      // This till learns the new card now, so it works here with the line
+      // down straight away rather than at the next half-hourly refresh.
+      void refreshBadges();
       await onChanged();
     } catch (e) {
       setError(errorMessage(e, "That badge could not be made."));
@@ -703,6 +707,7 @@ function StaffBadge({
       await revokeStaffBadge(pin, staff.id);
       setDone(`${staff.name}'s badge no longer works. They sign in with their PIN.`);
       setHeld(null);
+      void refreshBadges();
       await onChanged();
     } catch (e) {
       setError(errorMessage(e, "That badge could not be cancelled."));

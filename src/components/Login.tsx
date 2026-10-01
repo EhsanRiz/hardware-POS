@@ -69,9 +69,13 @@ export default function Login() {
   const [who, setWho] = useState<LoginCandidate | null>(null);
   const shop = useShopSettings();
 
+  // Whether to say "or scan your badge". Held as state, because the badges
+  // arrive on their own and the roster may have drawn the screen already.
+  const [hasBadges, setHasBadges] = useState(knowsBadges);
+
   useEffect(() => {
     void loginRoster().then(setRoster, () => setRoster([]));
-    void refreshBadges();
+    void refreshBadges().then(() => setHasBadges(knowsBadges()));
   }, []);
 
   useBadgeScan((code) => {
@@ -184,7 +188,7 @@ export default function Login() {
           <>
             <p className="login-prompt">
               Who is on the till?
-              {knowsBadges() && " Tap your name, or scan your badge."}
+              {hasBadges && " Tap your name, or scan your badge."}
             </p>
             {roster === null ? (
               <p className="login-prompt">Loading…</p>
