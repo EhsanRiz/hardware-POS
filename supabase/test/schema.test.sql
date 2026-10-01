@@ -8467,6 +8467,125 @@ begin
 end $$;
 
 
+-- 0128: a delivery opens in time, however big the catalogue -----------------
+do $$
+declare v_tok text; v_org uuid; v_id uuid; v_k record; v_n int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+
+  -- Every item has its keys, and they are what the functions say.
+  perform assert_eq((select count(*)::int from public.products p
+     where not exists (select 1 from public.product_match_keys k where k.product_id = p.id)), 0,
+    'every item has stored keys after the migration');
+  perform assert_eq((select count(*)::int from public.products p
+     join public.product_match_keys k on k.product_id = p.id
+    where k.nm is distinct from public.match_norm(p.name)
+       or k.tk is distinct from public.match_tokens(p.name)
+       or k.sz is distinct from public.match_sizes(p.name)
+       or k.co is distinct from public.match_colours(p.name)
+       or k.si is distinct from public.match_sides(p.name)
+       or k.org_id is distinct from p.org_id), 0,
+    'and each stored key is exactly what the function gives for the name');
+
+  -- Kept in step as names are written.
+  v_id := (public.pos_admin_save_product(v_tok, '1234', null, null, null,
+    'Keyed Gloss Paint Red 5L', null, null, 'ea', 100, null, null, 'standard', 1, null, true)).id;
+  select * into v_k from public.product_match_keys where product_id = v_id;
+  perform assert_eq(v_k.nm, public.match_norm('Keyed Gloss Paint Red 5L'), 'a new item gets its keys');
+  update public.products set name = 'Keyed Gloss Paint Blue 1L' where id = v_id;
+  select * into v_k from public.product_match_keys where product_id = v_id;
+  perform assert_eq(v_k.co, public.match_colours('Keyed Gloss Paint Blue 1L'), 'a rename re-reads the colour');
+  perform assert_eq(v_k.sz, public.match_sizes('Keyed Gloss Paint Blue 1L'), 'and the size');
+  delete from public.products where id = v_id;
+  perform assert_eq((select count(*)::int from public.product_match_keys where product_id = v_id), 0,
+    'and a deleted item takes its keys with it');
+
+  -- The same answers as before: score and variant test, stored or worked out.
+  select count(*)::int into v_n
+    from public.products p join public.product_match_keys k on k.product_id = p.id
+   cross join (values ('Stay Peg 150mm Legend Carded'), ('HIGH GLOSS PWD BROWN 5LT'),
+                      ('CEM II 32.5 N BAG 50KG'), ('STOEP ENAMEL: Red 1L')) d(t)
+   where public.match_token_similarity(public.match_tokens(d.t), k.tk)
+           is distinct from public.match_similarity(d.t, p.name)
+      or (k.sz @> public.match_sizes(d.t) and public.match_sizes(d.t) @> k.sz
+          and k.co @> public.match_colours(d.t) and public.match_colours(d.t) @> k.co
+          and k.si @> public.match_sides(d.t) and public.match_sides(d.t) @> k.si)
+           is distinct from public.match_same_variant(d.t, p.name);
+  perform assert_eq(v_n, 0, 'stored keys score and filter every pair exactly as the name functions do');
+
+  -- "The till already has something called this", found by stored name. An
+  -- item whose stock is not tracked is never OFFERED, but its name still
+  -- clashes with a new one. Nothing tested this half of name_clash before.
+  declare v_was boolean; v_r record; v_row record;
+  begin
+    select sort_deliveries into v_was from public.organizations where id = v_org;
+    update public.organizations set sort_deliveries = true where id = v_org;
+    insert into public.products (org_id, sku, name, unit_code, price_retail, stock_qty, active)
+    values (v_org, 'CLASH-1', 'Clash Test Bracket 40MM', 'ea', 10, null, true);
+    select * into v_r from public.pos_purchasing_file_document(
+      v_tok, '1234', null, 'Clash Supplies', '4990066655', null, null,
+      'invoice', 'CL-1', current_date, null, null, 50, null,
+      jsonb_build_array(jsonb_build_object('supplier_code', null,
+        'description', 'CLASH TEST BRACKET 40 mm', 'qty', 1, 'unit_price', 50)));
+    select * into v_row from public.pos_purchasing_receive_lines(v_tok, '1234', v_r.document_id);
+    perform assert_eq(v_row.sorted, 'new', 'an untracked item is not offered');
+    perform assert_eq(v_row.sort_note, 'name_clash',
+      'but a new item named like one the shop already has says so');
+    delete from public.supplier_documents where id = v_r.document_id;
+    delete from public.products where sku = 'CLASH-1';
+    update public.organizations set sort_deliveries = v_was where id = v_org;
+  end;
+end $$;
+
+-- Three times 5 Star's catalogue, fifteen lines none of which are known: the
+-- shape that timed out. Inside the 3 s the till's role is allowed.
+do $$
+declare v_tok text; v_org uuid; v_r record; v_lines jsonb := '[]'::jsonb; i int;
+begin
+  select token into v_tok from till;
+  select org_id into v_org from fixture;
+  -- Sorting ON, or the matching under test is never reached: an earlier block
+  -- leaves this shop with it off, and a timing taken there proved nothing.
+  create temp table perf_sorting as
+    select sort_deliveries as was from public.organizations where id = v_org;
+  update public.organizations set sort_deliveries = true where id = v_org;
+  insert into public.products (org_id, sku, name, unit_code, price_retail, cost, stock_qty, active)
+  select v_org, 'PERF-' || g,
+         (array['WALL PAINT','ROOF SCREW','PVC ELBOW','HOSE CLAMP','CABLE TIE'])[g % 5 + 1]
+           || ' ' || g || ' ' || (array['RED','BLUE','WHITE','BLACK'])[g % 4 + 1]
+           || ' ' || (g % 60 + 5) || 'MM',
+         'ea', 10, 5, 3, true
+    from generate_series(1, 1500) g;
+  for i in 1..15 loop
+    v_lines := v_lines || jsonb_build_object(
+      'supplier_code', null,
+      'description', 'GARDEN ' || (array['TROWEL','RAKE','HOSE'])[i % 3 + 1] || ' ' || i || ' GREEN ' || (i + 10) || 'MM',
+      'qty', 2, 'unit_price', 30 + i);
+  end loop;
+  select * into v_r from public.pos_purchasing_file_document(
+    v_tok, '1234', null, 'Speed Supplies', '4990077788', null, null,
+    'invoice', 'PERF-1', current_date, null, null, 1000, null, v_lines);
+  create temp table perf_doc as select v_r.document_id as id;
+end $$;
+
+set statement_timeout = '3s';
+select count(*) as perf_lines from public.pos_purchasing_receive_lines(
+  (select token from till), '1234', (select id from perf_doc));
+reset statement_timeout;
+
+do $$
+declare v_n int;
+begin
+  select count(*)::int into v_n from public.pos_purchasing_receive_lines(
+    (select token from till), '1234', (select id from perf_doc)) where sorted = 'new';
+  perform assert_eq(v_n, 15, 'and every unknown line still comes back sorted as new');
+  delete from public.supplier_documents where id = (select id from perf_doc);
+  delete from public.products where sku like 'PERF-%';
+  update public.organizations set sort_deliveries = (select was from perf_sorting)
+   where id = (select org_id from fixture);
+end $$;
+
 -- 0129: a badge instead of a PIN, at the till --------------------------------
 do $$
 declare
