@@ -12708,6 +12708,14 @@ test("a badge opens the till, and not the back office, an approval or the scan b
   await page.getByRole("button", { name: /^Manage$/ }).click();
   await expect(page.getByRole("dialog", { name: "Manage" })).toBeVisible();
   await page.getByRole("dialog", { name: "Manage" }).getByRole("button", { name: "Cancel" }).click();
+  // So does the stock room, which a PIN sign-in opens without asking: the
+  // badge left no PIN behind for it to reuse.
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Stock" }).click();
+  await expect(page.getByRole("dialog", { name: "Stock" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Stock" }).getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("navigation", { name: "Sections" })
+    .getByRole("button", { name: "Sell" }).click();
 
   // Scanned at the counter, it is nobody's product: not searched, not sold.
   await page.getByPlaceholder(/Scan barcode/i).fill(MANAGER_BADGE);
